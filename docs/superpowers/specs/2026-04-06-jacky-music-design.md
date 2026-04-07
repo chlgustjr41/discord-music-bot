@@ -27,6 +27,7 @@ Target scale: small community (<10 Discord servers), self-hosted on a single GCP
 │  Firebase (Google Cloud)  │
 │  ├─ Firestore             │  ← playlist state, session codes,
 │  │                        │    saved playlists, play history
+│  ├─ Auth (Google login)    │  ← server owner authentication
 │  ├─ Hosting               │  ← React+Vite web app
 │  └─ Cloud Functions       │  ← YouTube search proxy
 └──────────────────────────┘
@@ -74,12 +75,28 @@ Prefix: `j!`
 | `j!session` | Show the current session code for web access |
 
 **Behavior:**
+- When the bot is first added to a server, the server owner must complete Google login via Firebase Auth through the web app to activate the bot. The bot responds to commands only in activated servers.
 - Bot auto-generates a new 6-character alphanumeric session code and posts it in the text channel when it joins voice.
 - Bot leaves voice after 5 minutes idle (empty queue and no listeners).
 - `j!play` with a Spotify link resolves the track name via Spotify API, then searches YouTube through Lavalink.
 - Playlist state persists per server even when the bot is not in a voice channel.
 
 ## Firestore Data Model
+
+### `serverOwners/{serverId}`
+```json
+{
+  "ownerDiscordId": "123456789",
+  "ownerEmail": "owner@gmail.com",
+  "firebaseUid": "...",
+  "activatedAt": "Timestamp",
+  "isActive": true
+}
+```
+
+The bot checks this collection on every command. If the server has no active owner record, the bot replies with a link to the web app for the server owner to authenticate via Google login.
+
+**Future: whitelisting.** A `whitelist` collection can be added later to restrict which Google accounts can activate servers, limiting usage to an approved community for free tier cost control.
 
 ### `servers/{serverId}`
 ```json
@@ -145,8 +162,9 @@ Session code lookup: web user enters a code, resolves to a server ID, then subsc
 **Tech stack:** React + Vite + TypeScript, hosted on Firebase Hosting.
 
 ### Entry Screen
-- Session code input field
-- "Connect" button
+- Two paths:
+  1. **Server activation** — "Activate Your Server" button triggers Google login via Firebase Auth. After login, owner enters their Discord server ID to link the account. One-time setup.
+  2. **Session access** — Session code input field + "Connect" button for playlist dashboard. No login required.
 - Invalid/expired code shows an error message
 
 ### Dashboard (after valid code)
@@ -214,7 +232,7 @@ services:
 
 ## Out of Scope
 
-- User authentication / Discord OAuth on the web app
+- Account whitelisting (planned for future — restrict which Google accounts can activate servers)
 - Sharding / multi-node Lavalink
 - Slash commands (prefix `j!` only)
 - Audio sources beyond YouTube + Spotify link resolution
