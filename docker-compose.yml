@@ -1,0 +1,26 @@
+services:
+  lavalink:
+    image: ghcr.io/lavalink-devs/lavalink:4
+    container_name: jacky-lavalink
+    restart: unless-stopped
+    ports:
+      - "2333:2333"
+    volumes:
+      - ./lavalink/application.yml:/opt/Lavalink/application.yml
+    environment:
+      - _JAVA_OPTIONS=-Xmx512m
+
+  jacky-bot:
+    build: ./bot
+    container_name: jacky-bot
+    restart: unless-stopped
+    depends_on:
+      - lavalink
+    env_file:
+      - .env
+    environment:
+      - LAVALINK_HOST=lavalink
+      - LAVALINK_PORT=2333
+      - LAVALINK_PASSWORD=youshallnotpass
+    volumes:
+      - ./bot:/app
