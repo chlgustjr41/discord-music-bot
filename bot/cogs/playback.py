@@ -7,6 +7,7 @@ from config import IDLE_TIMEOUT_SECONDS, WEB_APP_URL
 from services.session_manager import generate_session_code
 from utils.embeds import now_playing_embed, session_embed, error_embed, success_embed
 from services.spotify_client import is_spotify_url, resolve_spotify_url
+from services.firestore_listener import FirestoreListener
 
 
 class Playback(commands.Cog):
@@ -16,6 +17,7 @@ class Playback(commands.Cog):
         self.idle_tasks: dict[int, asyncio.Task] = {}
         self.history_buffer: dict[int, list] = {}  # server_id -> played tracks
         self.session_start: dict[int, datetime.datetime] = {}
+        self.listeners: dict[int, FirestoreListener] = {}
 
     async def ensure_voice(self, ctx: commands.Context) -> wavelink.Player | None:
         if not ctx.author.voice:
@@ -36,6 +38,10 @@ class Playback(commands.Cog):
             # Init history buffer
             self.history_buffer[ctx.guild.id] = []
             self.session_start[ctx.guild.id] = datetime.datetime.now()
+            # Start Firestore listener for web app sync
+            listener = FirestoreListener(self.bot, self.fs, str(ctx.guild.id))
+            listener.start()
+            self.listeners[ctx.guild.id] = listener
         return player
 
     async def play_next(self, player: wavelink.Player, guild_id: int):
@@ -199,6 +205,10 @@ class Playback(commands.Cog):
         player = ctx.voice_client
         if player:
             guild_id = ctx.guild.id
+            # Stop Firestore listener
+            listener = self.listeners.pop(guild_id, None)
+            if listener:
+                listener.stop()
             # Save history
             await self.save_session_history(guild_id)
             # Clean up
@@ -259,6 +269,10 @@ class Playback(commands.Cog):
     async def _idle_disconnect(self, guild_id: int, player: wavelink.Player):
         await asyncio.sleep(IDLE_TIMEOUT_SECONDS)
         if player.connected and not player.playing:
+            # Stop Firestore listener
+            listener = self.listeners.pop(guild_id, None)
+            if listener:
+                listener.stop()
             await self.save_session_history(guild_id)
             self.fs.invalidate_session_code(str(guild_id))
             self.fs.update_server_state(str(guild_id), {
