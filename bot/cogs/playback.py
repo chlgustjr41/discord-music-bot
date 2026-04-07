@@ -6,6 +6,7 @@ from discord.ext import commands
 from config import IDLE_TIMEOUT_SECONDS, WEB_APP_URL
 from services.session_manager import generate_session_code
 from utils.embeds import now_playing_embed, session_embed, error_embed, success_embed
+from services.spotify_client import is_spotify_url, resolve_spotify_url
 
 
 class Playback(commands.Cog):
@@ -111,8 +112,31 @@ class Playback(commands.Cog):
         if not player:
             return
 
-        # Spotify link handling delegated to spotify_client (Task 8)
-        # For now, search YouTube via Lavalink
+        # Handle Spotify URLs
+        if is_spotify_url(query):
+            tracks = resolve_spotify_url(query)
+            if not tracks:
+                await ctx.send(embed=error_embed("Could not resolve Spotify link."))
+                return
+            if len(tracks) == 1:
+                # Single track — search YouTube and play/queue
+                query = tracks[0]["searchQuery"]
+                # Fall through to normal YouTube search below
+            else:
+                # Multiple tracks (album/playlist) — queue all
+                for t in tracks:
+                    t["requestedBy"] = ctx.author.display_name
+                    t["url"] = ""  # Will be resolved when played
+                    self.fs.add_to_queue(str(ctx.guild.id), t)
+                await ctx.send(embed=success_embed(
+                    f"Added **{len(tracks)}** tracks from Spotify to the queue."
+                ))
+                # Start playing if not already
+                if not player.playing:
+                    await self.play_next(player, ctx.guild.id)
+                return
+
+        # YouTube search via Lavalink
         results = await wavelink.Playable.search(query)
         if not results:
             await ctx.send(embed=error_embed(f"No results found for: {query}"))
