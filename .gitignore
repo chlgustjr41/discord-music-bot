@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+bot/.env
+
+# Node
+node_modules/
+dist/
+frontend/.env
+functions/.env
+
+# Firebase
+.firebase/
+
+# IDE
+.vscode/
+.idea/
+
+# Environment
+.env
+*.local
