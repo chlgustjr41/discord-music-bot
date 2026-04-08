@@ -9,5 +9,9 @@
   "functions": {
     "source": "functions",
     "runtime": "nodejs20"
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "database": "discord-music-bot"
   }
 }

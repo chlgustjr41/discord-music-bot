@@ -20,3 +20,4 @@ functions/.env
 # Environment
 .env
 *.local
+serviceAccountKey.json

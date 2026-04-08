@@ -2,6 +2,10 @@ import { useState, useEffect } from "react";
 import { collection, getDocs, query, orderBy, limit, doc, updateDoc, arrayUnion } from "firebase/firestore";
 import { db } from "../firebase";
 import type { HistorySession } from "../types";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { History, ChevronDown, RotateCcw, Clock } from "lucide-react";
 
 interface Props {
   serverId: string;
@@ -39,35 +43,56 @@ export function HistoryPanel({ serverId }: Props) {
   };
 
   return (
-    <div style={{ padding: "16px 0" }}>
-      <h3 onClick={() => setExpanded(!expanded)} style={{ cursor: "pointer" }}>
-        History {expanded ? "\u25be" : "\u25b8"}
-      </h3>
-
-      {expanded && (
-        sessions.length === 0 ? (
-          <p style={{ opacity: 0.5 }}>No history yet.</p>
-        ) : (
-          <div>
-            {sessions.map((s) => (
-              <div key={s.id} style={{ marginBottom: "16px", padding: "12px", border: "1px solid #333", borderRadius: "8px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <strong>{s.startedAt?.slice(0, 10) || "Unknown date"}</strong>
-                  <button onClick={() => requeueSession(s)}>Re-queue All</button>
-                </div>
-                <ul style={{ paddingLeft: "20px", marginTop: "8px" }}>
-                  {s.tracks.slice(0, 5).map((t, i) => (
-                    <li key={i} style={{ opacity: 0.7 }}>{t.title} — {t.artist}</li>
-                  ))}
-                  {s.tracks.length > 5 && (
-                    <li style={{ opacity: 0.5 }}>...and {s.tracks.length - 5} more</li>
-                  )}
-                </ul>
+    <Card>
+      <Collapsible open={expanded} onOpenChange={setExpanded}>
+        <CardHeader className="pb-3">
+          <CollapsibleTrigger className="flex w-full items-center gap-2">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <History className="h-4 w-4" />
+              History
+            </CardTitle>
+            <ChevronDown className={`ml-auto h-4 w-4 text-muted-foreground transition-transform ${expanded ? "rotate-180" : ""}`} />
+          </CollapsibleTrigger>
+        </CardHeader>
+        <CollapsibleContent>
+          <CardContent className="space-y-3 pt-0">
+            {sessions.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-4 text-muted-foreground">
+                <Clock className="mb-1 h-6 w-6" />
+                <p className="text-sm">No history yet.</p>
               </div>
-            ))}
-          </div>
-        )
-      )}
-    </div>
+            ) : (
+              <div className="space-y-3">
+                {sessions.map((s) => (
+                  <div key={s.id} className="rounded-lg border p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">
+                        {s.startedAt?.slice(0, 10) || "Unknown date"}
+                      </span>
+                      <Button size="sm" variant="ghost" onClick={() => requeueSession(s)}>
+                        <RotateCcw className="mr-1 h-3 w-3" />
+                        Re-queue
+                      </Button>
+                    </div>
+                    <ul className="space-y-0.5 pl-2">
+                      {s.tracks.slice(0, 5).map((t, i) => (
+                        <li key={i} className="text-xs text-muted-foreground">
+                          {t.title} — {t.artist}
+                        </li>
+                      ))}
+                      {s.tracks.length > 5 && (
+                        <li className="text-xs text-muted-foreground/60">
+                          ...and {s.tracks.length - 5} more
+                        </li>
+                      )}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </CollapsibleContent>
+      </Collapsible>
+    </Card>
   );
 }

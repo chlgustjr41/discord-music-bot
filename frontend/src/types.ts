@@ -11,6 +11,15 @@ export interface CurrentTrack extends Track {
   startedAt: string;
 }
 
+export interface SearchResult {
+  videoId: string;
+  title: string;
+  artist: string;
+  url: string;
+  thumbnail: string;
+  duration: number;
+}
+
 export interface ServerState {
   sessionCode: string | null;
   currentTrack: CurrentTrack | null;
@@ -20,8 +29,14 @@ export interface ServerState {
   loopMode: "off" | "track" | "queue";
   volume: number;
   voiceChannelId: string | null;
+  voiceChannelName?: string;
   textChannelId: string | null;
   idleTimeoutMinutes: number;
+  seekPosition?: number | null;
+  searchQuery?: string | null;
+  searchResults?: SearchResult[];
+  serverName?: string;
+  serverIcon?: string;
 }
 
 export interface Playlist {
@@ -36,6 +51,28 @@ export interface HistorySession {
   startedAt: string;
   endedAt: string;
   tracks: (Track & { playedAt: string })[];
+}
+
+export interface CommandHistoryEntry {
+  id: string;
+  command: string;
+  args: string;
+  user: string;
+  userId: string;
+  timestamp: unknown; // Firestore Timestamp
+  callCount: number;
+}
+
+export interface MusicHistoryEntry {
+  id: string;
+  title: string;
+  artist: string;
+  url: string;
+  thumbnail: string;
+  duration: number;
+  requestedBy: string;
+  addedAt: unknown; // Firestore Timestamp
+  playCount: number;
 }
 
 export interface SessionCodeDoc {

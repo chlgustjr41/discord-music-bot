@@ -98,6 +98,8 @@ class FirestoreClient:
     # --- Session Codes ---
 
     def set_session_code(self, server_id: str, code: str):
+        # Invalidate any existing session code first
+        self.invalidate_session_code(server_id)
         self.update_server_state(server_id, {"sessionCode": code})
         self.db.collection("sessionCodes").document(code).set({
             "serverId": str(server_id),
@@ -113,6 +115,14 @@ class FirestoreClient:
     def resolve_session_code(self, code: str) -> Optional[str]:
         doc = self.db.collection("sessionCodes").document(code).get()
         return doc.to_dict().get("serverId") if doc.exists else None
+
+    # --- Search (web app → bot → results) ---
+
+    def set_search_results(self, server_id: str, results: list):
+        self.update_server_state(server_id, {
+            "searchResults": results,
+            "searchQuery": None,  # Clear query to signal completion
+        })
 
     # --- Playlists ---
 
@@ -138,7 +148,7 @@ class FirestoreClient:
         (self.db.collection("servers").document(str(server_id))
          .collection("playlists").document(name).delete())
 
-    # --- History ---
+    # --- History (legacy session-based) ---
 
     def save_history(self, server_id: str, session_id: str, tracks: list,
                      started_at, ended_at):
@@ -154,3 +164,56 @@ class FirestoreClient:
                 .order_by("startedAt", direction=firestore.Query.DESCENDING)
                 .limit(limit).stream())
         return [{"id": d.id, **d.to_dict()} for d in docs]
+
+    # --- Command History ---
+
+    def log_command(self, server_id: str, command: str, args: str,
+                    user: str, user_id: str):
+        """Log a command. If the same command+args already exists, update it."""
+        coll = self.db.collection("servers").document(str(server_id)).collection("commandHistory")
+        existing = list(
+            coll.where("command", "==", command)
+                .where("args", "==", args)
+                .limit(1).stream()
+        )
+        if existing:
+            existing[0].reference.update({
+                "user": user,
+                "userId": user_id,
+                "timestamp": firestore.SERVER_TIMESTAMP,
+                "callCount": firestore.Increment(1),
+            })
+        else:
+            coll.add({
+                "command": command,
+                "args": args,
+                "user": user,
+                "userId": user_id,
+                "timestamp": firestore.SERVER_TIMESTAMP,
+                "callCount": 1,
+            })
+
+    # --- Music History ---
+
+    def log_music(self, server_id: str, track: dict):
+        """Log a track to music history. If the same URL already exists, update it."""
+        url = track.get("url", "")
+        coll = self.db.collection("servers").document(str(server_id)).collection("musicHistory")
+        if url:
+            existing = list(coll.where("url", "==", url).limit(1).stream())
+            if existing:
+                existing[0].reference.update({
+                    **track,
+                    "addedAt": firestore.SERVER_TIMESTAMP,
+                    "playCount": firestore.Increment(1),
+                })
+                return
+        coll.add({
+            **track,
+            "addedAt": firestore.SERVER_TIMESTAMP,
+            "playCount": 1,
+        })
+
+    def delete_music_history(self, server_id: str, doc_id: str):
+        (self.db.collection("servers").document(str(server_id))
+         .collection("musicHistory").document(doc_id).delete())

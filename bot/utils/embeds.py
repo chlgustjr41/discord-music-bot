@@ -43,11 +43,18 @@ def queue_embed(queue: list, current_track: dict = None, page: int = 0, per_page
 
 
 def session_embed(code: str, web_url: str) -> discord.Embed:
-    return discord.Embed(
-        title="Session Code",
-        description=f"**`{code}`**\n\nVisit [{web_url}]({web_url}) and enter this code to manage the playlist from your browser.",
+    direct_link = f"{web_url.rstrip('/')}/dashboard/{code}"
+    embed = discord.Embed(
+        title="🎵 Jacky Music Session Started",
+        description=(
+            f"**Session Code:** `{code}`\n\n"
+            f"**[Open Web Player]({direct_link})**\n\n"
+            f"Control playback, search songs, and manage the queue from your browser."
+        ),
         color=EMBED_COLOR,
     )
+    embed.add_field(name="Direct Link", value=direct_link, inline=False)
+    return embed
 
 
 def error_embed(message: str) -> discord.Embed:

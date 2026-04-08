@@ -3,22 +3,42 @@ server:
   address: 0.0.0.0
 
 lavalink:
+  plugins:
+    - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.0"
+      snapshot: false
   server:
     password: "youshallnotpass"
     sources:
-      youtube: true
+      youtube: false  # Handled by youtube-plugin above
       bandcamp: true
       soundcloud: true
       twitch: true
       vimeo: true
       http: true
       local: false
-    bufferDurationMs: 400
-    frameBufferDurationMs: 5000
-    youtubePlaylistLoadLimit: 50
+    bufferDurationMs: 2000
+    frameBufferDurationMs: 10000
     playerUpdateInterval: 5
-    youtubeSearchEnabled: true
     gc-warnings: true
+
+plugins:
+  youtube:
+    enabled: true
+    allowSearch: true
+    allowDirectVideoIds: true
+    allowDirectPlaylistIds: true
+    # MUSIC: search only (no sig extraction needed, most reliable)
+    # ANDROID_MUSIC: playback (no sig extraction needed)
+    # ANDROID_VR: playback fallback (no sig extraction needed)
+    # WEB is excluded — requires signature cipher extraction which YouTube frequently breaks
+    clients:
+      - MUSIC
+      - ANDROID_MUSIC
+      - ANDROID_VR
+    clientOptions:
+      MUSIC:
+        playback: false
+        videoLoading: false
 
 logging:
   level:
