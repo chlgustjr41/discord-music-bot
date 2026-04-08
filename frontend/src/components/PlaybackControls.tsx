@@ -5,7 +5,7 @@ import type { ServerState } from "../types";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Card, CardContent } from "@/components/ui/card";
-import { Play, Pause, SkipForward, Shuffle, Repeat, Repeat1, Volume2 } from "lucide-react";
+import { Play, Pause, SkipForward, Shuffle, Repeat, Repeat1, Volume2, MessageSquare, MessageSquareOff } from "lucide-react";
 
 interface Props {
   state: ServerState;
@@ -94,6 +94,16 @@ export function PlaybackControls({ state, serverId, disabled }: Props) {
           title={`Loop: ${state.loopMode}`}
         >
           <LoopIcon className="h-4 w-4" />
+        </Button>
+
+        <Button
+          variant={state.discordNotify !== false ? "default" : "secondary"}
+          size="icon"
+          onClick={() => updateDoc(ref, { discordNotify: state.discordNotify === false })}
+          disabled={disabled}
+          title={state.discordNotify !== false ? "Discord notifications: on" : "Discord notifications: off"}
+        >
+          {state.discordNotify !== false ? <MessageSquare className="h-4 w-4" /> : <MessageSquareOff className="h-4 w-4" />}
         </Button>
 
         <div className="ml-auto flex items-center gap-3 flex-1 max-w-xs min-w-[10rem]">

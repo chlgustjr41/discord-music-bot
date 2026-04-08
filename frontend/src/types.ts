@@ -33,6 +33,7 @@ export interface ServerState {
   textChannelId: string | null;
   idleTimeoutMinutes: number;
   seekPosition?: number | null;
+  discordNotify?: boolean;
   searchQuery?: string | null;
   searchResults?: SearchResult[];
   serverName?: string;

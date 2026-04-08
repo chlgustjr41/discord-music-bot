@@ -163,12 +163,14 @@ class Playback(commands.Cog):
             await player.play(playable)
             self.cancel_idle_timer(guild_id)
 
-            # Announce in text channel
-            text_channel_id = self.fs.get_server_state(str(guild_id)).get("textChannelId")
-            if text_channel_id:
-                channel = self.bot.get_channel(int(text_channel_id))
-                if channel:
-                    await channel.send(embed=now_playing_embed(track_data))
+            # Announce in text channel (if Discord notifications enabled)
+            server_state = self.fs.get_server_state(str(guild_id))
+            if server_state.get("discordNotify", True):
+                text_channel_id = server_state.get("textChannelId")
+                if text_channel_id:
+                    channel = self.bot.get_channel(int(text_channel_id))
+                    if channel:
+                        await channel.send(embed=now_playing_embed(track_data))
         except Exception as e:
             log.error(f"Failed to play track in play_next: {e}")
             self.fs.set_current_track(str(guild_id), None)

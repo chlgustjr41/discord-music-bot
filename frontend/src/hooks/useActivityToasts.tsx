@@ -302,6 +302,15 @@ export function useActivityToasts(state: ServerState | null) {
       addLog(msg);
     }
 
+    // --- Discord notify toggle ---
+    if ((prev.discordNotify !== false) !== (state.discordNotify !== false)) {
+      const msg = state.discordNotify !== false
+        ? "Discord notifications enabled"
+        : "Discord notifications disabled";
+      toast(msg, { duration: 2000 });
+      addLog(msg);
+    }
+
     // --- Loop mode ---
     if (prev.loopMode !== state.loopMode) {
       const labels: Record<string, string> = {
