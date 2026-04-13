@@ -46,6 +46,7 @@ import {
   Link,
   List,
   Loader2,
+  Pencil,
 } from "lucide-react";
 
 interface Props {
@@ -70,7 +71,7 @@ interface UnifiedTrack {
   thumbnail: string;
   duration: number;
   requestedBy: string;
-  source: "queue" | "history" | "import";
+  source: "queue" | "history" | "import" | "playlist";
 }
 
 type CreateMode = "select" | "import";
@@ -88,6 +89,7 @@ export function PlaylistManager({
 }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editingPlaylist, setEditingPlaylist] = useState<PlaylistDoc | null>(null);
 
   // --- Browse state ---
   const [playlists, setPlaylists] = useState<PlaylistDoc[]>([]);
@@ -126,13 +128,27 @@ export function PlaylistManager({
     if (!expanded) setOpenPlaylist(null);
   }, [expanded]);
 
-  /** Build a single deduplicated track list from queue + history */
-  const loadUnifiedTracks = useCallback(async () => {
+  /** Build a single deduplicated track list from (existing playlist) + queue + history */
+  const loadUnifiedTracks = useCallback(async (existingTracks?: Track[]) => {
     setTracksLoading(true);
     const seen = new Set<string>();
     const unified: UnifiedTrack[] = [];
 
-    if (currentTrack) {
+    // Existing playlist tracks come first (when editing)
+    if (existingTracks) {
+      for (const t of existingTracks) {
+        if (t.url && !seen.has(t.url)) {
+          seen.add(t.url);
+          unified.push({
+            title: t.title, artist: t.artist, url: t.url,
+            thumbnail: t.thumbnail, duration: t.duration,
+            requestedBy: t.requestedBy, source: "playlist",
+          });
+        }
+      }
+    }
+
+    if (currentTrack && !seen.has(currentTrack.url)) {
       seen.add(currentTrack.url);
       unified.push({
         title: currentTrack.title,
@@ -223,14 +239,33 @@ export function PlaylistManager({
   /* ---- open create dialog ---- */
 
   const openCreateDialog = () => {
+    setEditingPlaylist(null);
     setPlaylistName("");
     setSelectedUrls(new Set());
     setCreateMode("select");
     setImportUrl("");
     setImportError("");
     setImportLoading(false);
+    setSaveError("");
+    setSaving(false);
     waitingForImport.current = false;
     loadUnifiedTracks();
+    setCreateOpen(true);
+  };
+
+  const openEditDialog = (playlist: PlaylistDoc) => {
+    setEditingPlaylist(playlist);
+    setPlaylistName(playlist.name);
+    setCreateMode("select");
+    setImportUrl("");
+    setImportError("");
+    setImportLoading(false);
+    setSaveError("");
+    setSaving(false);
+    waitingForImport.current = false;
+    // Pre-select existing playlist track URLs
+    setSelectedUrls(new Set(playlist.tracks.map((t) => t.url).filter(Boolean)));
+    loadUnifiedTracks(playlist.tracks);
     setCreateOpen(true);
   };
 
@@ -296,21 +331,38 @@ export function PlaylistManager({
 
   /* ---- actions ---- */
 
+  const [saveError, setSaveError] = useState("");
+  const [saving, setSaving] = useState(false);
+
   const savePlaylist = async () => {
     if (!playlistName.trim() || selectedUrls.size === 0) return;
     const tracks: Track[] = unifiedTracks
       .filter((t) => selectedUrls.has(t.url))
       .map(({ title, artist, url, thumbnail, duration, requestedBy }) => ({
-        title, artist, url, thumbnail, duration, requestedBy,
+        title: title || "Unknown",
+        artist: artist || "",
+        url: url || "",
+        thumbnail: thumbnail || "",
+        duration: duration || 0,
+        requestedBy: requestedBy || "Web User",
       }));
     if (tracks.length === 0) return;
 
-    await setDoc(
-      doc(db, "servers", serverId, "playlists", playlistName.trim()),
-      { name: playlistName.trim(), tracks, createdBy: "Web User", createdAt: serverTimestamp() }
-    );
-    setCreateOpen(false);
-    fetchPlaylists();
+    setSaving(true);
+    setSaveError("");
+    try {
+      await setDoc(
+        doc(db, "servers", serverId, "playlists", playlistName.trim()),
+        { name: playlistName.trim(), tracks, createdBy: "Web User", createdAt: serverTimestamp() }
+      );
+      setCreateOpen(false);
+      await fetchPlaylists();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Save failed";
+      setSaveError(msg);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const loadPlaylist = async (playlist: PlaylistDoc, mode: "add" | "replace") => {
@@ -387,6 +439,9 @@ export function PlaylistManager({
                             </span>
                           </div>
                           <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                            <Button size="sm" variant="ghost" title="Edit playlist" onClick={() => openEditDialog(p)}>
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
                             <Button size="sm" variant="ghost" title="Add to queue" onClick={() => loadPlaylist(p, "add")}>
                               <ListPlus className="h-3.5 w-3.5" />
                             </Button>
@@ -436,48 +491,54 @@ export function PlaylistManager({
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="sm:max-w-lg max-h-[85vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Create Playlist</DialogTitle>
+            <DialogTitle>{editingPlaylist ? "Edit Playlist" : "Create Playlist"}</DialogTitle>
             <DialogDescription>
-              {createMode === "select"
-                ? "Select tracks from your queue and music history."
-                : "Import tracks from a YouTube playlist URL."}
+              {editingPlaylist
+                ? "Add or remove tracks. Existing tracks are pre-selected."
+                : createMode === "select"
+                  ? "Select tracks from your queue and music history."
+                  : "Import tracks from a YouTube playlist URL."}
             </DialogDescription>
           </DialogHeader>
 
-          {/* Mode toggle */}
-          <div className="flex gap-1 p-1 rounded-lg bg-muted">
-            <button
-              onClick={() => switchMode("select")}
-              className={`flex-1 flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                createMode === "select"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <List className="h-3.5 w-3.5" />
-              Select Tracks
-            </button>
-            <button
-              onClick={() => switchMode("import")}
-              className={`flex-1 flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                createMode === "import"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              <Link className="h-3.5 w-3.5" />
-              Import URL
-            </button>
-          </div>
+          {/* Mode toggle (create only) */}
+          {!editingPlaylist && (
+            <div className="flex gap-1 p-1 rounded-lg bg-muted">
+              <button
+                onClick={() => switchMode("select")}
+                className={`flex-1 flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  createMode === "select"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <List className="h-3.5 w-3.5" />
+                Select Tracks
+              </button>
+              <button
+                onClick={() => switchMode("import")}
+                className={`flex-1 flex items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                  createMode === "import"
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                <Link className="h-3.5 w-3.5" />
+                Import URL
+              </button>
+            </div>
+          )}
 
           {/* Name input */}
           <Input
             type="text"
             value={playlistName}
-            onChange={(e) => setPlaylistName(e.target.value)}
+            onChange={(e) => { if (!editingPlaylist) setPlaylistName(e.target.value); }}
             placeholder="Playlist name"
             onKeyDown={(e) => { if (e.key === "Enter") savePlaylist(); }}
-            autoFocus
+            readOnly={!!editingPlaylist}
+            className={editingPlaylist ? "opacity-60" : ""}
+            autoFocus={!editingPlaylist}
           />
 
           {/* Import URL input (import mode only) */}
@@ -598,7 +659,7 @@ export function PlaylistManager({
                           variant="outline"
                           className="shrink-0 text-[10px] px-1.5 py-0 font-normal text-muted-foreground/60 border-muted-foreground/20"
                         >
-                          {t.source === "queue" ? "Queue" : "History"}
+                          {t.source === "playlist" ? "Playlist" : t.source === "queue" ? "Queue" : "History"}
                         </Badge>
                       )}
                     </li>
@@ -609,15 +670,22 @@ export function PlaylistManager({
           </div>
 
           {/* Footer */}
+          {saveError && (
+            <p className="text-sm text-destructive">{saveError}</p>
+          )}
           <DialogFooter>
             <DialogClose render={<Button variant="outline" />}>
               Cancel
             </DialogClose>
             <Button
               onClick={savePlaylist}
-              disabled={!playlistName.trim() || selectedUrls.size === 0}
+              disabled={!playlistName.trim() || selectedUrls.size === 0 || saving}
             >
-              <Save className="mr-1 h-4 w-4" />
+              {saving ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="mr-1 h-4 w-4" />
+              )}
               Save ({selectedUrls.size})
             </Button>
           </DialogFooter>

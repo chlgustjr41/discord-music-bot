@@ -119,6 +119,16 @@ All commands use the `j!` prefix.
 | `j!history` | Show recent play sessions |
 | `j!session` | Show session code and web link |
 
+### Local Audio Node
+
+Run a local Lavalink instance for lower latency audio. See [jacky-music-local](https://github.com/chlgustjr41/jacky-music-local) for the setup.
+
+| Command | Description |
+|---------|-------------|
+| `j!localnode connect <url> <password>` | Connect to your local Lavalink node |
+| `j!localnode disconnect` | Switch back to cloud audio |
+| `j!localnode status` | Show which audio backend is active |
+
 ## Web Dashboard
 
 When the bot joins a voice channel, it generates a 6-character session code. Anyone with the code can access the web dashboard to:
@@ -145,7 +155,8 @@ discord-music-bot/
 │   │   ├── queue_cmd.py    # Queue management commands
 │   │   ├── playlist_cmd.py # Playlist save/load/list/delete
 │   │   ├── history_cmd.py  # Play history command
-│   │   └── session_cmd.py  # Session code display
+│   │   ├── session_cmd.py  # Session code display
+│   │   └── localnode_cmd.py # Local Lavalink node management
 │   ├── services/
 │   │   ├── firestore_client.py   # Full Firestore ORM (state, queue, playlists, history)
 │   │   ├── firestore_listener.py # Real-time listener for web app changes

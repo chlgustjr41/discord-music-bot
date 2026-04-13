@@ -3,6 +3,7 @@ import { Toaster } from "sonner";
 import { EntryScreen } from "./components/EntryScreen";
 import { Dashboard } from "./components/Dashboard";
 import { ActivateServer } from "./components/ActivateServer";
+import { SetupGuide } from "./components/SetupGuide";
 
 function App() {
   return (
@@ -25,6 +26,7 @@ function App() {
         <Route path="/" element={<EntryScreen />} />
         <Route path="/dashboard/:sessionCode" element={<Dashboard />} />
         <Route path="/activate" element={<ActivateServer />} />
+        <Route path="/guide" element={<SetupGuide />} />
       </Routes>
     </BrowserRouter>
   );

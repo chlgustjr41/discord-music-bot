@@ -6,13 +6,21 @@ export interface SearchResult {
   artist: string;
   thumbnail: string;
   url: string;
+  duration: number;
 }
 
-export async function searchYouTube(query: string): Promise<SearchResult[]> {
+export async function searchYouTube(
+  query: string,
+  signal?: AbortSignal
+): Promise<SearchResult[]> {
   const res = await fetch(
-    `${FUNCTIONS_BASE}/searchYouTube?q=${encodeURIComponent(query)}&maxResults=10`
+    `${FUNCTIONS_BASE}/searchYouTube?q=${encodeURIComponent(query)}&maxResults=10`,
+    { signal }
   );
   if (!res.ok) throw new Error("Search failed");
   const data = await res.json();
-  return data.results;
+  return (data.results || []).map((r: Omit<SearchResult, "duration">) => ({
+    ...r,
+    duration: 0,
+  }));
 }

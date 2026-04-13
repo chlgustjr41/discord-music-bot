@@ -10,6 +10,7 @@ import { PlaylistManager } from "./PlaylistManager";
 import { CommandHistory } from "./CommandHistory";
 import { MusicHistory } from "./MusicHistory";
 import { ActivityLog } from "./ActivityLog";
+import { NodeStatus } from "./NodeStatus";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -95,6 +96,8 @@ export function Dashboard() {
               <Badge variant="secondary" className="font-mono text-xs">
                 {sessionCode}
               </Badge>
+              <span className="text-xs text-muted-foreground/40">·</span>
+              <NodeStatus serverId={serverId} />
             </div>
           </div>
           <Button

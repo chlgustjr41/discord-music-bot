@@ -61,6 +61,13 @@ class Playback(commands.Cog):
     async def on_wavelink_node_ready(self, payload: wavelink.NodeReadyEventPayload):
         log.info(f"Lavalink node connected: {payload.node.identifier}")
 
+    def _get_preferred_node(self, guild_id: int) -> wavelink.Node | None:
+        """Return the preferred Lavalink node for a guild, if a local one is configured."""
+        localnode_cog = self.bot.cogs.get("LocalNode")
+        if localnode_cog:
+            return localnode_cog.get_node_for_guild(guild_id)
+        return None
+
     async def ensure_voice(self, ctx: commands.Context) -> wavelink.Player | None:
         if not ctx.author.voice:
             await ctx.send(embed=error_embed("You must be in a voice channel."))
@@ -74,6 +81,22 @@ class Playback(commands.Cog):
                 await ctx.send(embed=error_embed(f"Failed to join voice channel: {e}"))
                 return None
             player.autoplay = wavelink.AutoPlayMode.disabled
+
+            # Route to local node if available
+            preferred = self._get_preferred_node(ctx.guild.id)
+            if preferred:
+                try:
+                    player.node = preferred
+                    log.info(f"Guild {ctx.guild.id} using local node: {preferred.identifier}")
+                except Exception as e:
+                    log.warning(f"Failed to assign local node for guild {ctx.guild.id}: {e}")
+            else:
+                # Check if local node is configured but down
+                local_config = self.fs.get_local_node(str(ctx.guild.id))
+                if local_config:
+                    await ctx.send(embed=error_embed(
+                        "Local node is configured but not connected. Using cloud node instead."
+                    ))
             # Initialize server state in Firestore
             self.fs.init_server_state(str(ctx.guild.id))
             # Generate session code
@@ -254,8 +277,37 @@ class Playback(commands.Cog):
 
         await self.play_next(player, guild_id)
 
-    @commands.command(name="play", aliases=["p"])
+    @commands.command(name="start", aliases=["join"], brief="Join voice channel and start a web session")
+    async def start(self, ctx: commands.Context):
+        """Join your voice channel and generate a session code for the web dashboard.
+
+        Use this when you want to set up the web dashboard before queuing music.
+        Aliases: j!join"""
+        self._log_cmd(ctx)
+        already_connected = ctx.voice_client is not None
+        player = await self.ensure_voice(ctx)
+        if not player:
+            return
+        # Only re-send the session code if the bot was already in voice;
+        # ensure_voice already sends it when creating a new player.
+        if already_connected:
+            state = self.fs.get_server_state(str(ctx.guild.id))
+            code = state.get("sessionCode") if state else None
+            if code:
+                await ctx.send(embed=session_embed(code, WEB_APP_URL))
+
+    @commands.command(name="play", aliases=["p"], brief="Play a song or add it to the queue")
     async def play(self, ctx: commands.Context, *, query: str):
+        """Play a song by name, URL, or playlist link.
+
+        Supports YouTube, SoundCloud, and Bandcamp. If a track is already playing,
+        the new track is added to the queue. Playlist URLs add all tracks at once.
+        Aliases: j!p
+
+        Examples:
+          j!play never gonna give you up
+          j!play https://youtube.com/watch?v=...
+          j!play https://youtube.com/playlist?list=..."""
         self._log_cmd(ctx, query)
         player = await self.ensure_voice(ctx)
         if not player:
@@ -379,8 +431,9 @@ class Playback(commands.Cog):
                     f"Failed to play: {e}\n\nCheck Lavalink logs for details."
                 ))
 
-    @commands.command(name="pause")
+    @commands.command(name="pause", brief="Pause the current track")
     async def pause(self, ctx: commands.Context):
+        """Pause the currently playing track. Use j!resume to continue."""
         self._log_cmd(ctx)
         player = ctx.voice_client
         if player and player.playing:
@@ -388,8 +441,9 @@ class Playback(commands.Cog):
             self.fs.update_server_state(str(ctx.guild.id), {"isPaused": True})
             await ctx.send(embed=success_embed("Paused."))
 
-    @commands.command(name="resume", aliases=["unpause"])
+    @commands.command(name="resume", aliases=["unpause"], brief="Resume paused playback")
     async def resume(self, ctx: commands.Context):
+        """Resume playback after pausing. Aliases: j!unpause"""
         self._log_cmd(ctx)
         player = ctx.voice_client
         if player and player.paused:
@@ -397,16 +451,21 @@ class Playback(commands.Cog):
             self.fs.update_server_state(str(ctx.guild.id), {"isPaused": False})
             await ctx.send(embed=success_embed("Resumed."))
 
-    @commands.command(name="skip", aliases=["s"])
+    @commands.command(name="skip", aliases=["s"], brief="Skip to the next track")
     async def skip(self, ctx: commands.Context):
+        """Skip the current track and play the next one in the queue. Aliases: j!s"""
         self._log_cmd(ctx)
         player = ctx.voice_client
         if player and player.playing:
             await player.stop()
             await ctx.send(embed=success_embed("Skipped."))
 
-    @commands.command(name="stop", aliases=["leave", "disconnect", "dc"])
+    @commands.command(name="stop", aliases=["leave", "disconnect", "dc"], brief="Stop playback and leave voice")
     async def stop(self, ctx: commands.Context):
+        """Stop all playback, clear the queue, and disconnect from voice.
+
+        This ends the current session and invalidates the web dashboard session code.
+        Aliases: j!leave, j!disconnect, j!dc"""
         self._log_cmd(ctx)
         player = ctx.voice_client
         if player:
@@ -433,8 +492,11 @@ class Playback(commands.Cog):
             self._stopping.discard(guild_id)
             await ctx.send(embed=success_embed("Disconnected. Session ended."))
 
-    @commands.command(name="volume", aliases=["vol"])
+    @commands.command(name="volume", aliases=["vol"], brief="Set volume (0-100)")
     async def volume(self, ctx: commands.Context, vol: int):
+        """Set the playback volume (0-100). Aliases: j!vol
+
+        Example: j!volume 50"""
         self._log_cmd(ctx, str(vol))
         player = ctx.voice_client
         if not player:
@@ -445,8 +507,13 @@ class Playback(commands.Cog):
         self.fs.update_server_state(str(ctx.guild.id), {"volume": vol})
         await ctx.send(embed=success_embed(f"Volume set to **{vol}%**"))
 
-    @commands.command(name="loop")
+    @commands.command(name="loop", brief="Cycle loop mode: off → track → queue")
     async def loop(self, ctx: commands.Context):
+        """Cycle through loop modes: off → track → queue → off.
+
+        - off: no looping
+        - track: repeat the current track
+        - queue: repeat the entire queue"""
         self._log_cmd(ctx)
         state = self.fs.get_server_state(str(ctx.guild.id))
         current = state.get("loopMode", "off") if state else "off"
@@ -456,8 +523,9 @@ class Playback(commands.Cog):
         labels = {"off": "Loop off", "track": "Looping current track", "queue": "Looping queue"}
         await ctx.send(embed=success_embed(labels[new_mode]))
 
-    @commands.command(name="nowplaying", aliases=["np"])
+    @commands.command(name="nowplaying", aliases=["np"], brief="Show the current track")
     async def nowplaying(self, ctx: commands.Context):
+        """Show details about the currently playing track. Aliases: j!np"""
         self._log_cmd(ctx)
         state = self.fs.get_server_state(str(ctx.guild.id))
         if state and state.get("currentTrack"):

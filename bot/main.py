@@ -1,4 +1,5 @@
 import logging
+
 import discord
 from discord.ext import commands
 import firebase_admin
@@ -55,9 +56,12 @@ async def connect_lavalink():
     node = wavelink.Node(
         uri=f"http://{LAVALINK_HOST}:{LAVALINK_PORT}",
         password=LAVALINK_PASSWORD,
+        identifier="gcp-primary",
+        inactive_player_timeout=None,
+        inactive_channel_tokens=None,
     )
     await wavelink.Pool.connect(client=bot, nodes=[node])
-    log.info("Connected to Lavalink")
+    log.info("Connected to Lavalink (gcp-primary)")
 
 
 @bot.event
@@ -69,6 +73,7 @@ async def setup_hook():
     await bot.load_extension("cogs.playlist_cmd")
     await bot.load_extension("cogs.history_cmd")
     await bot.load_extension("cogs.session_cmd")
+    await bot.load_extension("cogs.localnode_cmd")
 
 
 bot.run(DISCORD_TOKEN)

@@ -11,7 +11,8 @@ Complete deployment guide for Jacky Music on GCP + Firebase.
 | Cloud Functions | Firebase Functions | YouTube search proxy (Node.js 20) |
 | Database | Firestore | Database name: `discord-music-bot` |
 | Auth | Firebase Auth | Google sign-in provider |
-| GCP Project | `discord-bot-jacky-music` | |
+| GCP Project | `personal-server-492701` | |
+| VM Instance | `personal-project-machine` | |
 
 ### GCP VM Spec
 
@@ -26,10 +27,16 @@ Complete deployment guide for Jacky Music on GCP + Firebase.
 
 ## Initial VM Setup
 
+The easiest path is `./deploy/gcp-deploy.sh`, which creates the VM on first
+run, uploads the repo + `.env`, and runs `docker compose up -d --build`.
+
+Manual steps below if you need to do it by hand.
+
 ### 1. Create VM
 
 ```bash
-gcloud compute instances create jacky-music-bot \
+gcloud compute instances create personal-project-machine \
+  --project=personal-server-492701 \
   --machine-type=e2-small \
   --image-family=ubuntu-2204-lts \
   --image-project=ubuntu-os-cloud \
@@ -42,7 +49,7 @@ gcloud compute instances create jacky-music-bot \
 SSH into the VM and run the startup script:
 
 ```bash
-gcloud compute ssh jacky-music-bot
+gcloud compute ssh personal-project-machine --project=personal-server-492701
 sudo bash deploy/startup.sh
 ```
 
@@ -229,6 +236,51 @@ docker stats                         # CPU/memory usage
 docker compose down
 docker compose up -d --build
 ```
+
+## Local Audio Node (Optional)
+
+Users can run a local Lavalink audio node for lower latency by streaming audio from their own machine instead of the GCP server.
+
+### How It Works
+
+```
+User's Machine                         Cloud (GCP)
+┌──────────────┐   Cloudflare    ┌─────────────────┐
+│  Lavalink    │◄──  Tunnel  ───►│  Jacky Music Bot │
+│  (audio)     │                 │  (commands)       │
+└──────┬───────┘                 └─────────────────┘
+       │ UDP audio
+       ▼
+  Discord Voice
+```
+
+The bot stays on GCP handling commands. Only the audio engine runs locally, so audio takes a shorter network path to Discord's voice servers.
+
+### Setup
+
+Users clone the public repo [jacky-music-local](https://github.com/chlgustjr41/jacky-music-local) and run the setup script. It starts:
+- **Lavalink** — audio server (Docker)
+- **Cloudflare Tunnel** — exposes Lavalink securely with no port forwarding
+- **Watchdog** — auto-shuts down after 15 min of no music
+
+The setup script prints a tunnel URL and password. Users paste `j!localnode connect <url> <password>` in Discord.
+
+### Failover
+
+The bot health-checks local nodes every 15 seconds. If a local node goes down (e.g., watchdog shutdown, Docker stop), the bot automatically migrates the player back to the GCP node and notifies the text channel.
+
+### Firestore
+
+Local node connection state is stored in `serverOwners/{serverId}.localNode`:
+```json
+{
+  "url": "https://abc123.trycloudflare.com",
+  "password": "...",
+  "connectedAt": "<timestamp>"
+}
+```
+
+Cleared automatically on disconnect or failover.
 
 ## Costs
 

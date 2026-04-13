@@ -22,6 +22,7 @@ import {
   Bot,
   ExternalLink,
   User,
+  BookOpen,
 } from "lucide-react";
 
 const BOT_CLIENT_ID = import.meta.env.VITE_DISCORD_CLIENT_ID || "";
@@ -49,7 +50,7 @@ export function EntryScreen() {
   };
 
   const botInviteUrl = BOT_CLIENT_ID
-    ? `https://discord.com/oauth2/authorize?client_id=${BOT_CLIENT_ID}&permissions=3147776&scope=bot`
+    ? `https://discord.com/oauth2/authorize?client_id=${BOT_CLIENT_ID}&permissions=3230720&scope=bot`
     : "";
 
   return (
@@ -162,35 +163,22 @@ export function EntryScreen() {
             </div>
           )}
 
-          {/* Setup guide */}
-          {!authLoading && user && (
-            <>
-              <Separator />
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-center">
-                  Setting up a new server?
-                </p>
-                <ol className="space-y-1.5 text-xs text-muted-foreground list-decimal list-inside">
-                  <li>
-                    Click <span className="font-medium text-foreground">Add Bot</span> above
-                    to invite Jacky Music to your Discord server
-                  </li>
-                  <li>
-                    Click <span className="font-medium text-foreground">Activate Server</span> and
-                    enter your Discord Server ID to enable the bot
-                  </li>
-                  <li>
-                    In Discord, type{" "}
-                    <code className="rounded bg-muted px-1">j!play &lt;song&gt;</code>{" "}
-                    to start a session
-                  </li>
-                  <li>
-                    Enter the session code above to control playback from the web
-                  </li>
-                </ol>
-              </div>
-            </>
-          )}
+          {/* Setup guide link */}
+          <Separator />
+          <div className="text-center">
+            <p className="text-sm text-muted-foreground mb-2">
+              New here? Follow the full setup guide to get started.
+            </p>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground hover:text-foreground"
+              onClick={() => navigate("/guide")}
+            >
+              <BookOpen className="mr-1.5 h-3.5 w-3.5" />
+              Setup Guide
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>

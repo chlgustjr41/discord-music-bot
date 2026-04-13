@@ -59,6 +59,15 @@ class FirestoreListener:
             await self._handle_search(new_query)
             return
 
+        # --- Local node request from web app ---
+        old_node_req = old.get("localNodeRequest")
+        new_node_req = new.get("localNodeRequest")
+        if new_node_req and new_node_req != old_node_req:
+            log.info(f"Local node request from web: {new_node_req}")
+            await self._handle_local_node_request(new_node_req)
+            self.fs.update_server_state(self.server_id, {"localNodeRequest": None})
+            return
+
         # --- Retrigger command from web app ---
         old_retrigger = old.get("retriggerCommand")
         new_retrigger = new.get("retriggerCommand")
@@ -318,6 +327,30 @@ class FirestoreListener:
                 self.fs.update_server_state(self.server_id, {"volume": vol})
             except ValueError:
                 pass
+
+    async def _handle_local_node_request(self, request: dict):
+        """Handle a local node connect/disconnect request from the web app."""
+        action = request.get("action")
+        guild_id = int(self.server_id)
+        localnode_cog = self.bot.get_cog("LocalNode")
+        if not localnode_cog:
+            log.error("LocalNode cog not loaded, cannot handle local node request")
+            return
+
+        if action == "connect":
+            url = request.get("url", "")
+            password = request.get("password", "")
+            if not url or not password:
+                log.warning("Local node connect request missing url or password")
+                return
+            err = await localnode_cog.connect_node(guild_id, url, password)
+            if err:
+                log.error(f"Web local node connect failed for guild {guild_id}: {err}")
+            else:
+                log.info(f"Web local node connected for guild {guild_id}")
+        elif action == "disconnect":
+            await localnode_cog.disconnect_node(guild_id)
+            log.info(f"Web local node disconnected for guild {guild_id}")
 
     async def _handle_search(self, query: str):
         """Search via Lavalink and write results back to Firestore."""

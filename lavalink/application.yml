@@ -16,9 +16,9 @@ lavalink:
       vimeo: true
       http: true
       local: false
-    bufferDurationMs: 2000
-    frameBufferDurationMs: 10000
-    playerUpdateInterval: 5
+    bufferDurationMs: 1000
+    frameBufferDurationMs: 2000
+    playerUpdateInterval: 10
     gc-warnings: true
 
 plugins:

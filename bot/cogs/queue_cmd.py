@@ -7,8 +7,11 @@ class QueueCmd(commands.Cog):
         self.bot = bot
         self.fs = bot.fs
 
-    @commands.command(name="queue", aliases=["q"])
+    @commands.command(name="queue", aliases=["q"], brief="Show the current queue")
     async def queue(self, ctx: commands.Context, page: int = 1):
+        """Show the current queue (10 tracks per page). Aliases: j!q
+
+        Example: j!queue 2  (show page 2)"""
         state = self.fs.get_server_state(str(ctx.guild.id))
         if not state:
             await ctx.send(embed=error_embed("No active session."))
@@ -18,8 +21,11 @@ class QueueCmd(commands.Cog):
         embed = queue_embed(q, current, page=page - 1)
         await ctx.send(embed=embed)
 
-    @commands.command(name="remove")
+    @commands.command(name="remove", brief="Remove a track by position")
     async def remove(self, ctx: commands.Context, position: int):
+        """Remove a track from the queue by its position number.
+
+        Example: j!remove 3  (remove the 3rd track)"""
         queue = self.fs.get_queue(str(ctx.guild.id))
         if position < 1 or position > len(queue):
             await ctx.send(embed=error_embed(f"Invalid position. Queue has {len(queue)} tracks."))
@@ -28,8 +34,11 @@ class QueueCmd(commands.Cog):
         self.fs.remove_from_queue(str(ctx.guild.id), position - 1)
         await ctx.send(embed=success_embed(f"Removed: **{removed['title']}**"))
 
-    @commands.command(name="move")
+    @commands.command(name="move", brief="Move a track to a new position")
     async def move(self, ctx: commands.Context, from_pos: int, to_pos: int):
+        """Move a track from one position to another in the queue.
+
+        Example: j!move 5 1  (move track 5 to position 1)"""
         queue = self.fs.get_queue(str(ctx.guild.id))
         if (from_pos < 1 or from_pos > len(queue) or
                 to_pos < 1 or to_pos > len(queue)):
@@ -41,8 +50,9 @@ class QueueCmd(commands.Cog):
             f"Moved **{track['title']}** from position {from_pos} to {to_pos}"
         ))
 
-    @commands.command(name="shuffle")
+    @commands.command(name="shuffle", brief="Shuffle the queue")
     async def shuffle(self, ctx: commands.Context):
+        """Randomly shuffle all tracks in the queue."""
         queue = self.fs.get_queue(str(ctx.guild.id))
         if not queue:
             await ctx.send(embed=error_embed("Queue is empty."))

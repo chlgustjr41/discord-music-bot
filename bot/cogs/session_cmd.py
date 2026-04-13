@@ -8,8 +8,11 @@ class SessionCmd(commands.Cog):
         self.bot = bot
         self.fs = bot.fs
 
-    @commands.command(name="session")
+    @commands.command(name="session", brief="Show the web dashboard session code")
     async def session(self, ctx: commands.Context):
+        """Show the current session code and web dashboard link.
+
+        Share this code with others so they can control playback from the web."""
         state = self.fs.get_server_state(str(ctx.guild.id))
         if not state or not state.get("sessionCode"):
             await ctx.send(embed=error_embed(

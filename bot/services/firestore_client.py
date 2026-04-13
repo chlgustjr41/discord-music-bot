@@ -217,3 +217,32 @@ class FirestoreClient:
     def delete_music_history(self, server_id: str, doc_id: str):
         (self.db.collection("servers").document(str(server_id))
          .collection("musicHistory").document(doc_id).delete())
+
+    # --- Local Node ---
+
+    def get_local_node(self, server_id: str) -> Optional[dict]:
+        doc = self.db.collection("serverOwners").document(str(server_id)).get()
+        if doc.exists:
+            return doc.to_dict().get("localNode")
+        return None
+
+    def set_local_node(self, server_id: str, url: str, password: str):
+        self.db.collection("serverOwners").document(str(server_id)).set({
+            "localNode": {
+                "url": url,
+                "password": password,
+                "connected": True,
+                "connectedAt": firestore.SERVER_TIMESTAMP,
+            }
+        }, merge=True)
+
+    def set_local_node_status(self, server_id: str, connected: bool):
+        """Update only the connected flag without touching credentials."""
+        self.db.collection("serverOwners").document(str(server_id)).update({
+            "localNode.connected": connected,
+        })
+
+    def clear_local_node(self, server_id: str):
+        self.db.collection("serverOwners").document(str(server_id)).update({
+            "localNode": firestore.DELETE_FIELD,
+        })

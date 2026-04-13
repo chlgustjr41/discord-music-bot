@@ -22,6 +22,8 @@ interface Props {
   searchQuery?: string | null;
 }
 
+const DEBOUNCE_MS = 1000;
+
 export function SearchPanel({ serverId, searchResults, searchQuery }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -30,26 +32,20 @@ export function SearchPanel({ serverId, searchResults, searchQuery }: Props) {
   const [error, setError] = useState("");
   const [addedMsg, setAddedMsg] = useState("");
   const waitingForResults = useRef(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSentQuery = useRef("");
 
-  // The bot clears searchQuery to null when it writes results back.
-  // So the flow is:
-  //   1. Frontend writes searchQuery="test", searchResults=[]
-  //   2. Bot reads query, searches, writes searchResults=[...], searchQuery=null
-  //   3. We detect: searchQuery became null AND searchResults has data → show results
+  // Watch for bot search results coming back via Firestore
   useEffect(() => {
     if (!waitingForResults.current) return;
+    if (searchQuery) return; // bot still processing
 
-    // searchQuery is still set = bot hasn't finished processing yet
-    if (searchQuery) return;
-
-    // searchQuery is null = bot finished. Check results.
     if (searchResults && searchResults.length > 0) {
       setResults(searchResults);
       setSelected(new Set());
       setLoading(false);
       waitingForResults.current = false;
     } else {
-      // Bot cleared searchQuery but results are empty = no results found
       setResults([]);
       setLoading(false);
       setError("No results found.");
@@ -70,9 +66,10 @@ export function SearchPanel({ serverId, searchResults, searchQuery }: Props) {
     return () => clearTimeout(timeout);
   }, [loading]);
 
-  const handleSearch = async () => {
-    const q = query.trim();
-    if (!q) return;
+  // Send search request to Firestore for the bot to pick up
+  const fireSearch = async (q: string) => {
+    if (q === lastSentQuery.current) return;
+    lastSentQuery.current = q;
 
     setLoading(true);
     setError("");
@@ -93,11 +90,36 @@ export function SearchPanel({ serverId, searchResults, searchQuery }: Props) {
     }
   };
 
+  // Debounce: fire search 1s after the user stops typing
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    const trimmed = query.trim();
+    if (!trimmed) {
+      setResults([]);
+      setLoading(false);
+      setError("");
+      lastSentQuery.current = "";
+      return;
+    }
+
+    debounceRef.current = setTimeout(() => {
+      fireSearch(trimmed);
+    }, DEBOUNCE_MS);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, serverId]);
+
   const clearResults = () => {
+    setQuery("");
     setResults([]);
     setSelected(new Set());
     setAddedMsg("");
     setError("");
+    lastSentQuery.current = "";
   };
 
   const toggleSelect = (videoId: string) => {
@@ -166,7 +188,7 @@ export function SearchPanel({ serverId, searchResults, searchQuery }: Props) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="flex gap-2">
+        <div className="relative">
           <Input
             type="text"
             value={query}
@@ -175,15 +197,11 @@ export function SearchPanel({ serverId, searchResults, searchQuery }: Props) {
               setAddedMsg("");
             }}
             placeholder="Search by name, artist, or paste a YouTube link..."
-            onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+            className="pr-8"
           />
-          <Button onClick={handleSearch} disabled={loading || !query.trim()}>
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              "Search"
-            )}
-          </Button>
+          {loading && (
+            <Loader2 className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+          )}
         </div>
 
         {addedMsg && <p className="text-xs text-primary">{addedMsg}</p>}

@@ -9,15 +9,21 @@ class PlaylistCmd(commands.Cog):
         self.bot = bot
         self.fs = bot.fs
 
-    @commands.group(name="playlist", aliases=["pl"], invoke_without_command=True)
+    @commands.group(name="playlist", aliases=["pl"], invoke_without_command=True, brief="Manage saved playlists")
     async def playlist(self, ctx: commands.Context):
+        """Save, load, list, or delete playlists. Aliases: j!pl
+
+        Subcommands: save, load, list, delete"""
         await ctx.send(embed=error_embed(
             "Usage: `j!playlist save <name>`, `j!playlist load <name>`, "
             "`j!playlist list`, `j!playlist delete <name>`"
         ))
 
-    @playlist.command(name="save")
+    @playlist.command(name="save", brief="Save the current queue as a playlist")
     async def save(self, ctx: commands.Context, *, name: str):
+        """Save the current track and queue as a named playlist.
+
+        Example: j!playlist save chill vibes"""
         state = self.fs.get_server_state(str(ctx.guild.id))
         if not state:
             await ctx.send(embed=error_embed("No active session."))
@@ -46,8 +52,11 @@ class PlaylistCmd(commands.Cog):
         self.fs.save_playlist(str(ctx.guild.id), name, tracks, ctx.author.display_name)
         await ctx.send(embed=success_embed(f"Saved playlist **{name}** with {len(tracks)} tracks."))
 
-    @playlist.command(name="load")
+    @playlist.command(name="load", brief="Load a playlist into the queue")
     async def load(self, ctx: commands.Context, *, name: str):
+        """Load a saved playlist's tracks into the current queue.
+
+        Example: j!playlist load chill vibes"""
         playlist_data = self.fs.load_playlist(str(ctx.guild.id), name)
         if not playlist_data:
             await ctx.send(embed=error_embed(f"Playlist **{name}** not found."))
@@ -60,8 +69,9 @@ class PlaylistCmd(commands.Cog):
             f"Loaded **{len(tracks)}** tracks from playlist **{name}** into queue."
         ))
 
-    @playlist.command(name="list", aliases=["ls"])
+    @playlist.command(name="list", aliases=["ls"], brief="List all saved playlists")
     async def list_playlists(self, ctx: commands.Context):
+        """Show all saved playlists for this server. Aliases: j!playlist ls"""
         playlists = self.fs.list_playlists(str(ctx.guild.id))
         if not playlists:
             await ctx.send(embed=error_embed("No saved playlists."))
@@ -74,8 +84,11 @@ class PlaylistCmd(commands.Cog):
         embed.description = "\n".join(lines)
         await ctx.send(embed=embed)
 
-    @playlist.command(name="delete", aliases=["del", "rm"])
+    @playlist.command(name="delete", aliases=["del", "rm"], brief="Delete a saved playlist")
     async def delete(self, ctx: commands.Context, *, name: str):
+        """Delete a saved playlist by name. Aliases: j!playlist del, j!playlist rm
+
+        Example: j!playlist delete chill vibes"""
         existing = self.fs.load_playlist(str(ctx.guild.id), name)
         if not existing:
             await ctx.send(embed=error_embed(f"Playlist **{name}** not found."))

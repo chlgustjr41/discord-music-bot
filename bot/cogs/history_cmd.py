@@ -9,8 +9,9 @@ class HistoryCmd(commands.Cog):
         self.bot = bot
         self.fs = bot.fs
 
-    @commands.command(name="history")
+    @commands.command(name="history", brief="Show recent play sessions")
     async def history(self, ctx: commands.Context):
+        """Show the last 5 play sessions with their track listings."""
         sessions = self.fs.get_history(str(ctx.guild.id), limit=5)
         if not sessions:
             await ctx.send(embed=error_embed("No play history yet."))
