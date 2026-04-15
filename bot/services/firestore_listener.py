@@ -7,6 +7,15 @@ import wavelink
 
 log = logging.getLogger(__name__)
 
+GCP_NODE_ID = "gcp-primary"
+
+
+def _get_gcp_node() -> wavelink.Node | None:
+    for node in wavelink.Pool.nodes.values():
+        if node.identifier == GCP_NODE_ID and node.status == wavelink.NodeStatus.CONNECTED:
+            return node
+    return None
+
 URL_RE = re.compile(r"^https?://")
 
 
@@ -148,7 +157,7 @@ class FirestoreListener:
             # If title looks like a URL, it needs resolution
             if URL_RE.match(title) and url:
                 try:
-                    results = await wavelink.Playable.search(url)
+                    results = await wavelink.Playable.search(url, node=_get_gcp_node())
 
                     # Playlist URL — expand all tracks
                     if isinstance(results, wavelink.Playlist) and len(results.tracks) > 1:
@@ -226,7 +235,7 @@ class FirestoreListener:
 
         if command == "play" and args:
             try:
-                results = await wavelink.Playable.search(args)
+                results = await wavelink.Playable.search(args, node=_get_gcp_node())
                 if not results:
                     return
 
@@ -356,7 +365,7 @@ class FirestoreListener:
         """Search via Lavalink and write results back to Firestore."""
         try:
             log.info(f"Searching Lavalink for: '{query}'")
-            results = await wavelink.Playable.search(query)
+            results = await wavelink.Playable.search(query, node=_get_gcp_node())
             log.info(f"Search returned: type={type(results).__name__}, "
                      f"len={len(results.tracks) if isinstance(results, wavelink.Playlist) else len(results) if isinstance(results, list) else 1}")
             if not results:

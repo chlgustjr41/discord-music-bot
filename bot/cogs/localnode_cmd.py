@@ -71,6 +71,13 @@ class LocalNode(commands.Cog):
                 if player_node_id == node_id:
                     await self._migrate_to_gcp(guild_id)
 
+        # Remove the node from the wavelink pool so it's never picked for requests
+        if local_node:
+            try:
+                await local_node.close(eject=True)
+            except Exception:
+                pass
+
         self.guild_node_map.pop(guild_id, None)
         self.fs.clear_local_node(str(guild_id))
         log.info(f"Local node disconnected for guild {guild_id}")
@@ -183,6 +190,13 @@ class LocalNode(commands.Cog):
             log.warning(f"Local node {node_id} is down for guild {guild_id} — failing over to GCP")
             await self._migrate_to_gcp(guild_id)
 
+            # Eject dead node from wavelink pool
+            if node:
+                try:
+                    await node.close(eject=True)
+                except Exception:
+                    pass
+
             self.guild_node_map.pop(guild_id, None)
             # Keep credentials in Firestore for auto-reconnect; just mark as disconnected
             try:
@@ -289,7 +303,8 @@ class LocalNode(commands.Cog):
             new_player = await channel.connect(cls=JackyPlayer)
             new_player.autoplay = wavelink.AutoPlayMode.disabled
 
-            results = await wavelink.Playable.search(current_track["url"])
+            gcp_node = self._find_node("gcp-primary")
+            results = await wavelink.Playable.search(current_track["url"], node=gcp_node)
             if not results:
                 return
 

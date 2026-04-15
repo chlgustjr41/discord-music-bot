@@ -14,6 +14,16 @@ from player import JackyPlayer
 
 log = logging.getLogger(__name__)
 
+GCP_NODE_ID = "gcp-primary"
+
+
+def get_gcp_node() -> wavelink.Node | None:
+    """Return the GCP Lavalink node explicitly, avoiding any local nodes in the pool."""
+    for node in wavelink.Pool.nodes.values():
+        if node.identifier == GCP_NODE_ID and node.status == wavelink.NodeStatus.CONNECTED:
+            return node
+    return None
+
 
 def _first_track(results) -> wavelink.Playable | None:
     """Extract the first Playable from a search result (list or Playlist)."""
@@ -81,22 +91,6 @@ class Playback(commands.Cog):
                 await ctx.send(embed=error_embed(f"Failed to join voice channel: {e}"))
                 return None
             player.autoplay = wavelink.AutoPlayMode.disabled
-
-            # Route to local node if available
-            preferred = self._get_preferred_node(ctx.guild.id)
-            if preferred:
-                try:
-                    player.node = preferred
-                    log.info(f"Guild {ctx.guild.id} using local node: {preferred.identifier}")
-                except Exception as e:
-                    log.warning(f"Failed to assign local node for guild {ctx.guild.id}: {e}")
-            else:
-                # Check if local node is configured but down
-                local_config = self.fs.get_local_node(str(ctx.guild.id))
-                if local_config:
-                    await ctx.send(embed=error_embed(
-                        "Local node is configured but not connected. Using cloud node instead."
-                    ))
             # Initialize server state in Firestore
             self.fs.init_server_state(str(ctx.guild.id))
             # Generate session code
@@ -133,10 +127,11 @@ class Playback(commands.Cog):
             return
 
         try:
-            results = await wavelink.Playable.search(track_data["url"])
+            node = get_gcp_node()
+            results = await wavelink.Playable.search(track_data["url"], node=node)
             if not results:
                 results = await wavelink.Playable.search(
-                    f"{track_data['title']} {track_data.get('artist', '')}"
+                    f"{track_data['title']} {track_data.get('artist', '')}", node=node
                 )
         except Exception as e:
             log.error(f"Search failed in play_next: {e}")
@@ -256,7 +251,7 @@ class Playback(commands.Cog):
         if loop_mode == "track" and state.get("currentTrack"):
             current = state["currentTrack"]
             try:
-                results = await wavelink.Playable.search(current["url"])
+                results = await wavelink.Playable.search(current["url"], node=get_gcp_node())
                 if results:
                     playable = _first_track(results)
                     if playable:
@@ -321,7 +316,7 @@ class Playback(commands.Cog):
             return
 
         try:
-            results = await wavelink.Playable.search(query)
+            results = await wavelink.Playable.search(query, node=get_gcp_node())
         except Exception as e:
             log.error(f"Search failed for query '{query}': {e}")
             await ctx.send(embed=error_embed(
