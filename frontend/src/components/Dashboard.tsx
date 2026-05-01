@@ -136,7 +136,14 @@ export function Dashboard() {
       <PlaybackControls state={state} serverId={serverId} disabled={!botConnected} />
       <Queue queue={state.queue} serverId={serverId} />
       <SearchPanel serverId={serverId} searchResults={state.searchResults} searchQuery={state.searchQuery} searchPlaylistName={state.searchPlaylistName} />
-      <PlaylistManager serverId={serverId} currentQueue={state.queue} currentTrack={state.currentTrack} searchResults={state.searchResults} searchQuery={state.searchQuery} />
+      <PlaylistManager
+        serverId={serverId}
+        currentQueue={state.queue}
+        currentTrack={state.currentTrack}
+        searchResults={state.searchResults}
+        searchQuery={state.searchQuery}
+        searchPlaylistName={state.searchPlaylistName}
+      />
       <CommandHistory serverId={serverId} />
       <MusicHistory serverId={serverId} />
       <ActivityLog entries={logEntries} />
