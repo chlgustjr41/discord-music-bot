@@ -144,7 +144,8 @@ class Playback(commands.Cog):
                 log.warning(f"GCP restart recovery: disconnect failed for guild {guild_id}: {e}")
 
             try:
-                new_player: JackyPlayer = await voice_channel.connect(cls=JackyPlayer, node=node)
+                new_player: JackyPlayer = await voice_channel.connect(cls=JackyPlayer)
+                new_player._node = node
                 new_player.autoplay = wavelink.AutoPlayMode.disabled
             except Exception as e:
                 log.error(f"GCP restart recovery: reconnect failed for guild {guild_id}: {e}")
@@ -189,8 +190,8 @@ class Playback(commands.Cog):
                 ))
                 return None
             try:
-                connect_kwargs = {"cls": JackyPlayer, "node": active_node}
-                player = await ctx.author.voice.channel.connect(**connect_kwargs)
+                player = await ctx.author.voice.channel.connect(cls=JackyPlayer)
+                player._node = active_node
             except Exception as e:
                 log.error(f"Failed to connect to voice channel: {e}")
                 await ctx.send(embed=error_embed(f"Failed to join voice channel: {e}"))
@@ -282,11 +283,10 @@ class Playback(commands.Cog):
                 log.warning(f"_reconnect_voice: disconnect failed for guild {guild_id}: {e}")
             await asyncio.sleep(0.5)
             node = self._get_preferred_node(guild_id) or get_gcp_node()
-            connect_kwargs = {"cls": JackyPlayer}
-            if node:
-                connect_kwargs["node"] = node
             try:
-                new_player: JackyPlayer = await voice_channel.connect(**connect_kwargs)
+                new_player: JackyPlayer = await voice_channel.connect(cls=JackyPlayer)
+                if node:
+                    new_player._node = node
             except Exception as e:
                 log.error(f"_reconnect_voice: reconnect failed for guild {guild_id}: {e}")
                 return None
@@ -965,7 +965,8 @@ class Playback(commands.Cog):
                 log.warning(f"Disconnect during migration failed for guild {guild_id}: {e}")
 
             try:
-                new_player: JackyPlayer = await voice_channel.connect(cls=JackyPlayer, node=target_node)
+                new_player: JackyPlayer = await voice_channel.connect(cls=JackyPlayer)
+                new_player._node = target_node
                 new_player.autoplay = wavelink.AutoPlayMode.disabled
             except Exception as e:
                 log.error(f"Reconnect during migration failed for guild {guild_id}: {e}")
@@ -1045,7 +1046,8 @@ class Playback(commands.Cog):
                 return
 
             try:
-                new_player: JackyPlayer = await channel.connect(cls=JackyPlayer, node=gcp_node)
+                new_player: JackyPlayer = await channel.connect(cls=JackyPlayer)
+                new_player._node = gcp_node
                 new_player.autoplay = wavelink.AutoPlayMode.disabled
             except Exception as e:
                 log.error(f"Reconnect failed during failover for guild {guild_id}: {e}")
