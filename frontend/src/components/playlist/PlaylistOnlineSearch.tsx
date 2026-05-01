@@ -57,7 +57,7 @@ export function PlaylistOnlineSearch({
   return (
     <div className="space-y-2">
       <div className="relative">
-        <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           type="text"
           value={query}
@@ -66,7 +66,7 @@ export function PlaylistOnlineSearch({
           className="pl-8 pr-8"
         />
         {loading && (
-          <Loader2 className="absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+          <Loader2 className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
         )}
       </div>
 
