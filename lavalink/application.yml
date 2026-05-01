@@ -33,12 +33,6 @@ plugins:
     clients:
       - MUSIC
       - IOS
-    oauth:
-      enabled: true
-      # On first start with no stored token, Lavalink prints a device-code URL to logs.
-      # Visit https://www.google.com/device and enter the code to authenticate.
-      # The token is saved to /opt/Lavalink/tokens.json inside the container.
-      skipInitialization: false
 
 logging:
   level:
