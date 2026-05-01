@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Toaster } from "sonner";
+import { LandingPage } from "./components/LandingPage";
 import { EntryScreen } from "./components/EntryScreen";
 import { Dashboard } from "./components/Dashboard";
 import { ActivateServer } from "./components/ActivateServer";
@@ -23,7 +24,8 @@ function App() {
         }}
       />
       <Routes>
-        <Route path="/" element={<EntryScreen />} />
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/app" element={<EntryScreen />} />
         <Route path="/dashboard/:sessionCode" element={<Dashboard />} />
         <Route path="/activate" element={<ActivateServer />} />
         <Route path="/guide" element={<SetupGuide />} />

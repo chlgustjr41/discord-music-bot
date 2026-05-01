@@ -24,3 +24,4 @@ services:
       - LAVALINK_PASSWORD=youshallnotpass
     volumes:
       - ./bot:/app
+      - /var/run/docker.sock:/var/run/docker.sock

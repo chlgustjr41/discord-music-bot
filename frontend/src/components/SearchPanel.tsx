@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { doc, updateDoc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import type { SearchResult, Track } from "../types";
@@ -14,23 +15,30 @@ import {
   ArrowUpToLine,
   ArrowDownToLine,
   X,
+  Info,
+  ListMusic,
 } from "lucide-react";
 
 interface Props {
   serverId: string;
   searchResults?: SearchResult[];
   searchQuery?: string | null;
+  searchPlaylistName?: string | null;
 }
 
 const DEBOUNCE_MS = 1000;
 
-export function SearchPanel({ serverId, searchResults, searchQuery }: Props) {
+export function SearchPanel({ serverId, searchResults, searchQuery, searchPlaylistName }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
+  const [playlistName, setPlaylistName] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [addedMsg, setAddedMsg] = useState("");
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [infoPos, setInfoPos] = useState({ top: 0, right: 0 });
+  const infoButtonRef = useRef<HTMLButtonElement>(null);
   const waitingForResults = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSentQuery = useRef("");
@@ -41,17 +49,21 @@ export function SearchPanel({ serverId, searchResults, searchQuery }: Props) {
     if (searchQuery) return; // bot still processing
 
     if (searchResults && searchResults.length > 0) {
+      const isPlaylist = !!searchPlaylistName;
       setResults(searchResults);
-      setSelected(new Set());
+      setPlaylistName(searchPlaylistName ?? null);
+      // Auto-select all tracks when results come from a playlist
+      setSelected(isPlaylist ? new Set(searchResults.map((r) => r.videoId)) : new Set());
       setLoading(false);
       waitingForResults.current = false;
     } else {
       setResults([]);
+      setPlaylistName(null);
       setLoading(false);
       setError("No results found.");
       waitingForResults.current = false;
     }
-  }, [searchResults, searchQuery]);
+  }, [searchResults, searchQuery, searchPlaylistName]);
 
   // Timeout — if bot doesn't respond within 15s, stop loading
   useEffect(() => {
@@ -116,6 +128,7 @@ export function SearchPanel({ serverId, searchResults, searchQuery }: Props) {
   const clearResults = () => {
     setQuery("");
     setResults([]);
+    setPlaylistName(null);
     setSelected(new Set());
     setAddedMsg("");
     setError("");
@@ -188,24 +201,89 @@ export function SearchPanel({ serverId, searchResults, searchQuery }: Props) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="relative">
-          <Input
-            type="text"
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setAddedMsg("");
-            }}
-            placeholder="Search by name, artist, or paste a YouTube link..."
-            className="pr-8"
-          />
-          {loading && (
-            <Loader2 className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+        <div className="relative flex items-center gap-2">
+          <div className="relative flex-1">
+            <Input
+              type="text"
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setAddedMsg("");
+              }}
+              placeholder="Search or paste a YouTube / SoundCloud / Bandcamp link…"
+              className="pr-8"
+            />
+            {loading && (
+              <Loader2 className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+            )}
+          </div>
+          {/* Supported formats info */}
+          <div className="shrink-0">
+            <button
+              ref={infoButtonRef}
+              type="button"
+              onMouseEnter={() => {
+                const rect = infoButtonRef.current?.getBoundingClientRect();
+                if (rect) {
+                  setInfoPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
+                }
+                setInfoOpen(true);
+              }}
+              onMouseLeave={() => setInfoOpen(false)}
+              onFocus={() => {
+                const rect = infoButtonRef.current?.getBoundingClientRect();
+                if (rect) {
+                  setInfoPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
+                }
+                setInfoOpen(true);
+              }}
+              onBlur={() => setInfoOpen(false)}
+              className="flex h-9 w-9 items-center justify-center rounded-md border border-input bg-background text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="Supported search formats"
+            >
+              <Info className="h-4 w-4" />
+            </button>
+          </div>
+          {infoOpen && createPortal(
+            <div
+              style={{ position: "fixed", top: infoPos.top, right: infoPos.right }}
+              className="z-[9999] w-72 rounded-lg border bg-popover p-3 shadow-md text-xs text-popover-foreground space-y-2"
+            >
+              <p className="font-semibold text-sm">Supported formats</p>
+              <div className="space-y-1.5">
+                <div>
+                  <span className="font-medium">Text search</span>
+                  <p className="text-muted-foreground">Searches YouTube Music. Type a song name, artist, or both.</p>
+                </div>
+                <div>
+                  <span className="font-medium">YouTube URL</span>
+                  <p className="text-muted-foreground">Paste a video or playlist link (youtube.com / youtu.be).</p>
+                </div>
+                <div>
+                  <span className="font-medium">SoundCloud URL</span>
+                  <p className="text-muted-foreground">Paste a track, set, or artist page link (soundcloud.com).</p>
+                </div>
+                <div>
+                  <span className="font-medium">Bandcamp URL</span>
+                  <p className="text-muted-foreground">Paste an album or track link from any Bandcamp page.</p>
+                </div>
+              </div>
+            </div>,
+            document.body
           )}
         </div>
 
         {addedMsg && <p className="text-xs text-primary">{addedMsg}</p>}
         {error && <p className="text-sm text-destructive">{error}</p>}
+
+        {/* Playlist banner */}
+        {playlistName && results.length > 0 && (
+          <div className="flex items-center gap-2 rounded-md bg-primary/8 border border-primary/20 px-3 py-2 text-sm">
+            <ListMusic className="h-4 w-4 shrink-0 text-primary" />
+            <span className="font-medium text-primary truncate">{playlistName}</span>
+            <span className="text-muted-foreground shrink-0">— {results.length} tracks</span>
+          </div>
+        )}
 
         {results.length > 0 && (
           <div className="space-y-2">

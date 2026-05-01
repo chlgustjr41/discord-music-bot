@@ -2,11 +2,13 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
-    --font-heading: var(--font-sans);
+    --font-heading: 'Syne', 'Geist Variable', sans-serif;
+    --font-mono: 'JetBrains Mono', 'Courier New', monospace;
     --font-sans: 'Geist Variable', sans-serif;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
@@ -48,73 +50,79 @@
     --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Jacky Music palette — matches LandingPage.tsx variables so the login,
+   dashboard, activate, and setup pages inherit the same dark purple/teal
+   atmosphere as the landing page. Purely a styling concern: shadcn components
+   read these variables, so no JSX/logic changes are needed elsewhere. */
 :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    --primary: oklch(0.205 0 0);
-    --primary-foreground: oklch(0.985 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --border: oklch(0.922 0 0);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.708 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
+    --background: #0b0c10;
+    --foreground: #e2e0f0;
+    --card: #13151c;
+    --card-foreground: #e2e0f0;
+    --popover: #13151c;
+    --popover-foreground: #e2e0f0;
+    --primary: #6c63ff;
+    --primary-foreground: #ffffff;
+    --secondary: #1a1c24;
+    --secondary-foreground: #e2e0f0;
+    --muted: #1a1c24;
+    --muted-foreground: #8c8cb0;
+    --accent: #1df5c0;
+    --accent-foreground: #0b0c10;
+    --destructive: oklch(0.704 0.191 22.216);
+    --border: rgba(108, 99, 255, 0.18);
+    --input: rgba(108, 99, 255, 0.22);
+    --ring: #6c63ff;
+    --chart-1: #6c63ff;
+    --chart-2: #1df5c0;
+    --chart-3: #ffd93d;
+    --chart-4: #ff6b6b;
+    --chart-5: #8c8cb0;
     --radius: 0.625rem;
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.145 0 0);
-    --sidebar-primary: oklch(0.205 0 0);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.97 0 0);
-    --sidebar-accent-foreground: oklch(0.205 0 0);
-    --sidebar-border: oklch(0.922 0 0);
-    --sidebar-ring: oklch(0.708 0 0);
+    --sidebar: #13151c;
+    --sidebar-foreground: #e2e0f0;
+    --sidebar-primary: #6c63ff;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #1df5c0;
+    --sidebar-accent-foreground: #0b0c10;
+    --sidebar-border: rgba(108, 99, 255, 0.18);
+    --sidebar-ring: #6c63ff;
 }
 
+/* Keep .dark aligned with :root so toggling the class is a no-op — one theme,
+   one source of truth. */
 .dark {
-    --background: oklch(0.145 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.185 0 0);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.205 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.72 0.17 152);
-    --primary-foreground: oklch(0.145 0 0);
-    --secondary: oklch(0.269 0 0);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.269 0 0);
-    --muted-foreground: oklch(0.708 0 0);
-    --accent: oklch(0.72 0.17 152);
-    --accent-foreground: oklch(0.145 0 0);
+    --background: #0b0c10;
+    --foreground: #e2e0f0;
+    --card: #13151c;
+    --card-foreground: #e2e0f0;
+    --popover: #13151c;
+    --popover-foreground: #e2e0f0;
+    --primary: #6c63ff;
+    --primary-foreground: #ffffff;
+    --secondary: #1a1c24;
+    --secondary-foreground: #e2e0f0;
+    --muted: #1a1c24;
+    --muted-foreground: #8c8cb0;
+    --accent: #1df5c0;
+    --accent-foreground: #0b0c10;
     --destructive: oklch(0.704 0.191 22.216);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.72 0.17 152);
-    --chart-1: oklch(0.72 0.17 152);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
-    --sidebar: oklch(0.205 0 0);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.72 0.17 152);
-    --sidebar-primary-foreground: oklch(0.985 0 0);
-    --sidebar-accent: oklch(0.269 0 0);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.72 0.17 152);
+    --border: rgba(108, 99, 255, 0.18);
+    --input: rgba(108, 99, 255, 0.22);
+    --ring: #6c63ff;
+    --chart-1: #6c63ff;
+    --chart-2: #1df5c0;
+    --chart-3: #ffd93d;
+    --chart-4: #ff6b6b;
+    --chart-5: #8c8cb0;
+    --sidebar: #13151c;
+    --sidebar-foreground: #e2e0f0;
+    --sidebar-primary: #6c63ff;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #1df5c0;
+    --sidebar-accent-foreground: #0b0c10;
+    --sidebar-border: rgba(108, 99, 255, 0.18);
+    --sidebar-ring: #6c63ff;
 }
 
 @layer base {
@@ -123,8 +131,22 @@
     }
   body {
     @apply bg-background text-foreground;
+    /* Matches the landing page's ambient backdrop: two soft radial glows
+       (purple + teal) on the deep-space base color. */
+    background-image:
+      radial-gradient(ellipse 900px 500px at 15% -10%, rgba(108, 99, 255, 0.14), transparent 60%),
+      radial-gradient(ellipse 700px 420px at 100% 100%, rgba(29, 245, 192, 0.08), transparent 60%);
+    background-attachment: fixed;
+    min-height: 100vh;
     }
   html {
     @apply font-sans;
     }
+  h1, h2, h3 {
+    font-family: 'Syne', 'Geist Variable', sans-serif;
+    letter-spacing: -0.01em;
+  }
+  code, kbd, samp, pre {
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
+  }
 }

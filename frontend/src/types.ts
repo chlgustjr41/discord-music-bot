@@ -36,6 +36,7 @@ export interface ServerState {
   discordNotify?: boolean;
   searchQuery?: string | null;
   searchResults?: SearchResult[];
+  searchPlaylistName?: string | null;
   serverName?: string;
   serverIcon?: string;
 }

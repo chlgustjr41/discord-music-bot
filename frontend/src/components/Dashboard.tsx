@@ -135,7 +135,7 @@ export function Dashboard() {
       <NowPlaying track={state.currentTrack} isPaused={state.isPaused || !botConnected} serverId={serverId} />
       <PlaybackControls state={state} serverId={serverId} disabled={!botConnected} />
       <Queue queue={state.queue} serverId={serverId} />
-      <SearchPanel serverId={serverId} searchResults={state.searchResults} searchQuery={state.searchQuery} />
+      <SearchPanel serverId={serverId} searchResults={state.searchResults} searchQuery={state.searchQuery} searchPlaylistName={state.searchPlaylistName} />
       <PlaylistManager serverId={serverId} currentQueue={state.queue} currentTrack={state.currentTrack} searchResults={state.searchResults} searchQuery={state.searchQuery} />
       <CommandHistory serverId={serverId} />
       <MusicHistory serverId={serverId} />
