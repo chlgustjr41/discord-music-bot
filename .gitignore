@@ -17,6 +17,9 @@ functions/.env
 .vscode/
 .idea/
 
+# Brainstorming companion
+.superpowers/
+
 # Environment
 .env
 *.local
