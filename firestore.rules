@@ -12,9 +12,20 @@ service cloud.firestore {
     match /servers/{serverId} {
       allow read, write: if true;
 
-      // Subcollections: playlists, history
+      // Subcollections: history (open writes — used by bot via admin SDK and web client)
       match /{subcollection}/{docId} {
         allow read, write: if true;
+      }
+
+      // Playlists — split create/update/delete so the rule layer can be tightened later.
+      // Today both create and update are allowed; client-side getDoc + writeBatch is the
+      // primary defense against name collisions. Delete is allowed for owner-initiated
+      // remove and rename batches.
+      match /playlists/{name} {
+        allow read: if true;
+        allow create: if true;
+        allow update: if true;
+        allow delete: if true;
       }
     }
 
