@@ -374,9 +374,11 @@ class FirestoreListener:
                 return
 
             tracks = []
+            playlist_name: str | None = None
             if isinstance(results, wavelink.Playlist):
                 # Playlist URL — return ALL tracks so user can pick
                 source = results.tracks
+                playlist_name = results.name or "Playlist"
             elif isinstance(results, list):
                 # Text search — return top 10
                 source = results[:10]
@@ -398,8 +400,8 @@ class FirestoreListener:
                     "duration": track.length // 1000 if track.length else 0,
                 })
 
-            log.info(f"Returning {len(tracks)} search results")
-            self.fs.set_search_results(self.server_id, tracks)
+            log.info(f"Returning {len(tracks)} search results (playlist={playlist_name!r})")
+            self.fs.set_search_results(self.server_id, tracks, playlist_name=playlist_name)
         except Exception as e:
             log.error(f"Search failed for '{query}': {e}", exc_info=True)
             self.fs.set_search_results(self.server_id, [])

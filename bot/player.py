@@ -5,7 +5,10 @@ Lavalink 4.2.0+ requires channelId in the voice state payload for DAVE
 does not include it. This subclass patches the voice dispatch to add it.
 """
 
+import logging
 import wavelink
+
+log = logging.getLogger(__name__)
 
 
 class JackyPlayer(wavelink.Player):
@@ -36,7 +39,22 @@ class JackyPlayer(wavelink.Player):
 
         try:
             await self.node._update_player(self.guild.id, data=request)
-        except wavelink.LavalinkException:
+        except wavelink.LavalinkException as e:
+            log.error(
+                "Lavalink rejected voice update for guild %s "
+                "(node=%s, channelId=%s, endpoint=%s): %s",
+                self.guild.id,
+                getattr(self.node, "identifier", "?"),
+                channel_id or "missing",
+                endpoint,
+                e,
+            )
+            await self.disconnect()
+        except Exception as e:
+            log.error(
+                "Unexpected error in _dispatch_voice_update for guild %s: %s",
+                self.guild.id, e, exc_info=True,
+            )
             await self.disconnect()
         else:
             self._connected = True

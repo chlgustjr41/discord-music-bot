@@ -118,10 +118,11 @@ class FirestoreClient:
 
     # --- Search (web app → bot → results) ---
 
-    def set_search_results(self, server_id: str, results: list):
+    def set_search_results(self, server_id: str, results: list, playlist_name: str | None = None):
         self.update_server_state(server_id, {
             "searchResults": results,
             "searchQuery": None,  # Clear query to signal completion
+            "searchPlaylistName": playlist_name,
         })
 
     # --- Playlists ---

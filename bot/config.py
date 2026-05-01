@@ -15,6 +15,7 @@ LAVALINK_PASSWORD = os.getenv("LAVALINK_PASSWORD", "youshallnotpass")
 
 BOT_PREFIX = "j!"
 EMBED_COLOR = 0x1DB954  # Spotify-green accent
-IDLE_TIMEOUT_SECONDS = 300  # 5 minutes
+IDLE_TIMEOUT_SECONDS = 300        # 5 min: queue empty, users present
+EMPTY_CHANNEL_TIMEOUT_SECONDS = 120  # 2 min: all humans left the voice channel
 SESSION_CODE_LENGTH = 6
 WEB_APP_URL = os.getenv("WEB_APP_URL", "http://localhost:5173")

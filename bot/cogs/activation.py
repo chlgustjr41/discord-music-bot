@@ -30,6 +30,10 @@ class ActivationCheck(commands.Cog):
         if ctx.guild is None:
             await ctx.send(embed=error_embed("Commands only work in a server."))
             return False
+        # j!bot commands are available to everyone without server activation.
+        cmd = ctx.command
+        if cmd and (cmd.name == "bot" or (cmd.parent and cmd.parent.name == "bot")):
+            return True
         if not self.fs.is_server_activated(str(ctx.guild.id)):
             await ctx.send(embed=error_embed(
                 f"This server has not been activated.\n"
