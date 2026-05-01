@@ -9,6 +9,11 @@ services:
       - ./lavalink/application.yml:/opt/Lavalink/application.yml
     environment:
       - _JAVA_OPTIONS=-Xmx1g -XX:+UseG1GC -XX:MaxGCPauseMillis=10
+      # Sourced from .env. Empty on first start triggers the device-code OAuth
+      # flow (URL printed in container logs); set after authenticating to
+      # persist the session across restarts. NOT a file mount — see the comment
+      # in lavalink/application.yml for why.
+      - YOUTUBE_OAUTH_REFRESH_TOKEN=${YOUTUBE_OAUTH_REFRESH_TOKEN:-}
 
   jacky-bot:
     build: ./bot

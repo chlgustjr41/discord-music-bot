@@ -27,12 +27,40 @@ plugins:
     allowSearch: true
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
-    # MUSIC: YouTube Music client — search + playback, stable on GCP IPs
-    # IOS: iOS YouTube client — fallback for tracks not on YouTube Music
-    # TV_EMBEDDED excluded — not supported in this plugin version (1.18.0)
+    # Mirrors the proven-working client set from jacky-music-local:
+    #   MUSIC         - YouTube Music search (ytmsearch:); search-only, see clientOptions below
+    #   ANDROID_MUSIC - playback for music tracks; no PoToken
+    #   ANDROID_VR    - generic playback fallback; no PoToken; tolerant of cloud IPs
+    # Order matters: Lavalink tries clients top-to-bottom until one resolves.
     clients:
       - MUSIC
-      - IOS
+      - ANDROID_MUSIC
+      - ANDROID_VR
+    clientOptions:
+      MUSIC:
+        # MUSIC client cannot resolve playable streams in 1.18.0 — pin it to
+        # search-only so Lavalink doesn't waste a try on it during playback.
+        playback: false
+        videoLoading: false
+    # OAuth makes YouTube treat requests as a real signed-in user, sidestepping
+    # the IP-reputation checks that block GCP/AWS IPs. Required for reliable
+    # playback on cloud-hosted Lavalink.
+    #
+    # First-time setup (run once):
+    #   1. Leave YOUTUBE_OAUTH_REFRESH_TOKEN blank in .env
+    #   2. Start Lavalink — it prints a URL like https://www.google.com/device
+    #      and a code in the logs
+    #   3. Authenticate in a browser; the refreshToken is then printed to logs
+    #   4. Copy that token into YOUTUBE_OAUTH_REFRESH_TOKEN in .env, restart
+    #
+    # The token is sourced from the container env, NOT from a tokens.json file.
+    # That avoids the previous bug where Docker created a directory at the
+    # bind-mount target on a fresh git pull (since the file didn't exist on
+    # disk anymore), which then prevented Lavalink from starting.
+    oauth:
+      enabled: true
+      refreshToken: "${YOUTUBE_OAUTH_REFRESH_TOKEN:}"
+      skipInitialization: false
 
 logging:
   level:
