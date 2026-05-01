@@ -467,16 +467,27 @@ class Playback(commands.Cog):
             self.start_idle_timer(guild_id, player)
             return
 
-        try:
-            node = self._get_preferred_node(guild_id) or get_gcp_node()
-            results = await wavelink.Playable.search(track_data["url"], node=node)
-            if not results:
-                results = await wavelink.Playable.search(
-                    f"{track_data['title']} {track_data.get('artist', '')}", node=node
+        node = self._get_preferred_node(guild_id) or get_gcp_node()
+        results = None
+        last_exc: Exception | None = None
+        for attempt in range(3):
+            if attempt > 0:
+                await asyncio.sleep(2)
+            try:
+                results = await wavelink.Playable.search(track_data["url"], node=node)
+                if not results:
+                    query = f"{track_data['title']} {track_data.get('artist', '')}".strip()
+                    results = await wavelink.Playable.search(query, node=node)
+                if results:
+                    break
+            except Exception as e:
+                last_exc = e
+                log.warning(
+                    f"Search attempt {attempt + 1}/3 for '{track_data['title']}' "
+                    f"in guild {guild_id}: {e}"
                 )
-        except Exception as e:
-            log.error(f"Search failed in play_next: {e}")
-            results = None
+        if last_exc and not results:
+            log.error(f"All search attempts failed for '{track_data['title']}' in guild {guild_id}")
 
         if not results:
             # Count search failures toward the circuit breaker so a run of all-unresolvable
