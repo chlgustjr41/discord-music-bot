@@ -27,11 +27,9 @@ plugins:
     allowSearch: true
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
-    # MUSIC: search only — YouTube Music client, reliable for lookups
-    # TV_EMBEDDED: playback primary — TV embedded player, most stable against YouTube bot detection
-    # IOS: playback fallback — Apple client, lower block rate than Android clients
-    # ANDROID_MUSIC / ANDROID_VR excluded — YouTube has been blocking these since early 2025
-    # WEB excluded — requires signature cipher extraction which YouTube frequently breaks
+    # Client order = priority. MUSIC is search-only (no playback).
+    # TV_EMBEDDED + IOS are the most bot-detection-resistant unauthenticated clients.
+    # OAuth makes all requests appear as a real logged-in user — required for GCP IPs.
     clients:
       - MUSIC
       - TV_EMBEDDED
@@ -40,6 +38,12 @@ plugins:
       MUSIC:
         playback: false
         videoLoading: false
+    oauth:
+      enabled: true
+      # On first start with no stored token, Lavalink prints a device-code URL to logs.
+      # Visit https://www.google.com/device and enter the code to authenticate.
+      # The token is saved to /opt/Lavalink/tokens.json inside the container.
+      skipInitialization: false
 
 logging:
   level:
