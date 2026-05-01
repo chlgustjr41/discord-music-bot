@@ -20,4 +20,4 @@ functions/.env
 # Environment
 .env
 *.local
-serviceAccountKey.json
+serviceAccountKey.jsonlavalink/tokens.json

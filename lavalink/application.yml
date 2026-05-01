@@ -27,17 +27,12 @@ plugins:
     allowSearch: true
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
-    # Client order = priority. MUSIC is search-only (no playback).
-    # TV_EMBEDDED + IOS are the most bot-detection-resistant unauthenticated clients.
-    # OAuth makes all requests appear as a real logged-in user — required for GCP IPs.
+    # MUSIC: YouTube Music client — search + playback, stable on GCP IPs
+    # IOS: iOS YouTube client — fallback for tracks not on YouTube Music
+    # TV_EMBEDDED excluded — not supported in this plugin version (1.18.0)
     clients:
       - MUSIC
-      - TV_EMBEDDED
       - IOS
-    clientOptions:
-      MUSIC:
-        playback: false
-        videoLoading: false
     oauth:
       enabled: true
       # On first start with no stored token, Lavalink prints a device-code URL to logs.
