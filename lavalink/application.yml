@@ -27,15 +27,23 @@ plugins:
     allowSearch: true
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
-    # Mirrors the proven-working client set from jacky-music-local:
-    #   MUSIC         - YouTube Music search (ytmsearch:); search-only, see clientOptions below
-    #   ANDROID_MUSIC - playback for music tracks; no PoToken
-    #   ANDROID_VR    - generic playback fallback; no PoToken; tolerant of cloud IPs
+    # Client roles:
+    #   MUSIC         - YouTube Music search (ytmsearch:); search-only, see clientOptions
+    #   ANDROID_MUSIC - playback for music tracks; no PoToken; not OAuth-compatible
+    #   ANDROID_VR    - generic playback fallback; no PoToken; not OAuth-compatible
+    #   IOS           - OAuth-compatible playback client. The first three fail with
+    #                   HTTP 400 on cloud datacenter IPs because YouTube doesn't trust
+    #                   anonymous requests from those subnets. IOS routes through the
+    #                   OAuth handler below, so its requests carry a real Google
+    #                   identity and YouTube serves them — this is what unblocks
+    #                   playback on GCP. Last in the list so the lighter no-auth
+    #                   clients try first; IOS picks up only when they all fail.
     # Order matters: Lavalink tries clients top-to-bottom until one resolves.
     clients:
       - MUSIC
       - ANDROID_MUSIC
       - ANDROID_VR
+      - IOS
     clientOptions:
       MUSIC:
         # MUSIC client cannot resolve playable streams in 1.18.0 — pin it to
