@@ -48,7 +48,7 @@ class BotCmd(commands.Cog):
     # ------------------------------------------------------------------
 
     @commands.group(name="bot", invoke_without_command=True, brief="Bot management commands")
-    async def bot_cmd(self, ctx: commands.Context):
+    async def manage(self, ctx: commands.Context):
         """Check status, view logs, or restart the bot and Lavalink.
 
         Subcommands:
@@ -70,7 +70,7 @@ class BotCmd(commands.Cog):
     #  j!bot restart
     # ------------------------------------------------------------------
 
-    @bot_cmd.command(name="restart", brief="Restart containers")
+    @manage.command(name="restart", brief="Restart containers")
     async def restart(self, ctx: commands.Context, target: str = "bot"):
         """Restart one or both containers.
 
@@ -139,7 +139,7 @@ class BotCmd(commands.Cog):
     #  j!bot status
     # ------------------------------------------------------------------
 
-    @bot_cmd.command(name="status", brief="Show container health")
+    @manage.command(name="status", brief="Show container health")
     async def status(self, ctx: commands.Context):
         """Show the status and uptime of the bot and Lavalink containers."""
         def _sync():
@@ -186,7 +186,7 @@ class BotCmd(commands.Cog):
     #  j!bot logs
     # ------------------------------------------------------------------
 
-    @bot_cmd.command(name="logs", brief="Tail container logs")
+    @manage.command(name="logs", brief="Tail container logs")
     async def logs(self, ctx: commands.Context, service: str = "bot", lines: int = 20):
         """Show recent log output from a container.
 
