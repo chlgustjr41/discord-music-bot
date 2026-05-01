@@ -49,9 +49,9 @@ export function PlaylistInternalSearch({
         placeholder="Filter queue, history, and other playlists…"
       />
       <ResizableList
-        defaultHeight={200}
+        defaultHeight={500}
         minHeight={80}
-        maxHeight={400}
+        maxHeight={800}
         className="rounded-md border"
       >
         {poolLoading ? (

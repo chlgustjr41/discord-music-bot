@@ -91,9 +91,9 @@ export function PlaylistOnlineSearch({
       )}
 
       <ResizableList
-        defaultHeight={200}
+        defaultHeight={500}
         minHeight={80}
-        maxHeight={400}
+        maxHeight={800}
         className="rounded-md border"
       >
         {!loading && results.length === 0 ? (

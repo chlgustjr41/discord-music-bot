@@ -112,7 +112,7 @@ export function PlaylistDraftList({ draft, onChange, formatDuration }: Props) {
   }
 
   return (
-    <ResizableList defaultHeight={200} minHeight={80} maxHeight={400} className="rounded-md border">
+    <ResizableList defaultHeight={500} minHeight={80} maxHeight={800} className="rounded-md border">
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={draft.map((t) => t.url)} strategy={verticalListSortingStrategy}>
           <ul className="p-1">

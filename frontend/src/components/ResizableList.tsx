@@ -48,7 +48,7 @@ export function ResizableList({
   return (
     <div className="relative">
       <div
-        className={`overflow-y-auto ${className}`}
+        className={`overflow-y-auto overflow-x-hidden ${className}`}
         style={{ maxHeight: height }}
       >
         {children}

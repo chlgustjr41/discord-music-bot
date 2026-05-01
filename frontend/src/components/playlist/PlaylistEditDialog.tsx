@@ -168,7 +168,7 @@ export function PlaylistEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg max-h-[85vh] flex flex-col">
+      <DialogContent className="sm:max-w-5xl h-[95vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>{editing ? "Edit Playlist" : "Create Playlist"}</DialogTitle>
           <DialogDescription>
@@ -189,64 +189,66 @@ export function PlaylistEditDialog({
           autoFocus
         />
 
-        {/* Draft list */}
-        <div className="space-y-1">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-            Playlist ({draft.length})
-          </p>
-          <PlaylistDraftList draft={draft} onChange={setDraft} formatDuration={formatDuration} />
-        </div>
-
-        {/* Search tabs */}
-        <div className="flex flex-col flex-1 min-h-0 space-y-2">
-          <div className="flex border-b">
-            <button
-              type="button"
-              onClick={() => setTab("internal")}
-              className={`px-3 py-1.5 text-sm font-medium border-b-2 -mb-px ${
-                tab === "internal"
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Internal
-            </button>
-            <button
-              type="button"
-              onClick={() => setTab("online")}
-              className={`px-3 py-1.5 text-sm font-medium border-b-2 -mb-px ${
-                tab === "online"
-                  ? "border-primary text-foreground"
-                  : "border-transparent text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              Online
-            </button>
+        <div className="flex flex-col md:flex-row gap-4 flex-1 min-h-0">
+          {/* Left: draft */}
+          <div className="md:w-1/2 flex flex-col min-h-0 space-y-1">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Playlist ({draft.length})
+            </p>
+            <PlaylistDraftList draft={draft} onChange={setDraft} formatDuration={formatDuration} />
           </div>
 
-          {tab === "internal" ? (
-            <PlaylistInternalSearch
-              pool={pool}
-              poolLoading={poolLoading}
-              filter={filter}
-              onFilterChange={setFilter}
-              draftUrls={draftUrls}
-              onAdd={(u) => addOne(unifiedToTrack(u))}
-              formatDuration={formatDuration}
-            />
-          ) : (
-            <PlaylistOnlineSearch
-              loading={botSearch.loading}
-              error={botSearch.error}
-              results={botSearch.results}
-              playlistName={botSearch.playlistName}
-              onSearch={botSearch.search}
-              draftUrls={draftUrls}
-              onAdd={addOne}
-              onAddAll={addMany}
-              formatDuration={formatDuration}
-            />
-          )}
+          {/* Right: search tabs */}
+          <div className="md:w-1/2 flex flex-col min-h-0 space-y-2">
+            <div className="flex border-b">
+              <button
+                type="button"
+                onClick={() => setTab("internal")}
+                className={`px-3 py-1.5 text-sm font-medium border-b-2 -mb-px ${
+                  tab === "internal"
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Internal
+              </button>
+              <button
+                type="button"
+                onClick={() => setTab("online")}
+                className={`px-3 py-1.5 text-sm font-medium border-b-2 -mb-px ${
+                  tab === "online"
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Online
+              </button>
+            </div>
+
+            {tab === "internal" ? (
+              <PlaylistInternalSearch
+                pool={pool}
+                poolLoading={poolLoading}
+                filter={filter}
+                onFilterChange={setFilter}
+                draftUrls={draftUrls}
+                onAdd={(u) => addOne(unifiedToTrack(u))}
+                formatDuration={formatDuration}
+              />
+            ) : (
+              <PlaylistOnlineSearch
+                loading={botSearch.loading}
+                error={botSearch.error}
+                results={botSearch.results}
+                playlistName={botSearch.playlistName}
+                onSearch={botSearch.search}
+                draftUrls={draftUrls}
+                onAdd={addOne}
+                onAddAll={addMany}
+                formatDuration={formatDuration}
+              />
+            )}
+          </div>
         </div>
 
         {saveError && <p className="text-sm text-destructive">{saveError}</p>}
