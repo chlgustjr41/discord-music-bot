@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import {
   collection,
   getDocs,
@@ -21,6 +21,16 @@ interface Args {
   refreshKey?: number;
 }
 
+interface FetchedTracks {
+  history: UnifiedTrack[];
+  otherPlaylists: UnifiedTrack[];
+}
+
+const EMPTY_FETCHED: FetchedTracks = { history: [], otherPlaylists: [] };
+
+// Fetched sources (history + other-playlists) depend on stable inputs only.
+// Live inputs (currentQueue, currentTrack, existingTracks) are merged in-memory
+// to avoid a Firestore round-trip per server-doc snapshot.
 export function useUnifiedTrackPool({
   serverId,
   currentQueue,
@@ -29,41 +39,12 @@ export function useUnifiedTrackPool({
   existingTracks,
   refreshKey = 0,
 }: Args) {
-  const [pool, setPool] = useState<UnifiedTrack[]>([]);
+  const [fetched, setFetched] = useState<FetchedTracks>(EMPTY_FETCHED);
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
-    const seen = new Set<string>();
-    const out: UnifiedTrack[] = [];
-
-    if (existingTracks) {
-      for (const t of existingTracks) {
-        if (t.url && !seen.has(t.url)) {
-          seen.add(t.url);
-          out.push({ ...t, source: "playlist" });
-        }
-      }
-    }
-
-    if (currentTrack && !seen.has(currentTrack.url)) {
-      seen.add(currentTrack.url);
-      out.push({
-        title: currentTrack.title,
-        artist: currentTrack.artist,
-        url: currentTrack.url,
-        thumbnail: currentTrack.thumbnail,
-        duration: currentTrack.duration,
-        requestedBy: currentTrack.requestedBy,
-        source: "queue",
-      });
-    }
-    for (const t of currentQueue) {
-      if (!seen.has(t.url)) {
-        seen.add(t.url);
-        out.push({ ...t, source: "queue" });
-      }
-    }
+    const next: FetchedTracks = { history: [], otherPlaylists: [] };
 
     try {
       const histQ = query(
@@ -74,18 +55,15 @@ export function useUnifiedTrackPool({
       const histSnap = await getDocs(histQ);
       for (const d of histSnap.docs) {
         const h = d.data() as MusicHistoryEntry;
-        if (!seen.has(h.url)) {
-          seen.add(h.url);
-          out.push({
-            title: h.title,
-            artist: h.artist,
-            url: h.url,
-            thumbnail: h.thumbnail,
-            duration: h.duration || 0,
-            requestedBy: h.requestedBy || "Web User",
-            source: "history",
-          });
-        }
+        next.history.push({
+          title: h.title,
+          artist: h.artist,
+          url: h.url,
+          thumbnail: h.thumbnail,
+          duration: h.duration || 0,
+          requestedBy: h.requestedBy || "Web User",
+          source: "history",
+        });
       }
     } catch {
       /* fall through */
@@ -99,26 +77,75 @@ export function useUnifiedTrackPool({
         if (d.id === editingPlaylistName) continue;
         const data = d.data() as PlaylistDoc;
         for (const t of data.tracks ?? []) {
-          if (t.url && !seen.has(t.url)) {
-            seen.add(t.url);
-            out.push({
-              ...t,
-              source: { kind: "other-playlist", name: d.id },
-            });
-          }
+          next.otherPlaylists.push({
+            ...t,
+            source: { kind: "other-playlist", name: d.id },
+          });
         }
       }
     } catch {
       /* fall through */
     }
 
-    setPool(out);
+    setFetched(next);
     setLoading(false);
-  }, [serverId, currentQueue, currentTrack, editingPlaylistName, existingTracks]);
+  }, [serverId, editingPlaylistName]);
 
   useEffect(() => {
     load();
   }, [load, refreshKey]);
+
+  // Merge order matches the spec: existing playlist → current track → queue → history → other playlists.
+  // First-source-wins by URL.
+  const pool = useMemo<UnifiedTrack[]>(() => {
+    const seen = new Set<string>();
+    const out: UnifiedTrack[] = [];
+
+    if (existingTracks) {
+      for (const t of existingTracks) {
+        if (t.url && !seen.has(t.url)) {
+          seen.add(t.url);
+          out.push({ ...t, source: "playlist" });
+        }
+      }
+    }
+
+    if (currentTrack && currentTrack.url && !seen.has(currentTrack.url)) {
+      seen.add(currentTrack.url);
+      out.push({
+        title: currentTrack.title,
+        artist: currentTrack.artist,
+        url: currentTrack.url,
+        thumbnail: currentTrack.thumbnail,
+        duration: currentTrack.duration,
+        requestedBy: currentTrack.requestedBy,
+        source: "queue",
+      });
+    }
+
+    for (const t of currentQueue) {
+      if (t.url && !seen.has(t.url)) {
+        seen.add(t.url);
+        out.push({ ...t, source: "queue" });
+      }
+    }
+
+    for (const t of fetched.history) {
+      if (t.url && !seen.has(t.url)) {
+        seen.add(t.url);
+        out.push(t);
+      }
+    }
+
+    for (const t of fetched.otherPlaylists) {
+      if (t.url && !seen.has(t.url)) {
+        seen.add(t.url);
+        out.push(t);
+      }
+    }
+
+    return out;
+  }, [existingTracks, currentTrack, currentQueue, fetched]);
 
   return { pool, loading, reload: load };
 }

@@ -77,17 +77,6 @@ export function PlaylistEditDialog({
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // Reset on open
-  useEffect(() => {
-    if (!open) return;
-    setName(editing?.name ?? "");
-    setDraft(editing?.tracks ?? []);
-    setTab("internal");
-    setFilter("");
-    setSaveError("");
-    setSaving(false);
-  }, [open, editing]);
-
   const { pool, loading: poolLoading } = useUnifiedTrackPool({
     serverId,
     currentQueue,
@@ -102,6 +91,20 @@ export function PlaylistEditDialog({
     searchQuery,
     searchPlaylistName,
   });
+
+  // Reset on open
+  useEffect(() => {
+    if (!open) return;
+    setName(editing?.name ?? "");
+    setDraft(editing?.tracks ?? []);
+    setTab("internal");
+    setFilter("");
+    setSaveError("");
+    setSaving(false);
+    botSearch.clear();
+    // botSearch.clear is stable (useCallback with empty deps); excluding from deps avoids re-running per render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editing]);
 
   const draftUrls = useMemo(() => new Set(draft.map((t) => t.url)), [draft]);
 
