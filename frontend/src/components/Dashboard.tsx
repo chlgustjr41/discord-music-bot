@@ -144,8 +144,8 @@ export function Dashboard() {
         searchQuery={state.searchQuery}
         searchPlaylistName={state.searchPlaylistName}
       />
-      <CommandHistory serverId={serverId} />
       <MusicHistory serverId={serverId} />
+      <CommandHistory serverId={serverId} />
       <ActivityLog entries={logEntries} />
     </div>
   );
