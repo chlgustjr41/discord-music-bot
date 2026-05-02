@@ -63,9 +63,23 @@ export function Dashboard() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl p-4 space-y-4">
-      {/* Header with server info */}
-      <Card>
+    <>
+      <header className="border-b bg-card/50 backdrop-blur supports-backdrop-filter:bg-card/60">
+        <div className="mx-auto max-w-3xl flex items-center px-4 py-3">
+          <button
+            type="button"
+            onClick={() => navigate("/")}
+            className="flex items-center gap-2 rounded-md px-2 py-1 -mx-2 text-sm font-semibold hover:bg-muted/50 transition-colors"
+            aria-label="Back to landing page"
+          >
+            <img src="/favicon.svg" alt="" className="h-6 w-6" />
+            <span>Jacky Music</span>
+          </button>
+        </div>
+      </header>
+      <div className="mx-auto max-w-3xl p-4 space-y-4">
+        {/* Header with server info */}
+        <Card>
         <CardContent className="flex items-center gap-4 p-4">
           {state.serverIcon ? (
             <img
@@ -147,6 +161,7 @@ export function Dashboard() {
       <MusicHistory serverId={serverId} />
       <CommandHistory serverId={serverId} />
       <ActivityLog entries={logEntries} />
-    </div>
+      </div>
+    </>
   );
 }
