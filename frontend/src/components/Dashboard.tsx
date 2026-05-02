@@ -1,5 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { doc, updateDoc } from "firebase/firestore";
+import { db } from "../firebase";
 import { useServerState } from "../hooks/useServerState";
 import { useActivityToasts } from "../hooks/useActivityToasts.js";
 import { NowPlaying } from "./NowPlaying";
@@ -21,8 +23,29 @@ export function Dashboard() {
   const { serverId, state, error, loading, sessionExpired } = useServerState(sessionCode);
   const navigate = useNavigate();
   const logEntries = useActivityToasts(state);
+  const [exiting, setExiting] = useState(false);
 
   const botConnected = !!state?.voiceChannelId;
+
+  async function handleExit() {
+    if (exiting) return;
+    setExiting(true);
+    if (!serverId) {
+      navigate("/");
+      return;
+    }
+    try {
+      await updateDoc(doc(db, "servers", serverId), {
+        endSessionRequested: true,
+      });
+    } catch {
+      // If we can't even reach Firestore, just bail out to landing.
+      navigate("/");
+      return;
+    }
+    // Safety: if the bot never picks this up (offline), navigate manually.
+    setTimeout(() => navigate("/"), 5000);
+  }
 
   useEffect(() => {
     if (sessionExpired) {
@@ -118,10 +141,16 @@ export function Dashboard() {
             variant="ghost"
             size="sm"
             className="shrink-0 text-muted-foreground hover:text-foreground"
-            onClick={() => navigate("/")}
+            onClick={handleExit}
+            disabled={exiting}
+            title="Disconnect the bot and end this session"
           >
-            <LogOut className="mr-1 h-4 w-4" />
-            Exit
+            {exiting ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <LogOut className="mr-1 h-4 w-4" />
+            )}
+            {exiting ? "Disconnecting…" : "Exit"}
           </Button>
         </CardContent>
       </Card>

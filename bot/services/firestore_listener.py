@@ -87,6 +87,14 @@ class FirestoreListener:
             self.fs.update_server_state(self.server_id, {"retriggerCommand": None})
             return
 
+        # --- End-session request from web app (Exit button) ---
+        old_end = old.get("endSessionRequested")
+        new_end = new.get("endSessionRequested")
+        if new_end and not old_end:
+            log.info(f"End-session requested from web for guild {self.server_id}")
+            await self._handle_end_session()
+            return
+
         # --- Resolve unresolved queue items (URLs added from web) ---
         queue_grew = False
         if not self._resolving:
@@ -336,6 +344,33 @@ class FirestoreListener:
                 self.fs.update_server_state(self.server_id, {"volume": vol})
             except ValueError:
                 pass
+
+    async def _handle_end_session(self):
+        """Disconnect the voice client and invalidate the session code.
+
+        The web frontend's onSnapshot on sessionCodes/{code} detects the
+        deletion and triggers its session-expired redirect to /. We do not
+        need to push a separate "navigate" signal.
+        """
+        guild = self.bot.get_guild(int(self.server_id))
+        if guild:
+            player = guild.voice_client
+            if player:
+                try:
+                    await player.disconnect()
+                except Exception as e:
+                    log.warning(f"end-session: disconnect failed for {self.server_id}: {e}")
+        # Clear live state plus the request flag in one write.
+        self.fs.update_server_state(self.server_id, {
+            "currentTrack": None,
+            "isPlaying": False,
+            "isPaused": False,
+            "voiceChannelId": None,
+            "voiceChannelName": None,
+            "endSessionRequested": None,
+        })
+        # Drop the session code — frontend sees this and redirects to landing.
+        self.fs.invalidate_session_code(self.server_id)
 
     async def _handle_local_node_request(self, request: dict):
         """Handle a local node connect/disconnect request from the web app."""
