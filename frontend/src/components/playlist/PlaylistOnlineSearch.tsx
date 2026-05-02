@@ -55,7 +55,7 @@ export function PlaylistOnlineSearch({
   const addableCount = results.filter((r) => !draftUrls.has(r.url)).length;
 
   return (
-    <div className="space-y-2">
+    <div className="flex flex-1 flex-col min-h-0 space-y-2">
       <div className="relative">
         <Search className="pointer-events-none absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
@@ -90,12 +90,7 @@ export function PlaylistOnlineSearch({
         </div>
       )}
 
-      <ResizableList
-        defaultHeight={500}
-        minHeight={80}
-        maxHeight={800}
-        className="rounded-md border"
-      >
+      <ResizableList fill minHeight={120} className="rounded-md border">
         {!loading && results.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-6 text-muted-foreground">
             <Music className="mb-1 h-6 w-6" />

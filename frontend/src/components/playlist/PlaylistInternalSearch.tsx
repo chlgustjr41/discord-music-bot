@@ -41,19 +41,14 @@ export function PlaylistInternalSearch({
   }, [pool, filter]);
 
   return (
-    <div className="space-y-2">
+    <div className="flex flex-1 flex-col min-h-0 space-y-2">
       <Input
         type="text"
         value={filter}
         onChange={(e) => onFilterChange(e.target.value)}
         placeholder="Filter queue, history, and other playlists…"
       />
-      <ResizableList
-        defaultHeight={500}
-        minHeight={80}
-        maxHeight={800}
-        className="rounded-md border"
-      >
+      <ResizableList fill minHeight={120} className="rounded-md border">
         {poolLoading ? (
           <div className="flex items-center justify-center py-6 text-muted-foreground gap-2">
             <Loader2 className="h-4 w-4 animate-spin" />
