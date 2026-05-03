@@ -1186,6 +1186,64 @@ class Playback(commands.Cog):
     async def _watchdog_wait_ready(self):
         await self.bot.wait_until_ready()
 
+    # --- End-session (web Exit button) ---
+
+    async def end_session_now(self, guild_id: int) -> None:
+        """Immediate version of the idle-timer disconnect.
+
+        Mirrors the proven `_idle_disconnect` sequence — _stopping + stop
+        listener + save history + invalidate session + clear state + cancel
+        timers + disconnect — but skips the `await asyncio.sleep` and runs
+        whether or not the bot is currently in voice. Safe to call from the
+        FirestoreListener handler.
+        """
+        guild = self.bot.get_guild(guild_id)
+        player = guild.voice_client if guild else None
+        log.info(
+            f"end_session_now: guild={guild_id} "
+            f"player={type(player).__name__ if player else None} "
+            f"connected={getattr(player, 'connected', 'n/a')}"
+        )
+
+        self._stopping.add(guild_id)
+        listener = self.listeners.pop(guild_id, None)
+        if listener:
+            try:
+                listener.stop()
+            except Exception as e:
+                log.warning(f"end_session_now: listener.stop() failed for {guild_id}: {e}")
+        try:
+            await self.save_session_history(guild_id)
+        except Exception as e:
+            log.warning(f"end_session_now: save_session_history failed for {guild_id}: {e}")
+        try:
+            self.fs.invalidate_session_code(str(guild_id))
+        except Exception as e:
+            log.warning(f"end_session_now: invalidate_session_code failed for {guild_id}: {e}")
+        try:
+            self.fs.update_server_state(str(guild_id), {
+                "isPlaying": False,
+                "isPaused": False,
+                "currentTrack": None,
+                "voiceChannelId": None,
+                "voiceChannelName": None,
+                "textChannelId": None,
+                "endSessionRequested": None,
+            })
+        except Exception as e:
+            log.warning(f"end_session_now: state clear failed for {guild_id}: {e}")
+        self.cancel_idle_timer(guild_id)
+        self.cancel_empty_channel_timer(guild_id)
+        if player:
+            try:
+                await player.disconnect()
+                log.info(f"end_session_now: player.disconnect() OK for guild {guild_id}")
+            except Exception as e:
+                log.warning(f"end_session_now: player.disconnect() failed for {guild_id}: {e}")
+        else:
+            log.info(f"end_session_now: no player for guild {guild_id}; nothing to disconnect")
+        self._stopping.discard(guild_id)
+
     # --- Idle Timer ---
 
     def start_idle_timer(self, guild_id: int, player: wavelink.Player):

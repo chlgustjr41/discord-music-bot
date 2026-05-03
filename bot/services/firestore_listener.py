@@ -359,67 +359,19 @@ class FirestoreListener:
                 pass
 
     async def _handle_end_session(self):
-        """Disconnect the voice client and invalidate the session code.
-
-        The web frontend's onSnapshot on sessionCodes/{code} detects the
-        deletion and triggers its session-expired redirect to /. We do not
-        need to push a separate "navigate" signal.
-
-        Idempotent: clears the request flag first so the handler is safe to
-        retry, and the playback cog's on_voice_state_update listener cleans
-        up the voice-side state automatically once the disconnect lands.
-        """
-        guild_id_int = int(self.server_id)
+        """Delegate to Playback.end_session_now — same path the idle timer uses."""
         log.info(f"end-session: handling for guild {self.server_id}")
-
-        # Clear the flag immediately so we don't re-fire if disconnect is slow
-        # or if the listener restarts before invalidate_session_code completes.
-        try:
-            self.fs.update_server_state(self.server_id, {"endSessionRequested": None})
-        except Exception as e:
-            log.warning(f"end-session: failed to clear flag for {self.server_id}: {e}")
-
-        guild = self.bot.get_guild(guild_id_int)
-        if not guild:
-            log.warning(f"end-session: guild {self.server_id} not in bot.guilds — invalidating session code only")
-            self.fs.invalidate_session_code(self.server_id)
-            return
-
-        player = guild.voice_client
-        log.info(
-            f"end-session: voice_client for guild {self.server_id} = "
-            f"{type(player).__name__ if player else None}, "
-            f"connected = {getattr(player, 'connected', 'n/a')}"
-        )
-
-        if player:
-            # Coordinate with playback cog so its on_voice_state_update handler
-            # treats this as an intentional disconnect (it adds to _stopping
-            # itself, but pre-adding avoids a brief race window where other
-            # cleanup paths could fire).
-            playback_cog = self.bot.get_cog("Playback")
-            if playback_cog and hasattr(playback_cog, "_stopping"):
-                playback_cog._stopping.add(guild_id_int)
+        playback_cog = self.bot.get_cog("Playback")
+        if not playback_cog:
+            log.error(f"end-session: Playback cog not loaded for guild {self.server_id}")
+            # Best-effort fallback so the web UI still redirects.
             try:
-                await player.disconnect()
-                log.info(f"end-session: player.disconnect() returned for guild {self.server_id}")
+                self.fs.update_server_state(self.server_id, {"endSessionRequested": None})
+                self.fs.invalidate_session_code(self.server_id)
             except Exception as e:
-                log.warning(f"end-session: player.disconnect() failed for {self.server_id}: {e}")
-            # Don't discard from _stopping — voice_state_update handler does it.
-
-        # Belt-and-suspenders: clear playback-relevant state and drop session
-        # code. The voice_state_update handler does most of this when the
-        # disconnect lands; doing it here too keeps the web UI consistent
-        # even if the bot wasn't actually in voice.
-        try:
-            self.fs.update_server_state(self.server_id, {
-                "currentTrack": None,
-                "isPlaying": False,
-                "isPaused": False,
-            })
-            self.fs.invalidate_session_code(self.server_id)
-        except Exception as e:
-            log.warning(f"end-session: post-disconnect cleanup failed for {self.server_id}: {e}")
+                log.warning(f"end-session fallback cleanup failed for {self.server_id}: {e}")
+            return
+        await playback_cog.end_session_now(int(self.server_id))
 
     async def _handle_local_node_request(self, request: dict):
         """Handle a local node connect/disconnect request from the web app."""
