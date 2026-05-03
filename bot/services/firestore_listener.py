@@ -44,6 +44,19 @@ class FirestoreListener:
             new_state = doc.to_dict()
             if self._last_state is None:
                 self._last_state = new_state
+                # Catch a stale end-session request that was set before the
+                # bot restarted (e.g. the user clicked Exit while the bot was
+                # offline). Without this the transition check below never
+                # fires because old/new are both already truthy.
+                if new_state.get("endSessionRequested"):
+                    log.info(
+                        f"end-session: stale request detected on listener "
+                        f"startup for guild {self.server_id}; handling now"
+                    )
+                    asyncio.run_coroutine_threadsafe(
+                        self._handle_end_session(),
+                        self.bot.loop,
+                    )
                 continue
 
             old = self._last_state
@@ -351,26 +364,62 @@ class FirestoreListener:
         The web frontend's onSnapshot on sessionCodes/{code} detects the
         deletion and triggers its session-expired redirect to /. We do not
         need to push a separate "navigate" signal.
+
+        Idempotent: clears the request flag first so the handler is safe to
+        retry, and the playback cog's on_voice_state_update listener cleans
+        up the voice-side state automatically once the disconnect lands.
         """
-        guild = self.bot.get_guild(int(self.server_id))
-        if guild:
-            player = guild.voice_client
-            if player:
-                try:
-                    await player.disconnect()
-                except Exception as e:
-                    log.warning(f"end-session: disconnect failed for {self.server_id}: {e}")
-        # Clear live state plus the request flag in one write.
-        self.fs.update_server_state(self.server_id, {
-            "currentTrack": None,
-            "isPlaying": False,
-            "isPaused": False,
-            "voiceChannelId": None,
-            "voiceChannelName": None,
-            "endSessionRequested": None,
-        })
-        # Drop the session code — frontend sees this and redirects to landing.
-        self.fs.invalidate_session_code(self.server_id)
+        guild_id_int = int(self.server_id)
+        log.info(f"end-session: handling for guild {self.server_id}")
+
+        # Clear the flag immediately so we don't re-fire if disconnect is slow
+        # or if the listener restarts before invalidate_session_code completes.
+        try:
+            self.fs.update_server_state(self.server_id, {"endSessionRequested": None})
+        except Exception as e:
+            log.warning(f"end-session: failed to clear flag for {self.server_id}: {e}")
+
+        guild = self.bot.get_guild(guild_id_int)
+        if not guild:
+            log.warning(f"end-session: guild {self.server_id} not in bot.guilds — invalidating session code only")
+            self.fs.invalidate_session_code(self.server_id)
+            return
+
+        player = guild.voice_client
+        log.info(
+            f"end-session: voice_client for guild {self.server_id} = "
+            f"{type(player).__name__ if player else None}, "
+            f"connected = {getattr(player, 'connected', 'n/a')}"
+        )
+
+        if player:
+            # Coordinate with playback cog so its on_voice_state_update handler
+            # treats this as an intentional disconnect (it adds to _stopping
+            # itself, but pre-adding avoids a brief race window where other
+            # cleanup paths could fire).
+            playback_cog = self.bot.get_cog("Playback")
+            if playback_cog and hasattr(playback_cog, "_stopping"):
+                playback_cog._stopping.add(guild_id_int)
+            try:
+                await player.disconnect()
+                log.info(f"end-session: player.disconnect() returned for guild {self.server_id}")
+            except Exception as e:
+                log.warning(f"end-session: player.disconnect() failed for {self.server_id}: {e}")
+            # Don't discard from _stopping — voice_state_update handler does it.
+
+        # Belt-and-suspenders: clear playback-relevant state and drop session
+        # code. The voice_state_update handler does most of this when the
+        # disconnect lands; doing it here too keeps the web UI consistent
+        # even if the bot wasn't actually in voice.
+        try:
+            self.fs.update_server_state(self.server_id, {
+                "currentTrack": None,
+                "isPlaying": False,
+                "isPaused": False,
+            })
+            self.fs.invalidate_session_code(self.server_id)
+        except Exception as e:
+            log.warning(f"end-session: post-disconnect cleanup failed for {self.server_id}: {e}")
 
     async def _handle_local_node_request(self, request: dict):
         """Handle a local node connect/disconnect request from the web app."""
