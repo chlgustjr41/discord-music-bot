@@ -65,8 +65,8 @@ export function useUnifiedTrackPool({
           source: "history",
         });
       }
-    } catch {
-      /* fall through */
+    } catch (e) {
+      console.warn("useUnifiedTrackPool: musicHistory fetch failed", e);
     }
 
     try {
@@ -83,8 +83,8 @@ export function useUnifiedTrackPool({
           });
         }
       }
-    } catch {
-      /* fall through */
+    } catch (e) {
+      console.warn("useUnifiedTrackPool: playlists fetch failed", e);
     }
 
     setFetched(next);

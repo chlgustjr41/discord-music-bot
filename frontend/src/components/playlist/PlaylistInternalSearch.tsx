@@ -20,6 +20,9 @@ function sourceLabel(source: UnifiedTrack["source"]): string {
   if (source === "queue") return "queue";
   if (source === "history") return "history";
   if (source === "playlist") return "playlist";
+  // After narrowing the string literals, source is the object variant.
+  // If a future UnifiedTrackSource variant lacks `name` or `kind`, this line
+  // becomes a compile-time error — that IS the exhaustiveness check.
   return source.name;
 }
 
