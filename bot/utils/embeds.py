@@ -47,7 +47,10 @@ def session_embed(code: str, web_url: str) -> discord.Embed:
     embed = discord.Embed(
         title="🎵 Jacky Music Session Started",
         description=(
-            f"**Session Code:** `{code}`\n\n"
+            f"## Session Code\n"
+            # Triple-backtick code block: monospace, visually prominent,
+            # and shows a hover copy button on desktop Discord clients.
+            f"```\n{code}\n```\n"
             f"**[Open Web Player]({direct_link})**\n\n"
             f"Control playback, search songs, and manage the queue from your browser."
         ),

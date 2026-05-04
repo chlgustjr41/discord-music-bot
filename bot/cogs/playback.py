@@ -202,6 +202,7 @@ class Playback(commands.Cog):
             # Generate session code
             code = generate_session_code()
             self.fs.set_session_code(str(ctx.guild.id), code)
+            await self._set_session_nickname(ctx.guild.id, code)
             # Fresh session: clear queue and set server info
             self.fs.update_server_state(str(ctx.guild.id), {
                 "voiceChannelId": str(ctx.author.voice.channel.id),
@@ -589,6 +590,7 @@ class Playback(commands.Cog):
                 self._silent_suspects.discard(guild_id)
                 self._advancing.discard(guild_id)
                 self._stopping.discard(guild_id)
+                await self._set_session_nickname(guild_id, None)
             return
 
         # ── Human member events ─────────────────────────────────────────────
@@ -889,6 +891,7 @@ class Playback(commands.Cog):
             self.cancel_empty_channel_timer(guild_id)
             await player.disconnect()
             self._stopping.discard(guild_id)
+            await self._set_session_nickname(guild_id, None)
             await ctx.send(embed=success_embed("Disconnected. Session ended."))
 
     @commands.command(name="reset", brief="Reset the voice session (recovers silent playback)")
@@ -1186,6 +1189,28 @@ class Playback(commands.Cog):
     async def _watchdog_wait_ready(self):
         await self.bot.wait_until_ready()
 
+    # --- Session nickname (per-guild) ---
+
+    async def _set_session_nickname(self, guild_id: int, code: str | None) -> None:
+        """Update the bot's per-guild nickname to surface the session code.
+
+        code=str  → set nickname to "Jacky Music · {code}"
+        code=None → reset nickname (uses the bot's default username)
+
+        Discord-side errors (missing permission, rate limit) are swallowed —
+        nickname display is a nice-to-have, not a session prerequisite.
+        """
+        guild = self.bot.get_guild(guild_id)
+        if not guild or not guild.me:
+            return
+        new_nick = f"Jacky Music · {code}" if code else None
+        try:
+            await guild.me.edit(nick=new_nick)
+        except discord.Forbidden:
+            log.debug(f"_set_session_nickname: forbidden in guild {guild_id} (missing Change Nickname)")
+        except discord.HTTPException as e:
+            log.debug(f"_set_session_nickname: HTTP error in guild {guild_id}: {e}")
+
     # --- End-session (web Exit button) ---
 
     async def end_session_now(self, guild_id: int) -> None:
@@ -1243,6 +1268,7 @@ class Playback(commands.Cog):
         else:
             log.info(f"end_session_now: no player for guild {guild_id}; nothing to disconnect")
         self._stopping.discard(guild_id)
+        await self._set_session_nickname(guild_id, None)
 
     # --- Idle Timer ---
 
@@ -1280,6 +1306,7 @@ class Playback(commands.Cog):
         self.cancel_empty_channel_timer(guild_id)
         await player.disconnect()
         self._stopping.discard(guild_id)
+        await self._set_session_nickname(guild_id, None)
         if text_channel_id:
             ch = self.bot.get_channel(int(text_channel_id))
             if ch:
@@ -1336,6 +1363,7 @@ class Playback(commands.Cog):
         self.cancel_idle_timer(guild_id)
         await player.disconnect()
         self._stopping.discard(guild_id)
+        await self._set_session_nickname(guild_id, None)
         if text_channel_id:
             ch = self.bot.get_channel(int(text_channel_id))
             if ch:
