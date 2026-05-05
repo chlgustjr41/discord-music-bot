@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ResizableList } from "../ResizableList";
+import { TrackRowSkeleton } from "../TrackRowSkeleton";
 import type { SearchResult, Track } from "../../types";
 
 interface Props {
@@ -18,7 +19,7 @@ interface Props {
   formatDuration: (s: number) => string;
 }
 
-const DEBOUNCE_MS = 300;
+const DEBOUNCE_MS = 200;
 
 function resultToTrack(r: SearchResult): Track {
   return {
@@ -91,7 +92,9 @@ export function PlaylistOnlineSearch({
       )}
 
       <ResizableList fill minHeight={120} className="rounded-md border">
-        {!loading && results.length === 0 ? (
+        {loading && results.length === 0 ? (
+          <TrackRowSkeleton />
+        ) : !loading && results.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-6 text-muted-foreground">
             <Music className="mb-1 h-6 w-6" />
             <p className="text-sm">

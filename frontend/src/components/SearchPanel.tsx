@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ResizableList } from "./ResizableList";
+import { TrackRowSkeleton } from "./TrackRowSkeleton";
 import {
   Search,
   Loader2,
@@ -26,7 +27,7 @@ interface Props {
   searchPlaylistName?: string | null;
 }
 
-const DEBOUNCE_MS = 300;
+const DEBOUNCE_MS = 200;
 
 export function SearchPanel({ serverId, searchResults, searchQuery, searchPlaylistName }: Props) {
   const [query, setQuery] = useState("");
@@ -283,6 +284,12 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
             <span className="font-medium text-primary truncate">{playlistName}</span>
             <span className="text-muted-foreground shrink-0">— {results.length} tracks</span>
           </div>
+        )}
+
+        {loading && results.length === 0 && (
+          <ResizableList defaultHeight={384} minHeight={100}>
+            <TrackRowSkeleton count={6} />
+          </ResizableList>
         )}
 
         {results.length > 0 && (
