@@ -26,7 +26,7 @@ interface Props {
   searchPlaylistName?: string | null;
 }
 
-const DEBOUNCE_MS = 1000;
+const DEBOUNCE_MS = 300;
 
 export function SearchPanel({ serverId, searchResults, searchQuery, searchPlaylistName }: Props) {
   const [query, setQuery] = useState("");

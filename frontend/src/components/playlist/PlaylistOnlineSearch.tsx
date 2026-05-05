@@ -18,7 +18,7 @@ interface Props {
   formatDuration: (s: number) => string;
 }
 
-const DEBOUNCE_MS = 1000;
+const DEBOUNCE_MS = 300;
 
 function resultToTrack(r: SearchResult): Track {
   return {
