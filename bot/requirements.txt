@@ -4,3 +4,6 @@ wavelink==3.4.1
 firebase-admin==6.6.0
 python-dotenv==1.0.1
 docker>=7.0.0
+# Used directly by cogs/localnode_cmd.py for the HTTP probe before websocket connect.
+# Already a transitive dep of discord.py, but pinning explicitly keeps it documented.
+aiohttp>=3.9
