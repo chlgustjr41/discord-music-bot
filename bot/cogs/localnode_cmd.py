@@ -247,13 +247,12 @@ class LocalNode(commands.Cog):
             ))
         else:
             if is_playing:
-                await status_msg.edit(embed=discord.Embed(
-                    description=(
-                        f"✅ Connected to local node at `{url}`.\n"
-                        "🔄 Migrating your session to the local node — "
-                        "expect a brief pause while the track restarts."
-                    ),
-                    color=0x1DB954,
+                # Migration status (success OR fallback-to-cloud) is posted as a
+                # separate embed by Playback.migrate_player_to_node — do not
+                # claim "migrating now" here, because the migration has already
+                # run synchronously inside connect_node.
+                await status_msg.edit(embed=success_embed(
+                    f"Connected to local Lavalink node at `{url}`."
                 ))
             else:
                 await status_msg.edit(embed=success_embed(

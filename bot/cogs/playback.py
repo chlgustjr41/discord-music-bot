@@ -948,28 +948,46 @@ class Playback(commands.Cog):
     #  Node migration — move active player to a specific node
     # ------------------------------------------------------------------
 
-    async def migrate_player_to_node(self, guild_id: int, target_node: wavelink.Node):
+    async def migrate_player_to_node(self, guild_id: int, target_node: wavelink.Node) -> bool:
         """Disconnect the active player and reconnect it on target_node.
 
-        Called by LocalNode after a successful local node connect so that
-        audio actually routes through the local Lavalink, not just the pool.
+        Returns True on successful migration to target_node, False if migration
+        failed (in which case the bot is reconnected to its ORIGINAL node so the
+        session is never stranded). Caller (LocalNode) should react to False by
+        showing an appropriate message; the session keeps playing on cloud.
+
         No-op if already on the target node or no player is active.
         """
         guild = self.bot.get_guild(guild_id)
         if not guild:
-            return
+            return False
 
         player = guild.voice_client
         if not player or not player.connected:
-            return
+            return False
 
         if getattr(player, "node", None) is target_node:
-            return
+            return True
 
         state = self.fs.get_server_state(str(guild_id))
         current_track = state.get("currentTrack") if state else None
         voice_channel = player.channel
         text_channel_id = state.get("textChannelId") if state else None
+        original_node = getattr(player, "node", None)
+
+        async def _reconnect_on(node: wavelink.Node) -> JackyPlayer | None:
+            """Try to reconnect on `node`. Returns the new player or None on failure."""
+            try:
+                new_player: JackyPlayer = await voice_channel.connect(cls=JackyPlayer)
+                new_player._node = node
+                new_player.autoplay = wavelink.AutoPlayMode.disabled
+                return new_player
+            except Exception as e:
+                log.error(
+                    f"voice_channel.connect on node {node.identifier} failed for guild {guild_id}: {e}",
+                    exc_info=True,
+                )
+                return None
 
         self._migrating.add(guild_id)
         try:
@@ -978,35 +996,72 @@ class Playback(commands.Cog):
             except Exception as e:
                 log.warning(f"Disconnect during migration failed for guild {guild_id}: {e}")
 
-            try:
-                new_player: JackyPlayer = await voice_channel.connect(cls=JackyPlayer)
-                new_player._node = target_node
-                new_player.autoplay = wavelink.AutoPlayMode.disabled
-            except Exception as e:
-                log.error(f"Reconnect during migration failed for guild {guild_id}: {e}")
+            # Give Discord a moment to fully process the leave before re-joining,
+            # otherwise the second connect can race and be rejected as "already connected."
+            await asyncio.sleep(0.6)
+
+            new_player = await _reconnect_on(target_node)
+            migrated = new_player is not None
+
+            # Migration failed — fall back to the original node so the session
+            # isn't stranded (player=None blocks all queue progress and web-side actions).
+            if not new_player and original_node:
+                log.warning(
+                    f"Migration to {target_node.identifier} failed for guild {guild_id} — "
+                    f"falling back to original node {original_node.identifier}"
+                )
+                await asyncio.sleep(0.6)
+                new_player = await _reconnect_on(original_node)
+
+            if not new_player:
+                # Both attempts failed — there's no player to recover with.
+                # Clear voice state so the next j!start has a clean slate.
+                log.error(
+                    f"Both target and original node reconnects failed for guild {guild_id}; "
+                    "session cannot continue. User must restart with j!start."
+                )
+                self.fs.update_server_state(str(guild_id), {
+                    "voiceChannelId": None,
+                    "voiceChannelName": None,
+                    "isPlaying": False,
+                })
                 if text_channel_id:
                     ch = self.bot.get_channel(int(text_channel_id))
                     if ch:
                         await ch.send(embed=error_embed(
-                            "Failed to migrate session to local node. Staying on cloud audio."
+                            "Could not reconnect to voice after migration attempt. "
+                            "Run `j!start` to recover."
                         ))
-                return
+                return False
 
             if guild_id not in self.listeners:
                 listener = FirestoreListener(self.bot, self.fs, str(guild_id))
                 listener.start()
                 self.listeners[guild_id] = listener
 
+            actual_node = getattr(new_player, "node", None) or (target_node if migrated else original_node)
             if current_track:
-                await self._resume_on_node(guild_id, new_player, current_track, target_node)
-                if text_channel_id:
-                    ch = self.bot.get_channel(int(text_channel_id))
-                    if ch:
+                await self._resume_on_node(guild_id, new_player, current_track, actual_node)
+            else:
+                fresh_state = self.fs.get_server_state(str(guild_id)) or {}
+                if fresh_state.get("queue"):
+                    # Nothing currently playing but queue has items — start them.
+                    await self.play_next(new_player, guild_id)
+
+            if text_channel_id:
+                ch = self.bot.get_channel(int(text_channel_id))
+                if ch:
+                    if migrated:
                         await ch.send(embed=success_embed(
                             "🎵 Session migrated to **local node** — resuming from where you left off."
                         ))
-            else:
-                await self.play_next(new_player, guild_id)
+                    else:
+                        await ch.send(embed=error_embed(
+                            "Failed to migrate session to local node — **staying on cloud audio**.\n"
+                            "Playback continues uninterrupted. Run `j!localnode reconnect` to retry "
+                            "once the local tunnel is stable."
+                        ))
+            return migrated
         finally:
             self._migrating.discard(guild_id)
 
