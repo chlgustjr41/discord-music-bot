@@ -14,6 +14,14 @@ services:
       # persist the session across restarts. NOT a file mount — see the comment
       # in lavalink/application.yml for why.
       - YOUTUBE_OAUTH_REFRESH_TOKEN=${YOUTUBE_OAUTH_REFRESH_TOKEN:-}
+    # When the OAuth token dies, the youtube plugin logs a stack trace every
+    # 5 seconds forever. Without rotation that grew to a 6M-line log that made
+    # the device-code prompt impossible to find. Cap it.
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
 
   jacky-bot:
     build: ./bot

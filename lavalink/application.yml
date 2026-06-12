@@ -4,8 +4,20 @@ server:
 
 lavalink:
   plugins:
-    - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.0"
-      snapshot: false
+    # YouTube's player JS changes every ~1-2 weeks and breaks signature
+    # extraction in older plugin versions. This commit hash is the same commit
+    # as the 1.18.1 release tag (May 3, 2026) — pinned by hash from the
+    # snapshots repo. NOTE: snapshot artifacts can be purged upstream; if this
+    # download ever 404s, switch to the identical stable release:
+    #   dependency: "dev.lavalink.youtube:youtube-plugin:1.18.1"
+    #   repository: "https://maven.lavalink.dev/releases"
+    #
+    # When tracks start failing with "Must find sig function from script" in
+    # logs, bump this hash to whatever is current at:
+    #   https://maven.lavalink.dev/snapshots/dev/lavalink/youtube/youtube-plugin/
+    - dependency: "dev.lavalink.youtube:youtube-plugin:9d4dbeeb51f16d53078486d69d27654d4acfa7fb"
+      repository: "https://maven.lavalink.dev/snapshots"
+      snapshot: true
   server:
     password: "youshallnotpass"
     sources:
@@ -29,21 +41,28 @@ plugins:
     allowDirectPlaylistIds: true
     # Client roles:
     #   MUSIC         - YouTube Music search (ytmsearch:); search-only, see clientOptions
-    #   ANDROID_MUSIC - playback for music tracks; no PoToken; not OAuth-compatible
-    #   ANDROID_VR    - generic playback fallback; no PoToken; not OAuth-compatible
-    #   IOS           - OAuth-compatible playback client. The first three fail with
-    #                   HTTP 400 on cloud datacenter IPs because YouTube doesn't trust
-    #                   anonymous requests from those subnets. IOS routes through the
-    #                   OAuth handler below, so its requests carry a real Google
-    #                   identity and YouTube serves them — this is what unblocks
-    #                   playback on GCP. Last in the list so the lighter no-auth
-    #                   clients try first; IOS picks up only when they all fail.
+    #   WEB           - standard web playback client
+    #   WEBEMBEDDED   - backup playback client
+    #   ANDROID_VR    - mobile fallback for tracks WEB can't resolve
+    #   TV            - OAuth-compatible client. The first four fail with HTTP 400
+    #                   on cloud datacenter IPs because YouTube doesn't trust
+    #                   anonymous requests from those subnets. TV routes through
+    #                   the OAuth handler below, so its requests carry a real
+    #                   Google identity and YouTube serves them — this is what
+    #                   unblocks playback on GCP. Last in the list so the lighter
+    #                   no-auth clients try first; TV picks up only when they fail.
+    #
+    # IMPORTANT: youtube-source 1.18.x replaced the IOS OAuth client with TV.
+    # If you see the warning "OAuth has been enabled without registering any
+    # OAuth-compatible clients" — TV must be in this list.
+    #
     # Order matters: Lavalink tries clients top-to-bottom until one resolves.
     clients:
       - MUSIC
-      - ANDROID_MUSIC
+      - WEB
+      - WEBEMBEDDED
       - ANDROID_VR
-      - IOS
+      - TV
     clientOptions:
       MUSIC:
         # MUSIC client cannot resolve playable streams in 1.18.0 — pin it to
@@ -54,12 +73,10 @@ plugins:
     # the IP-reputation checks that block GCP/AWS IPs. Required for reliable
     # playback on cloud-hosted Lavalink.
     #
-    # First-time setup (run once):
-    #   1. Leave YOUTUBE_OAUTH_REFRESH_TOKEN blank in .env
-    #   2. Start Lavalink — it prints a URL like https://www.google.com/device
-    #      and a code in the logs
-    #   3. Authenticate in a browser; the refreshToken is then printed to logs
-    #   4. Copy that token into YOUTUBE_OAUTH_REFRESH_TOKEN in .env, restart
+    # Google revokes these refresh tokens periodically. When that happens, ALL
+    # track loads fail with "This video requires login" and the OAuth poller
+    # spams "Invalid status code for oauth2 token fetch: 400" every 5 seconds.
+    # Recovery: run scripts/reauth-youtube.sh on the host (see that file).
     #
     # The token is sourced from the container env, NOT from a tokens.json file.
     # That avoids the previous bug where Docker created a directory at the
