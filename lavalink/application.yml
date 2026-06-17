@@ -39,26 +39,31 @@ plugins:
     allowSearch: true
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
-    # Client roles:
-    #   MUSIC         - YouTube Music search (ytmsearch:); search-only, see clientOptions
-    #   WEB           - standard web playback client
-    #   WEBEMBEDDED   - backup playback client
-    #   ANDROID_VR    - mobile fallback for tracks WEB can't resolve
-    #   TV            - OAuth-compatible client. The first four fail with HTTP 400
-    #                   on cloud datacenter IPs because YouTube doesn't trust
-    #                   anonymous requests from those subnets. TV routes through
-    #                   the OAuth handler below, so its requests carry a real
-    #                   Google identity and YouTube serves them — this is what
-    #                   unblocks playback on GCP. Last in the list so the lighter
-    #                   no-auth clients try first; TV picks up only when they fail.
+    # Client roles (per youtube-source 1.18.x capability table):
+    #   MUSIC            - search-only, ytmsearch:/ytsearch: prefix (playback disabled below)
+    #   TVHTML5_SIMPLY   - Video + Search + Mix metadata, NO OAuth needed, uses TV-class
+    #                      IP reputation. This is what carries playback on GCP datacenter
+    #                      IPs. Placed FIRST so it owns video-URL loads before the
+    #                      WEB-family clients hit YouTube's "requires login" wall.
+    #   WEB              - Video/Search/Playlist/Mix metadata. Fails with "requires login"
+    #                      on GCP IPs but kept as a fallback for fresh-IP windows and to
+    #                      provide Playlist support TVHTML5_SIMPLY lacks.
+    #   WEBEMBEDDED      - Video metadata, partial age-restriction handling.
+    #   ANDROID_VR       - Video/Search/Playlist/Mix metadata, mobile fallback.
+    #   TV               - Playback-only (Metadata Support: None per docs). Carries the
+    #                      OAuth refresh token to stream sign-in-gated tracks once another
+    #                      client has resolved the metadata. Useless alone.
     #
-    # IMPORTANT: youtube-source 1.18.x replaced the IOS OAuth client with TV.
-    # If you see the warning "OAuth has been enabled without registering any
-    # OAuth-compatible clients" — TV must be in this list.
+    # Why "TV alone doesn't work": TV's metadata support is None. If every metadata-capable
+    # client fails the initial load (as happens on GCP without TVHTML5_SIMPLY), TV's OAuth
+    # never gets a chance — the request fails before streaming would begin. This is the
+    # root cause of the recurring "every track fails after a few days" outage: OAuth was
+    # healthy, but the codepath that needs it was unreachable.
     #
     # Order matters: Lavalink tries clients top-to-bottom until one resolves.
     clients:
       - MUSIC
+      - TVHTML5_SIMPLY
       - WEB
       - WEBEMBEDDED
       - ANDROID_VR
