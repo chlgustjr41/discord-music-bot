@@ -37,8 +37,16 @@ plugins:
       enabled: true
       refreshToken: "${YOUTUBE_OAUTH_REFRESH_TOKEN:}"
       skipInitialization: false
+    # POT_BLOCK_START (rendered from /data/tokens/tokens.env at container start)
+    pot:
+      token: "__POT_TOKEN__"
+      visitorData: "__POT_VISITOR_DATA__"
+    # POT_BLOCK_END
 
 logging:
   level:
     root: INFO
     lavalink: INFO
+    # INFO required so the reauth flow (playbook F2) can scrape the device
+    # code and refresh token from the logs.
+    dev.lavalink.youtube.http.YoutubeOauth2Handler: INFO

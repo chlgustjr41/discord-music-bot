@@ -20,6 +20,15 @@ services:
       - "2333"
     volumes:
       - tokens:/data/tokens:ro
+    # curl is present in the image (verified in ADR-0004). $$ escapes compose
+    # interpolation; CMD-SHELL (not exec-form CMD) is required so the env var
+    # actually expands inside the container.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -H \"Authorization: $${LAVALINK_SERVER_PASSWORD}\" http://localhost:2333/version"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks: [jacky]
 
   bot:
@@ -36,7 +45,8 @@ services:
       LAVALINK_PORT: "2333"
       LAVALINK_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
     depends_on:
-      - lavalink
+      lavalink:
+        condition: service_healthy
     networks: [jacky]
 
   guardian:
