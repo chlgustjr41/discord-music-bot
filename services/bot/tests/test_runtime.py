@@ -1,4 +1,5 @@
 import asyncio
+import signal
 
 from jacky.core.runtime import wait_for_shutdown
 
@@ -21,3 +22,13 @@ async def test_does_not_return_before_signal() -> None:
     assert not task.done()
     stop.set()
     await asyncio.wait_for(task, timeout=1.0)
+
+
+async def test_restores_prior_signal_handlers() -> None:
+    before = signal.getsignal(signal.SIGINT)
+    stop = asyncio.Event()
+    task = asyncio.get_running_loop().create_task(wait_for_shutdown(stop=stop))
+    await asyncio.sleep(0.01)
+    stop.set()
+    await asyncio.wait_for(task, timeout=1.0)
+    assert signal.getsignal(signal.SIGINT) == before
