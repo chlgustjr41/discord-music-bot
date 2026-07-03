@@ -60,6 +60,40 @@ services:
       - lavalink
     networks: [jacky]
 
+  pot-provider:
+    image: brainicism/bgutil-ytdlp-pot-provider:node
+    restart: unless-stopped
+    init: true
+    expose:
+      - "4416"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks: [jacky]
+
+  token-minter:
+    build: ../services/token-minter
+    restart: unless-stopped
+    environment:
+      POT_PROVIDER_URL: http://pot-provider:4416
+      LAVALINK_HOST: lavalink
+      LAVALINK_PORT: "2333"
+      LAVALINK_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
+      POT_REFRESH_HOURS: ${POT_REFRESH_HOURS:-5.5}
+    volumes:
+      - tokens:/data/tokens
+    depends_on:
+      - lavalink
+      - pot-provider
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks: [jacky]
+
 networks:
   jacky: {}
 
