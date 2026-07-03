@@ -1,0 +1,67 @@
+name: jacky-music
+
+services:
+  lavalink:
+    build: ../services/lavalink
+    restart: unless-stopped
+    # Rotation is load-bearing: a revoked OAuth token (playbook F2) makes the
+    # youtube plugin log errors every 5s; unbounded logs once filled the VM disk.
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    environment:
+      _JAVA_OPTIONS: "-Xmx${LAVALINK_HEAP:-512m}"
+      LAVALINK_SERVER_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
+      YOUTUBE_PLUGIN_VERSION: ${YOUTUBE_PLUGIN_VERSION:?set in .env}
+      YOUTUBE_OAUTH_REFRESH_TOKEN: ${YOUTUBE_OAUTH_REFRESH_TOKEN:-}
+    expose:
+      - "2333"
+    volumes:
+      - tokens:/data/tokens:ro
+    networks: [jacky]
+
+  bot:
+    build: ../services/bot
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN:?set in .env}
+      LAVALINK_HOST: lavalink
+      LAVALINK_PORT: "2333"
+      LAVALINK_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
+    depends_on:
+      - lavalink
+    networks: [jacky]
+
+  guardian:
+    build: ../services/guardian
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    environment:
+      LAVALINK_HOST: lavalink
+      LAVALINK_PORT: "2333"
+      LAVALINK_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:?set in .env}
+    volumes:
+      # Root-equivalent access to the host, accepted by design (spec §3.4):
+      # guardian uses it only to restart sibling services (playbook F4/F5).
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - lavalink
+    networks: [jacky]
+
+networks:
+  jacky: {}
+
+volumes:
+  tokens: {}
