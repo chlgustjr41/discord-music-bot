@@ -44,10 +44,12 @@ playback working; only bot-detection-gated loads fail.
 
 ## F2 — YouTube OAuth token revoked
 
-> **M1 caveat:** `make reauth` currently drives the LEGACY stack's script. For
-> the v2 stack, after completing the device flow, manually copy the printed
-> refresh token into `deploy/.env` (`YOUTUBE_OAUTH_REFRESH_TOKEN=...`) and run
-> `make restart s=lavalink`. The v2-native flow lands in M2.
+> **M1 caveat:** `make reauth` currently drives the LEGACY stack's script,
+> which writes the token silently to the root `.env` (it is never printed to
+> the terminal). For the v2 stack: after completing the device flow, copy
+> `YOUTUBE_OAUTH_REFRESH_TOKEN` from the root `.env` into `deploy/.env`, then
+> run `make up` (a plain restart does NOT re-read env changes — the container
+> must be recreated). The v2-native flow lands in M2.
 
 **Alert looks like:** `[F2] OAuth revoked — all loads failing with "requires
 login". Run: make reauth`
