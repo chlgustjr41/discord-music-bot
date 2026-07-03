@@ -2,27 +2,29 @@
 
 Discord music bot with a companion web dashboard for real-time playlist management. Users control playback from Discord or the web app — both stay in sync via Firestore.
 
-## Architecture
+## Architecture (v2 — stability rewrite in progress)
 
-```
-Discord User ──> Bot (discord.py + wavelink) ──> Lavalink (audio) ──> Discord Voice
-                       │                              │
-                       ▼                              │
-                   Firestore  <───────────────────────┘
-                       ▲
-                       │
-Web User ──────> React Web App (Firebase Hosting)
-```
+Four crash-only Docker services on one VM; state lives in Firestore + a
+token volume, so any container can be restarted at any time.
 
-| Layer | Technology |
-|-------|-----------|
-| Bot | Python 3.11, discord.py 2.4.0, wavelink 3.4.1 |
-| Audio | Lavalink v4 (self-hosted, YouTube plugin) |
-| Web App | React 19, Vite 8, TypeScript 6, Tailwind CSS 4 |
-| Database | Firebase Firestore (real-time sync) |
-| Auth | Firebase Auth (Google sign-in for server activation) |
-| Functions | Firebase Cloud Functions (YouTube search proxy) |
-| Hosting | Firebase Hosting (web app), GCP e2-small VM (bot + Lavalink) |
+| Service | Role |
+|---------|------|
+| `services/bot` | Discord commands, voice, playback (stateless) |
+| `services/lavalink` | Audio engine (templated config, layered YouTube auth) |
+| `services/token-minter` | Scheduled poToken mint (M2) |
+| `services/guardian` | Canary probe → classify (F1–F9) → restart/alert |
+
+Docs: [Architecture](docs/architecture/ARCHITECTURE.md) ·
+[Runbook](docs/operations/RUNBOOK.md) ·
+[Deployment](docs/operations/DEPLOYMENT.md) ·
+[Decisions](docs/architecture/decisions/) ·
+[Roadmap](docs/roadmap/FUTURE.md)
+
+Quickstart: `cp deploy/.env.example deploy/.env`, fill it, `make up`.
+All commands: `make help`.
+
+> Legacy `bot/` + root `docker-compose.yml` remain in production until the
+> M5 cutover; do not add features there.
 
 ## Prerequisites
 
