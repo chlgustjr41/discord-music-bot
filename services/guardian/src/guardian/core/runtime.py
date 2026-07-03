@@ -12,16 +12,23 @@ async def wait_for_shutdown(stop: asyncio.Event | None = None) -> None:
     """
     stop = stop or asyncio.Event()
     loop = asyncio.get_running_loop()
-    fallback_handlers: dict[int, object] = {}
+    loop_managed: list[int] = []
+    previous: dict[int, object] = {}
     for sig in (signal.SIGTERM, signal.SIGINT):
+        previous[sig] = signal.getsignal(sig)
         try:
             loop.add_signal_handler(sig, stop.set)
+            loop_managed.append(sig)
         except NotImplementedError:
             # Windows dev machines: no loop signal handlers; sync handler suffices.
-            fallback_handlers[sig] = signal.getsignal(sig)
             signal.signal(sig, lambda *_: stop.set())
     try:
         await stop.wait()
     finally:
-        for sig, previous in fallback_handlers.items():
-            signal.signal(sig, previous)
+        # Both registration paths mutate the process-global disposition
+        # (add_signal_handler installs its own C-level handler), so both
+        # must be undone or callers inherit handlers aimed at a dead event.
+        for sig in loop_managed:
+            loop.remove_signal_handler(sig)
+        for sig, prev in previous.items():
+            signal.signal(sig, prev)
