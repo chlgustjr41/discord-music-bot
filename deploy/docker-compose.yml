@@ -1,0 +1,52 @@
+name: jacky-music
+
+services:
+  lavalink:
+    build: ../services/lavalink
+    container_name: jacky-lavalink
+    restart: unless-stopped
+    environment:
+      _JAVA_OPTIONS: "-Xmx${LAVALINK_HEAP:-512m}"
+      LAVALINK_SERVER_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
+      YOUTUBE_PLUGIN_VERSION: ${YOUTUBE_PLUGIN_VERSION:?set in .env}
+      YOUTUBE_OAUTH_REFRESH_TOKEN: ${YOUTUBE_OAUTH_REFRESH_TOKEN:-}
+    expose:
+      - "2333"
+    volumes:
+      - tokens:/data/tokens:ro
+    networks: [jacky]
+
+  bot:
+    build: ../services/bot
+    container_name: jacky-bot
+    restart: unless-stopped
+    environment:
+      DISCORD_TOKEN: ${DISCORD_TOKEN:?set in .env}
+      LAVALINK_HOST: lavalink
+      LAVALINK_PORT: "2333"
+      LAVALINK_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
+    depends_on:
+      - lavalink
+    networks: [jacky]
+
+  guardian:
+    build: ../services/guardian
+    container_name: jacky-guardian
+    restart: unless-stopped
+    environment:
+      LAVALINK_HOST: lavalink
+      LAVALINK_PORT: "2333"
+      LAVALINK_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
+      ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:?set in .env}
+    volumes:
+      # Guardian's only privilege: restarting sibling containers (playbook F4/F5).
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - lavalink
+    networks: [jacky]
+
+networks:
+  jacky: {}
+
+volumes:
+  tokens: {}
