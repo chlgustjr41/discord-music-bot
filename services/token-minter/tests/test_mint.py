@@ -5,26 +5,6 @@ from aiohttp import web
 from minter.mint import MintError, fetch_tokens, push_to_lavalink, write_tokens_file
 
 
-@pytest.fixture
-async def serve():
-    runners: list[web.AppRunner] = []
-
-    async def start(routes) -> str:
-        app = web.Application()
-        app.add_routes(routes)
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, "127.0.0.1", 0)
-        await site.start()
-        runners.append(runner)
-        port = site._server.sockets[0].getsockname()[1]
-        return f"http://127.0.0.1:{port}"
-
-    yield start
-    for r in runners:
-        await r.cleanup()
-
-
 async def test_fetch_tokens_happy_path(serve) -> None:
     # Response shape pinned by ADR-0004: camelCase fields, contentBinding is
     # the (URL-encoded, %-containing) visitorData.
@@ -92,8 +72,8 @@ async def test_push_non_204_raises(serve) -> None:
 
 def test_write_tokens_file_atomic(tmp_path) -> None:
     path = tmp_path / "sub" / "tokens.env"
-    write_tokens_file(str(path), "PO+abc/123=", "VD_def-456%3D%3D")
-    assert path.read_text() == "POT_TOKEN=PO+abc/123=\nPOT_VISITOR_DATA=VD_def-456%3D%3D\n"
+    write_tokens_file(str(path), "PO-abc_123=", "VD_def-456%3D%3D")
+    assert path.read_text() == "POT_TOKEN=PO-abc_123=\nPOT_VISITOR_DATA=VD_def-456%3D%3D\n"
     assert not path.with_suffix(".env.tmp").exists()
 
 
@@ -102,3 +82,12 @@ def test_write_tokens_file_rejects_unsafe_values(tmp_path) -> None:
         write_tokens_file(str(tmp_path / "t.env"), "evil\ntoken", "VD")
     with pytest.raises(MintError):
         write_tokens_file(str(tmp_path / "t.env"), "PO", 'VD"quoted')
+
+
+def test_write_tokens_file_rejects_sed_specials(tmp_path) -> None:
+    # '/' and '+' would break the sed expression the values are injected into;
+    # per ADR-0004 neither appears in websafe/URL-encoded values, so reject.
+    with pytest.raises(MintError):
+        write_tokens_file(str(tmp_path / "t.env"), "PO/slash", "VD")
+    with pytest.raises(MintError):
+        write_tokens_file(str(tmp_path / "t.env"), "PO", "VD+plus")

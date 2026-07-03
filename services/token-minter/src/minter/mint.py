@@ -10,9 +10,11 @@ import aiohttp
 log = logging.getLogger("minter")
 
 # Values are injected into a shell-sourced env file and sed'd into YAML at
-# lavalink cold start; restrict to base64/URL-safe charset so neither can break.
-# '%' is required: ADR-0004 pins contentBinding as URL-encoded (e.g. ...%3D%3D).
-_SAFE_VALUE = re.compile(r"^[A-Za-z0-9+/=%_-]+$")
+# lavalink cold start; the charset must exclude sed replacement/delimiter
+# specials (\, &, |, /) and shell metacharacters. Per ADR-0004, poToken is
+# websafe base64 and contentBinding is URL-encoded (unreserved chars + '%',
+# e.g. ...%3D%3D), so neither legitimately contains '/' or '+'.
+_SAFE_VALUE = re.compile(r"^[A-Za-z0-9=%._~-]+$")
 _RETRY_SECONDS = 300
 
 
@@ -59,10 +61,12 @@ def write_tokens_file(path: str, po_token: str, visitor_data: str) -> None:
     tmp = f"{path}.tmp"
     with open(tmp, "w", encoding="ascii") as f:
         f.write(f"POT_TOKEN={po_token}\nPOT_VISITOR_DATA={visitor_data}\n")
+    # lavalink (non-root) must be able to read this across the shared volume
+    os.chmod(tmp, 0o644)
     os.replace(tmp, path)
 
 
-async def run(settings, stop: asyncio.Event) -> None:
+async def run(settings, stop: asyncio.Event, retry_seconds: float = _RETRY_SECONDS) -> None:
     """Mint immediately on start, then every refresh_hours; retry failures after 5 min."""
     timeout = aiohttp.ClientTimeout(total=120)
     async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -79,8 +83,8 @@ async def run(settings, stop: asyncio.Event) -> None:
                 write_tokens_file(settings.tokens_file, po_token, visitor_data)
                 log.info("minted and pushed fresh poToken (visitorData %.12s...)", visitor_data)
             except (MintError, aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                log.warning("mint cycle failed: %s — retrying in %ss", exc, _RETRY_SECONDS)
-                await _interruptible_sleep(stop, _RETRY_SECONDS)
+                log.warning("mint cycle failed: %s — retrying in %ss", exc, retry_seconds)
+                await _interruptible_sleep(stop, retry_seconds)
                 continue
             await _interruptible_sleep(stop, settings.refresh_hours * 3600)
 

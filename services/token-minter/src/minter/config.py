@@ -19,5 +19,7 @@ class Settings:
             lavalink_url=f"http://{os.environ['LAVALINK_HOST']}:{os.environ['LAVALINK_PORT']}",
             lavalink_password=os.environ["LAVALINK_PASSWORD"],
             tokens_file=os.environ.get("TOKENS_FILE", "/data/tokens/tokens.env"),
-            refresh_hours=float(os.environ.get("POT_REFRESH_HOURS", "6")),
+            # Must stay below pot-provider's TOKEN_TTL (6h) so a fresh token
+            # lands before the old one expires.
+            refresh_hours=float(os.environ.get("POT_REFRESH_HOURS", "5.5")),
         )

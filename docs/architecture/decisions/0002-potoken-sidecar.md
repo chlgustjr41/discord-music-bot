@@ -1,6 +1,6 @@
 # ADR-0002: poToken sidecar as an independent auth layer
 
-**Status:** Accepted · 2026-07-02
+**Status:** Accepted · 2026-07-02 — mint mechanism superseded by [ADR-0004](0004-bgutil-pot-provider.md)
 
 ## Context
 The dominant outage class (F2): Google periodically revokes the OAuth

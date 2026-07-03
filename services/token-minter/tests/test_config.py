@@ -15,7 +15,8 @@ def test_from_env_reads_required_and_defaults(monkeypatch: pytest.MonkeyPatch) -
     assert s.lavalink_url == "http://lavalink:2333"
     assert s.lavalink_password == "hunter2"
     assert s.tokens_file == "/data/tokens/tokens.env"
-    assert s.refresh_hours == 6.0
+    # Default keeps a margin below pot-provider's 6h TOKEN_TTL.
+    assert s.refresh_hours == 5.5
 
 
 def test_from_env_missing_required_raises(monkeypatch: pytest.MonkeyPatch) -> None:
