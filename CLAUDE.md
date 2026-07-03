@@ -4,7 +4,7 @@
 
 ### Repository Structure
 - `services/bot/` — Python Discord bot v2 (`src/jacky/`) — ACTIVE DEVELOPMENT
-- `services/guardian/` — supervisor: probe/classify/act/alert
+- `services/guardian/` — supervisor (M1 skeleton; probe/classify/act/alert land in M4)
 - `services/lavalink/` — templated Lavalink config
 - `deploy/` — docker-compose.yml + .env contract
 - `docs/` — architecture, ADRs, runbook, deployment, roadmap

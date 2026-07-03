@@ -3,8 +3,14 @@
 Guardian alerts carry a playbook ID (F1–F9). Find the ID below; run exactly
 what it says. All commands run on the VM from the repo root.
 
-> **Status:** Playbook IDs and automated responses land with M2 (token-minter)
-> and M4 (guardian). Until then, use the Confirm/Fix commands manually.
+> **Status:** Playbook IDs and automated responses land with M2 (token-minter),
+> M3 (bot playback/state), and M4 (guardian). Until then, use the Confirm/Fix
+> commands manually.
+
+> **Reading logs:** `make logs s=<svc>` follows live output (Ctrl-C to exit;
+> silence after a few seconds means no match) and starts from the last 100
+> lines. To search further back without following:
+> `docker compose -f deploy/docker-compose.yml --env-file deploy/.env logs --tail=1000 <svc> | grep -i <pattern>`
 
 ## Playbook index
 
@@ -30,13 +36,18 @@ bot-detection errors on track loads.
 
 **Fix:** normally none — the guardian triggers an immediate token-minter run
 (M2) and re-probes. If the alert repeats:
-1. `make restart s=lavalink` — reload tokens from the shared volume
+1. `make restart s=lavalink` — reload tokens from the shared volume (effective from M2 — the volume is unread until token-minter lands)
 2. Verify: play a test track, or `make logs s=guardian` shows the canary passing
 
 **While pending:** the OAuth layer (F2) and client ordering keep most
 playback working; only bot-detection-gated loads fail.
 
 ## F2 — YouTube OAuth token revoked
+
+> **M1 caveat:** `make reauth` currently drives the LEGACY stack's script. For
+> the v2 stack, after completing the device flow, manually copy the printed
+> refresh token into `deploy/.env` (`YOUTUBE_OAUTH_REFRESH_TOKEN=...`) and run
+> `make restart s=lavalink`. The v2-native flow lands in M2.
 
 **Alert looks like:** `[F2] OAuth revoked — all loads failing with "requires
 login". Run: make reauth`
@@ -47,7 +58,7 @@ login". Run: make reauth`
 **Fix (~60s):**
 1. `make reauth` — prints a device code and URL (google.com/device)
 2. Open the URL on any machine, enter the code, approve with the bot's Google account
-3. The script writes the new token to `deploy/.env` and restarts Lavalink
+3. The script writes the new token to the legacy stack's root `.env` and restarts the legacy Lavalink container — for the v2 stack, apply the token manually per the caveat above
 4. Verify: guardian posts `[F2 resolved]` after its next probe (≤2 min)
 
 **While pending:** poToken layer (F1) keeps most tracks playing; only
@@ -76,7 +87,7 @@ signature break. This is the highest-urgency human playbook.
 **Alert looks like:** `[F4] Lavalink unresponsive (canary timeout) —
 restarting container.`
 
-**Confirm:** `make ps` shows `lavalink` unhealthy or restarting;
+**Confirm:** `make ps` shows `lavalink` restarting or exited;
 `make logs s=lavalink` shows a crash, OOM kill, or startup failure.
 
 **Fix:** automated — the guardian restarts the container; the bot's client
@@ -142,11 +153,10 @@ UNAVAILABLE/deadline-exceeded errors; check status.cloud.google.com for a
 Firestore incident.
 
 **Fix:** normally none — the bot continues from its in-memory cache and
-flushes queued writes when Firestore recovers. If sustained beyond a GCP
-incident window:
-1. Verify the service-account credentials referenced in `deploy/.env` are valid
-2. `make restart s=bot` after connectivity returns to force a clean state rebuild
-3. Verify: writes flush and the alert clears on the next probe
+flushes queued writes when Firestore recovers (lands with the M3 bot). If
+sustained beyond a GCP incident window:
+1. `make restart s=bot` after connectivity returns to force a clean state rebuild
+2. Verify: writes flush and the alert clears on the next probe
 
 **Impact while pending:** playback continues; dashboard sync and queue
 persistence lag until writes flush.
