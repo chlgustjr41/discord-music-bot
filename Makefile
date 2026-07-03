@@ -33,5 +33,5 @@ build: ## Build all images without starting
 deploy: ## Production deploy (run on the VM)
 	git pull origin master && $(COMPOSE) up -d --build
 
-reauth: ## Re-run YouTube OAuth device flow (playbook F2)
+reauth: ## YouTube OAuth device flow (legacy stack script; v2 flow lands in M2)
 	./scripts/reauth-youtube.sh
