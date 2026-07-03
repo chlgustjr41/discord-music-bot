@@ -3,21 +3,19 @@
 ## Project: Jacky Music (Discord Music Bot)
 
 ### Repository Structure
-- `bot/` — Python Discord bot (discord.py + wavelink)
-- `frontend/` — React + Vite + TypeScript web app
-- `functions/` — Firebase Cloud Functions (YouTube search proxy)
-- `lavalink/` — Lavalink server configuration
+- `services/bot/` — Python Discord bot v2 (`src/jacky/`) — ACTIVE DEVELOPMENT
+- `services/guardian/` — supervisor: probe/classify/act/alert
+- `services/lavalink/` — templated Lavalink config
+- `deploy/` — docker-compose.yml + .env contract
+- `docs/` — architecture, ADRs, runbook, deployment, roadmap
+- `bot/` — LEGACY v1 bot (production until M5 cutover; no new features)
+- `frontend/`, `functions/` — unchanged (web app + search proxy)
 
-### Commands
-
-#### Bot
-```bash
-cd bot
-python -m venv .venv
-source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-pip install -r requirements.txt
-python main.py
-```
+### Commands (v2)
+- `make help` — list everything
+- `make test` / `make lint` — pytest + ruff over services/
+- `make up` / `make logs s=<svc>` / `make restart s=<svc>` — stack ops
+- Spec: `docs/superpowers/specs/2026-07-02-stability-rewrite-design.md`
 
 #### Frontend
 ```bash
@@ -36,11 +34,6 @@ npm run build
 firebase deploy --only functions
 ```
 
-#### Docker (bot + Lavalink)
-```bash
-docker compose up -d --build
-```
-
 ### Architecture
 - Firestore is the single source of truth for playlist state
 - Bot and web app both read/write the same Firestore documents
@@ -53,8 +46,8 @@ docker compose up -d --build
 `@/*` maps to `src/*` in the frontend.
 
 ### Environment Variables
-See `.env.example` for all required variables.
+v2 stack: see `deploy/.env.example` (every variable documented inline).
+Legacy v1 bot: see root `.env.example`.
 
 ### Design & Plan
-- Design spec: `docs/superpowers/specs/2026-04-06-jacky-music-design.md`
-- Implementation plan: `docs/superpowers/plans/2026-04-06-jacky-music-implementation.md`
+- Design spec: `docs/superpowers/specs/2026-07-02-stability-rewrite-design.md`
