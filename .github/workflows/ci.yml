@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [bot, guardian]
+        service: [bot, guardian, token-minter]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: [bot, guardian, lavalink]
+        service: [bot, guardian, lavalink, token-minter]
     steps:
       - uses: actions/checkout@v4
       - run: docker build services/${{ matrix.service }}
