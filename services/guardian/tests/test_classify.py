@@ -26,6 +26,9 @@ F1_ERRORS = [
 
 F3_ERRORS = [
     "Must find action functions from script",
+    # Live production incident 2026-07-04 (plugin 1.18.1 vs new player JS):
+    "Must find sig function from script: /s/player/4918c89a/player_embed.vflset/en_US/base.js",
+    "ScriptExtractionException: script extraction failed",
     "Cannot decipher signature without cipher script",
     "Could not extract signature deciphering functions",
     "Unable to extract player version from script",

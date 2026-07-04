@@ -32,6 +32,9 @@ _SIGNATURES: list[tuple[str, list[str]]] = [
         "signature",
         "decipher",
         "must find action functions",
+        "sig function",           # ScriptExtractionException, seen live 2026-07-04
+        "script extraction",
+        "n-parameter",
         "could not extract",
         "unable to extract",
         "parsing",
