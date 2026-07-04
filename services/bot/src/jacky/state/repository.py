@@ -12,17 +12,21 @@ gateway heartbeat.
 
 import asyncio
 import random
+import secrets
 import string
 from typing import Any
 
 from firebase_admin import firestore
 
+# 6 chars is the dashboard's human-typeable format (frontend contract).
+# secrets (CSPRNG) keeps codes unpredictable; codes are also single-session
+# and invalidated on every session end, which bounds their exposure.
 SESSION_CODE_LENGTH = 6
 
 
 def generate_session_code(length: int = SESSION_CODE_LENGTH) -> str:
     chars = string.ascii_uppercase + string.digits
-    return "".join(random.choices(chars, k=length))
+    return "".join(secrets.choice(chars) for _ in range(length))
 
 
 class ServerRepository:

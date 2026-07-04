@@ -25,3 +25,5 @@ functions/.env
 *.local
 serviceAccountKey.json
 lavalink/tokens.json
+*.egg-info/
+*.egg-info/
