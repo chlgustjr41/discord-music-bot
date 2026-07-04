@@ -39,21 +39,28 @@ jobs:
         # Proves the entrypoint injection path with zero live egress: seed a
         # synthetic tokens.env into the volume and check the rendered config.
         run: |
+          # Stop the minter while the synthetic file is in play so a retrying
+          # real mint can't overwrite it mid-check; the real-token step below
+          # restarts it anyway.
+          $COMPOSE stop token-minter
           vol=$(docker volume ls -q | grep jacky-music_tokens)
           docker run --rm -v "$vol":/data/tokens alpine sh -c 'printf "POT_TOKEN=SYNTHPO123\nPOT_VISITOR_DATA=SYNTHVD456\n" > /data/tokens/tokens.env'
           $COMPOSE restart lavalink
+          healthy=false
           for i in $(seq 1 30); do
-            state=$(docker inspect --format '{{.State.Health.Status}}' $($COMPOSE ps -q lavalink)); [ "$state" = "healthy" ] && break; sleep 5
+            state=$(docker inspect --format '{{.State.Health.Status}}' $($COMPOSE ps -q lavalink)); [ "$state" = "healthy" ] && healthy=true && break; sleep 5
           done
+          if [ "$healthy" != "true" ]; then $COMPOSE logs lavalink; exit 1; fi
           $COMPOSE exec -T lavalink sh -c 'grep -q "SYNTHPO123" /tmp/application.yml && ! grep -q "__POT_TOKEN__" /tmp/application.yml'
       - name: Minter completed a cycle
-        # Soft gate: requires live Google egress from a datacenter IP; failure
-        # here is signal, not a merge blocker (see review I2). The daily
-        # schedule run doubles as the mint canary.
+        # Soft gate on PRs: requires live Google egress from a datacenter IP;
+        # failure is signal, not a merge blocker (review I2). HARD on the
+        # daily schedule run — that is the canary, and it must turn red when
+        # Google-side minting breaks.
         # 120s ceiling is enough because token-minter's depends_on gates on a
         # healthy pot-provider, so the first cycle no longer loses the boot
         # race (a real mint takes ~15-30s, ADR-0004).
-        continue-on-error: true
+        continue-on-error: ${{ github.event_name != 'schedule' }}
         run: |
           for i in $(seq 1 24); do
             $COMPOSE logs token-minter | grep -q "minted and pushed" && exit 0
@@ -62,10 +69,8 @@ jobs:
           $COMPOSE logs token-minter pot-provider
           exit 1
       - name: Cold-start injection (real minted token)
-        # Soft gate: requires live Google egress from a datacenter IP; failure
-        # here is signal, not a merge blocker (see review I2). The daily
-        # schedule run doubles as the mint canary.
-        continue-on-error: true
+        # Soft on PRs, hard on the daily canary run — see the previous step.
+        continue-on-error: ${{ github.event_name != 'schedule' }}
         run: |
           # The synthetic step overwrote tokens.env; restarting the minter
           # forces an immediate fresh mint so the volume holds a real token.
@@ -81,9 +86,11 @@ jobs:
             exit 1
           fi
           $COMPOSE restart lavalink
+          healthy=false
           for i in $(seq 1 30); do
-            state=$(docker inspect --format '{{.State.Health.Status}}' $($COMPOSE ps -q lavalink)); [ "$state" = "healthy" ] && break; sleep 5
+            state=$(docker inspect --format '{{.State.Health.Status}}' $($COMPOSE ps -q lavalink)); [ "$state" = "healthy" ] && healthy=true && break; sleep 5
           done
+          if [ "$healthy" != "true" ]; then $COMPOSE logs lavalink; exit 1; fi
           # Assert the ACTUAL minted value landed in the rendered config (M3).
           $COMPOSE exec -T lavalink sh -c "grep -qF 'token: \"$tok\"' /tmp/application.yml"
       - if: always()
