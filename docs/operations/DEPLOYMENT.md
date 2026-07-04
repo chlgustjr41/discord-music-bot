@@ -41,3 +41,12 @@ The legacy `bot/` stays production until every box is checked:
 8. Point the external uptime monitor at the guardian heartbeat.
 9. Remove the legacy bot from the VM's startup path; archive `bot/` in a
    follow-up commit once v2 has survived a full week.
+
+### Rollback during the soak week
+`make rollback-legacy` — stops the v2 stack and restarts the preserved
+legacy containers (`jacky-bot`, `jacky-lavalink`). ~30 seconds of downtime.
+There is deliberately NO automatic fallback: both versions use the same
+Discord token (one gateway session allowed) and write the same Firestore
+documents, so running both would split-brain state. The v2 safety net is
+crash-only convergence + guardian restarts; legacy is the human-decision
+escape hatch until the soak week ends and the containers are deleted.
