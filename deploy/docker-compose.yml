@@ -44,6 +44,12 @@ services:
       LAVALINK_HOST: lavalink
       LAVALINK_PORT: "2333"
       LAVALINK_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
+      FIREBASE_SERVICE_ACCOUNT_KEY: /run/secrets/firebase-service-account.json
+      WEB_APP_URL: ${WEB_APP_URL:?set in .env}
+    volumes:
+      - ${FIREBASE_SERVICE_ACCOUNT_FILE:?set in .env}:/run/secrets/firebase-service-account.json:ro
+    expose:
+      - "8080"
     depends_on:
       lavalink:
         condition: service_healthy

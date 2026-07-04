@@ -27,3 +27,5 @@ serviceAccountKey.json
 lavalink/tokens.json
 *.egg-info/
 *.egg-info/
+deploy/firebase-service-account.json
+firebase-service-account*.json
