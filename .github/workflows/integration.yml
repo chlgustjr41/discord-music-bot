@@ -6,6 +6,10 @@ on:
       - "services/**"
       - "deploy/**"
       - ".github/workflows/integration.yml"
+  schedule:
+    # Daily canary: the soft-gated live-mint steps below only produce signal
+    # when they actually run; PRs alone can go quiet for days.
+    - cron: "0 9 * * *"
 
 concurrency:
   group: integration-${{ github.ref }}
@@ -15,35 +19,72 @@ jobs:
   stack-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      COMPOSE: docker compose -f deploy/docker-compose.yml --env-file deploy/.env
     steps:
       - uses: actions/checkout@v4
       - run: cp deploy/.env.example deploy/.env
       - name: Boot audio infrastructure
-        run: docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build lavalink pot-provider token-minter
+        run: $COMPOSE up -d --build lavalink pot-provider token-minter
       - name: Wait for lavalink healthy
         run: |
-          for i in $(seq 1 20); do
-            state=$(docker inspect --format '{{.State.Health.Status}}' $(docker compose -f deploy/docker-compose.yml --env-file deploy/.env ps -q lavalink))
+          for i in $(seq 1 30); do
+            state=$(docker inspect --format '{{.State.Health.Status}}' $($COMPOSE ps -q lavalink))
             [ "$state" = "healthy" ] && exit 0
             sleep 5
           done
-          docker compose -f deploy/docker-compose.yml --env-file deploy/.env logs lavalink
+          $COMPOSE logs lavalink
           exit 1
-      - name: Minter completed a cycle
-        # 400s ceiling: the minter's first cycle loses the pot-provider boot
-        # race near-deterministically and retries after 300s; the real mint
-        # then takes ~15-30s (measured locally: mint landed at t+325s).
+      - name: Cold-start injection (synthetic tokens, hard gate)
+        # Proves the entrypoint injection path with zero live egress: seed a
+        # synthetic tokens.env into the volume and check the rendered config.
         run: |
-          for i in $(seq 1 80); do
-            docker compose -f deploy/docker-compose.yml --env-file deploy/.env logs token-minter | grep -q "minted and pushed" && exit 0
+          vol=$(docker volume ls -q | grep jacky-music_tokens)
+          docker run --rm -v "$vol":/data/tokens alpine sh -c 'printf "POT_TOKEN=SYNTHPO123\nPOT_VISITOR_DATA=SYNTHVD456\n" > /data/tokens/tokens.env'
+          $COMPOSE restart lavalink
+          for i in $(seq 1 30); do
+            state=$(docker inspect --format '{{.State.Health.Status}}' $($COMPOSE ps -q lavalink)); [ "$state" = "healthy" ] && break; sleep 5
+          done
+          $COMPOSE exec -T lavalink sh -c 'grep -q "SYNTHPO123" /tmp/application.yml && ! grep -q "__POT_TOKEN__" /tmp/application.yml'
+      - name: Minter completed a cycle
+        # Soft gate: requires live Google egress from a datacenter IP; failure
+        # here is signal, not a merge blocker (see review I2). The daily
+        # schedule run doubles as the mint canary.
+        # 120s ceiling is enough because token-minter's depends_on gates on a
+        # healthy pot-provider, so the first cycle no longer loses the boot
+        # race (a real mint takes ~15-30s, ADR-0004).
+        continue-on-error: true
+        run: |
+          for i in $(seq 1 24); do
+            $COMPOSE logs token-minter | grep -q "minted and pushed" && exit 0
             sleep 5
           done
-          docker compose -f deploy/docker-compose.yml --env-file deploy/.env logs token-minter pot-provider
+          $COMPOSE logs token-minter pot-provider
           exit 1
-      - name: Cold-start injection
+      - name: Cold-start injection (real minted token)
+        # Soft gate: requires live Google egress from a datacenter IP; failure
+        # here is signal, not a merge blocker (see review I2). The daily
+        # schedule run doubles as the mint canary.
+        continue-on-error: true
         run: |
-          docker compose -f deploy/docker-compose.yml --env-file deploy/.env restart lavalink
-          sleep 25
-          docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T lavalink sh -c 'grep -q "__POT_TOKEN__" /tmp/application.yml && exit 1 || grep -q "token:" /tmp/application.yml'
+          # The synthetic step overwrote tokens.env; restarting the minter
+          # forces an immediate fresh mint so the volume holds a real token.
+          $COMPOSE restart token-minter
+          tok=""
+          for i in $(seq 1 24); do
+            tok=$($COMPOSE exec -T token-minter sh -c 'grep "^POT_TOKEN=" /data/tokens/tokens.env 2>/dev/null | cut -d= -f2-' || true)
+            [ -n "$tok" ] && [ "$tok" != "SYNTHPO123" ] && break
+            sleep 5
+          done
+          if [ -z "$tok" ] || [ "$tok" = "SYNTHPO123" ]; then
+            $COMPOSE logs token-minter pot-provider
+            exit 1
+          fi
+          $COMPOSE restart lavalink
+          for i in $(seq 1 30); do
+            state=$(docker inspect --format '{{.State.Health.Status}}' $($COMPOSE ps -q lavalink)); [ "$state" = "healthy" ] && break; sleep 5
+          done
+          # Assert the ACTUAL minted value landed in the rendered config (M3).
+          $COMPOSE exec -T lavalink sh -c "grep -qF 'token: \"$tok\"' /tmp/application.yml"
       - if: always()
-        run: docker compose -f deploy/docker-compose.yml --env-file deploy/.env down -v
+        run: $COMPOSE down -v

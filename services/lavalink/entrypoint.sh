@@ -10,11 +10,21 @@ sed "s|__YOUTUBE_PLUGIN_VERSION__|${YOUTUBE_PLUGIN_VERSION}|g" \
 # shared volume; values are charset-guarded at write time (ADR-0004: websafe
 # base64 / URL-encoded, may contain '%'), so the '|'-delimited sed is safe.
 TOKENS_FILE="${TOKENS_FILE:-/data/tokens/tokens.env}"
-if [ -f "$TOKENS_FILE" ]; then
+inject_tokens=false
+# Freshness gate: an expired poToken (provider down >TTL, then a restart) is
+# worse than none — token-bearing requests get hard-rejected, tokenless just
+# degrades. 330 min matches the minter's 5.5h refresh cadence.
+if [ -f "$TOKENS_FILE" ] && [ -n "$(find "$TOKENS_FILE" -mmin -330 2>/dev/null)" ]; then
   . "$TOKENS_FILE"
-  sed -i "s|__POT_TOKEN__|${POT_TOKEN}|; s|__POT_VISITOR_DATA__|${POT_VISITOR_DATA}|" /tmp/application.yml
+  if [ -n "${POT_TOKEN:-}" ] && [ -n "${POT_VISITOR_DATA:-}" ]; then
+    inject_tokens=true
+  fi
+fi
+if [ "$inject_tokens" = true ]; then
+  sed -i "s|__POT_TOKEN__|${POT_TOKEN}|g; s|__POT_VISITOR_DATA__|${POT_VISITOR_DATA}|g" /tmp/application.yml
 else
-  # No minted tokens yet (first boot): drop the pot block entirely.
+  # No fresh, complete tokens: run tokenless (known-degraded M1 state) rather
+  # than injecting garbage or crash-looping the audio core.
   sed -i '/# POT_BLOCK_START/,/# POT_BLOCK_END/d' /tmp/application.yml
 fi
 # classpath:/ keeps the jar's built-in defaults (incl. the spring.config.import

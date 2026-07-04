@@ -71,11 +71,19 @@ services:
     networks: [jacky]
 
   pot-provider:
-    image: brainicism/bgutil-ytdlp-pot-provider:node
+    # Pinned like YOUTUBE_PLUGIN_VERSION: bump deliberately, in step with
+    # youtube-source plugin compatibility (ADR-0004).
+    image: brainicism/bgutil-ytdlp-pot-provider:1.3.1-node
     restart: unless-stopped
     init: true
     expose:
       - "4416"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4416/ping').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     logging:
       driver: json-file
       options:
@@ -95,8 +103,13 @@ services:
     volumes:
       - tokens:/data/tokens
     depends_on:
-      - lavalink
-      - pot-provider
+      lavalink:
+        condition: service_started
+      # Gating on a healthy provider kills the first-boot race: without it
+      # the minter's first cycle loses to the node server's startup and the
+      # poToken layer stays dark for the whole 300s retry window.
+      pot-provider:
+        condition: service_healthy
     logging:
       driver: json-file
       options:

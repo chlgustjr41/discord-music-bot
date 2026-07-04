@@ -15,7 +15,7 @@ jobs:
           python-version: "3.11"
       # Pinned: red CI blocks merge, so lint rules may only change via a deliberate bump
       - run: pip install "ruff==0.15.20"
-      - run: ruff check services/bot services/guardian
+      - run: ruff check services/bot services/guardian services/token-minter
 
   test:
     runs-on: ubuntu-latest
