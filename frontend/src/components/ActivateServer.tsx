@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { CheckCircle, LogIn, LogOut, ArrowLeft, Loader2 } from "lucide-react";
+import { SummonPanel } from "./SummonPanel";
 
 export function ActivateServer() {
   const {
@@ -59,6 +60,8 @@ export function ActivateServer() {
 
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
+      <div className="w-full max-w-md space-y-4">
+      {user && <SummonPanel firebaseUid={user.uid} />}
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl font-bold">
@@ -171,6 +174,7 @@ export function ActivateServer() {
           </Button>
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

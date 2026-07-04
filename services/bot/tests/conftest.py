@@ -86,8 +86,10 @@ class FakeRepo:
             "searchPlaylistName": playlist_name,
         })
 
+    activated = True
+
     async def is_activated(self, sid):
-        return True
+        return self.activated
 
 
 def make_track(title="Song", url="https://youtu.be/abc123", encoded="ENC1",
@@ -156,15 +158,33 @@ class FakeMe:
 
 
 @dataclass
+class FakeVoiceChannel:
+    id: int
+    name: str = "General"
+    guild: object = None
+
+    async def connect(self, *, cls=None):
+        voice = FakeVoice(channel=self)
+        self.guild.voice_client = voice
+        return voice
+
+
+@dataclass
 class FakeGuild:
     id: int
     voice_client: object = None
     me: FakeMe = field(default_factory=FakeMe)
     name: str = "Guild"
     icon: object = None
+    channels: dict = field(default_factory=dict)
 
     def get_channel(self, channel_id):
-        return None
+        return self.channels.get(channel_id)
+
+    def add_voice_channel(self, channel_id, name="General"):
+        channel = FakeVoiceChannel(id=channel_id, name=name, guild=self)
+        self.channels[channel_id] = channel
+        return channel
 
 
 class FakeBot:

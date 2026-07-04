@@ -120,16 +120,25 @@ class PlayerService:
 
     # ── session lifecycle ────────────────────────────────────────────────
 
-    async def begin_session(self, guild: Any, voice_channel: Any, text_channel: Any) -> str:
+    async def begin_session(
+        self, guild: Any, voice_channel: Any, text_channel: Any = None
+    ) -> str:
+        """Open a fresh session. text_channel is None for web summons — the
+        previous session's text channel (if any) is kept for announcements."""
         sid = str(guild.id)
         await self.repo.init_state(sid)
+        prior = await self.repo.get_state(sid) or {}
         code = generate_session_code()
         await self.repo.set_session_code(sid, code)
         await self._set_nickname(guild.id, code)
+        text_channel_id = (
+            str(text_channel.id) if text_channel else prior.get("textChannelId")
+        )
         await self.repo.update_state(sid, {
             "voiceChannelId": str(voice_channel.id),
             "voiceChannelName": voice_channel.name,
-            "textChannelId": str(text_channel.id),
+            "textChannelId": text_channel_id,
+            "knownVoiceChannels": self._remember_channel(prior, voice_channel),
             "queue": [],
             "currentTrack": None,
             "isPlaying": False,
@@ -141,6 +150,46 @@ class PlayerService:
         self.session_start[guild.id] = datetime.datetime.now(timezone.utc)
         self.start_listener(guild.id)
         return code
+
+    @staticmethod
+    def _remember_channel(prior: dict, voice_channel: Any, cap: int = 5) -> list:
+        """Most-recent-first list of visited voice channels (dashboard summon)."""
+        entry = {"id": str(voice_channel.id), "name": voice_channel.name}
+        rest = [
+            c for c in prior.get("knownVoiceChannels", [])
+            if c.get("id") != entry["id"]
+        ]
+        return [entry, *rest][:cap]
+
+    async def handle_summon(self, guild_id: int, channel_id: str) -> None:
+        """Web-dashboard summon (FUTURE #2): join the requested voice channel
+        and open a session, then clear the request marker. Only honored for
+        activated servers; ignored when a session is already live."""
+        sid = str(guild_id)
+        try:
+            if not await self.repo.is_activated(sid):
+                log.warning("summon ignored: server %s not activated", sid)
+                return
+            guild = self.bot.get_guild(guild_id)
+            channel = guild.get_channel(int(channel_id)) if guild else None
+            if channel is None or not hasattr(channel, "connect"):
+                log.warning("summon ignored: channel %s not found in %s", channel_id, sid)
+                return
+            if self._voice(guild_id):
+                log.info("summon ignored: session already active in %s", sid)
+                return
+            from jacky.audio.voice import LavalinkVoiceClient
+
+            await channel.connect(cls=LavalinkVoiceClient)
+            code = await self.begin_session(guild, channel)
+            await self.notifier.send(
+                guild_id,
+                text=f"🎵 Summoned to **{channel.name}** from the web dashboard — "
+                     f"session code `{code}`.",
+            )
+            log.info("summoned to %s in guild %s (code %s)", channel.name, sid, code)
+        finally:
+            await self.repo.update_state(sid, {"summonRequest": None})
 
     def start_listener(self, guild_id: int) -> None:
         if self.listener_factory and guild_id not in self.listeners:

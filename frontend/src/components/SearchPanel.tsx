@@ -193,6 +193,17 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
     return `${mins}:${String(secs).padStart(2, "0")}`;
   };
 
+  // Source badge derived from the track URL (Spotify joins this list later).
+  const sourceOf = (url: string): { label: string; className: string } => {
+    if (/youtube\.com|youtu\.be/.test(url))
+      return { label: "YouTube", className: "bg-red-500/15 text-red-500" };
+    if (/soundcloud\.com/.test(url))
+      return { label: "SoundCloud", className: "bg-orange-500/15 text-orange-500" };
+    if (/bandcamp\.com/.test(url))
+      return { label: "Bandcamp", className: "bg-teal-500/15 text-teal-500" };
+    return { label: "Web", className: "bg-muted text-muted-foreground" };
+  };
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -344,6 +355,17 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
                       >
                         {isSelected && <Check className="h-3 w-3" />}
                       </div>
+                      {r.thumbnail && (
+                        <img
+                          src={r.thumbnail}
+                          alt=""
+                          loading="lazy"
+                          className="h-9 w-16 shrink-0 rounded object-cover bg-muted"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = "none";
+                          }}
+                        />
+                      )}
                       <div className="flex-1 min-w-0">
                         <p className="truncate text-sm font-medium">{r.title}</p>
                         <p className="truncate text-xs text-muted-foreground">
@@ -351,6 +373,11 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
                           {r.duration > 0 && ` — ${formatDuration(r.duration)}`}
                         </p>
                       </div>
+                      <span
+                        className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${sourceOf(r.url).className}`}
+                      >
+                        {sourceOf(r.url).label}
+                      </span>
                     </li>
                   );
                 })}

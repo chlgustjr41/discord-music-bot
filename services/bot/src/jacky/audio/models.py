@@ -47,10 +47,19 @@ class LoadResult:
     tracks: list = field(default_factory=list)  # raw Lavalink track objects
     playlist_name: str | None = None
     error: str | None = None
+    selected_index: int = -1  # playlist's selectedTrack (the video the URL pointed at)
 
     @property
     def first(self) -> dict | None:
         return self.tracks[0] if self.tracks else None
+
+    @property
+    def tracks_selected_first(self) -> list:
+        """Playlist tracks reordered so the URL's own video leads (FUTURE #4)."""
+        i = self.selected_index
+        if 0 < i < len(self.tracks):
+            return [self.tracks[i]] + self.tracks[:i] + self.tracks[i + 1:]
+        return self.tracks
 
     @classmethod
     def from_response(cls, body: dict) -> "LoadResult":
@@ -59,10 +68,12 @@ class LoadResult:
         if kind == "track":
             return cls(kind="track", tracks=[data])
         if kind == "playlist":
+            info = data.get("info") or {}
             return cls(
                 kind="playlist",
                 tracks=data.get("tracks", []),
-                playlist_name=(data.get("info") or {}).get("name"),
+                playlist_name=info.get("name"),
+                selected_index=info.get("selectedTrack", -1),
             )
         if kind == "search":
             return cls(kind="search", tracks=data or [])

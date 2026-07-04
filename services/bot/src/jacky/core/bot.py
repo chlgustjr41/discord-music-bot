@@ -18,6 +18,7 @@ from jacky.config import Settings
 from jacky.core.health import start_health_server
 from jacky.state.listener import ServerDocListener
 from jacky.state.repository import ServerRepository
+from jacky.state.summon import SummonWatcher
 
 log = logging.getLogger("jacky.bot")
 
@@ -115,6 +116,8 @@ class JackyBot(commands.Bot):
 
         for ext in EXTENSIONS:
             await self.load_extension(ext)
+        self.summon_watcher = SummonWatcher(self, self.repo, self.service)
+        self.summon_watcher.start()
         self._health_runner = await start_health_server(
             self, self.service, self.settings.health_port
         )
@@ -141,6 +144,8 @@ class JackyBot(commands.Bot):
         log.error("command error in %s: %s", ctx.command, error)
 
     async def close(self) -> None:
+        if getattr(self, "summon_watcher", None):
+            self.summon_watcher.stop()
         if self._health_runner:
             await self._health_runner.cleanup()
         if self.node:

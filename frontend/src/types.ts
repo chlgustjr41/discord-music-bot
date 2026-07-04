@@ -20,8 +20,15 @@ export interface SearchResult {
   duration: number;
 }
 
+export interface KnownVoiceChannel {
+  id: string;
+  name: string;
+}
+
 export interface ServerState {
   sessionCode: string | null;
+  knownVoiceChannels?: KnownVoiceChannel[];
+  summonRequest?: { channelId: string } | null;
   currentTrack: CurrentTrack | null;
   queue: Track[];
   isPlaying: boolean;

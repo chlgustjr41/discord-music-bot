@@ -204,13 +204,22 @@ class ServerDocListener:
         )
 
     async def _handle_search(self, query: str) -> None:
-        """Search via the node and write results back for the dashboard."""
+        """Search via the node and write results back for the dashboard.
+
+        FUTURE #4 semantics:
+        - playlist URL      -> the URL's own video first, then the playlist
+        - single-video URL  -> that video, then similar tracks (title search)
+        - text              -> top 10 search results
+        """
         try:
             result = await self.service.resolve(query)
             playlist_name = None
             if result.kind == "playlist":
-                source = result.tracks  # full playlist so the user can pick
+                source = result.tracks_selected_first  # full playlist, URL's video first
                 playlist_name = result.playlist_name or "Playlist"
+            elif result.kind == "track" and result.first:
+                source = [result.first]
+                source += await self._similar_tracks(result.first)
             else:
                 source = result.tracks[:10]
             tracks = []
@@ -222,3 +231,21 @@ class ServerDocListener:
         except Exception as exc:  # noqa: BLE001 — dashboard must not hang on a spinner
             log.error("search failed for '%s': %s", query, exc)
             await self.repo.set_search_results(self.server_id, [])
+
+    async def _similar_tracks(self, base: dict, limit: int = 9) -> list:
+        """Recommendations for a single pasted URL: a text search on its
+        title+author, minus the base video itself. Best-effort."""
+        info = base.get("info") or {}
+        query = f"{info.get('title', '')} {info.get('author', '')}".strip()
+        if not query:
+            return []
+        try:
+            rec = await self.service.resolve(query)
+        except Exception as exc:  # noqa: BLE001 — recommendations are optional
+            log.debug("similar-tracks search failed: %s", exc)
+            return []
+        base_id = info.get("identifier")
+        return [
+            t for t in rec.tracks
+            if (t.get("info") or {}).get("identifier") != base_id
+        ][:limit]
