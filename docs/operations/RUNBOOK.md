@@ -3,9 +3,9 @@
 Guardian alerts carry a playbook ID (F1–F9). Find the ID below; run exactly
 what it says. All commands run on the VM from the repo root.
 
-> **Status:** Playbook IDs and automated responses land with M2 (token-minter),
-> M3 (bot playback/state), and M4 (guardian). Until then, use the Confirm/Fix
-> commands manually.
+> **Status:** The token layer (M2) is live. Playbook IDs and automated
+> responses land with M3 (bot playback/state) and M4 (guardian). Until then,
+> use the Confirm/Fix commands manually.
 
 > **Reading logs:** `make logs s=<svc>` follows live output (Ctrl-C to exit;
 > silence after a few seconds means no match) and starts from the last 100
@@ -34,22 +34,23 @@ detection. Triggered token-minter; re-probing in 2 min.`
 **Confirm:** `make logs s=lavalink | grep -i "sign in to confirm"` shows
 bot-detection errors on track loads.
 
-**Fix:** normally none — the guardian triggers an immediate token-minter run
-(M2) and re-probes. If the alert repeats:
-1. `make restart s=lavalink` — reload tokens from the shared volume (effective from M2 — the volume is unread until token-minter lands)
-2. Verify: play a test track, or `make logs s=guardian` shows the canary passing
+**Fix:** normally none — the guardian (M4) triggers an immediate token-minter
+run and re-probes. If the alert repeats:
+1. `make restart s=token-minter` — the minter mints immediately at startup and pushes to Lavalink at runtime (no Lavalink restart needed)
+2. `make restart s=lavalink` — only if the push failed; reloads tokens from the shared volume at cold start
+3. Verify: play a test track, or `make logs s=guardian` shows the canary passing
 
 **While pending:** the OAuth layer (F2) and client ordering keep most
 playback working; only bot-detection-gated loads fail.
 
 ## F2 — YouTube OAuth token revoked
 
-> **M1 caveat:** `make reauth` currently drives the LEGACY stack's script,
-> which writes the token silently to the root `.env` (it is never printed to
-> the terminal). For the v2 stack: after completing the device flow, copy
-> `YOUTUBE_OAUTH_REFRESH_TOKEN` from the root `.env` into `deploy/.env`, then
-> run `make up` (a plain restart does NOT re-read env changes — the container
-> must be recreated). The v2-native flow lands in M2.
+> `make reauth` drives the v2 stack: it blanks the stored token, restarts
+> Lavalink into a device flow, prints the code, auto-captures the new refresh
+> token from the plugin log, writes it to `deploy/.env`, and recreates the
+> container. Manual fallback if the log-scrape fails: copy the token into
+> `deploy/.env` yourself, then `make up` (a plain restart does NOT re-read
+> env changes).
 
 **Alert looks like:** `[F2] OAuth revoked — all loads failing with "requires
 login". Run: make reauth`
@@ -60,7 +61,7 @@ login". Run: make reauth`
 **Fix (~60s):**
 1. `make reauth` — prints a device code and URL (google.com/device)
 2. Open the URL on any machine, enter the code, approve with the bot's Google account
-3. The script writes the new token to the legacy stack's root `.env` and restarts the legacy Lavalink container — for the v2 stack, apply the token manually per the caveat above
+3. The script captures the new token automatically and recreates Lavalink
 4. Verify: guardian posts `[F2 resolved]` after its next probe (≤2 min)
 
 **While pending:** poToken layer (F1) keeps most tracks playing; only

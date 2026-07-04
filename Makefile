@@ -23,9 +23,10 @@ ps: ## Show service status
 test: ## Run all unit tests
 	cd services/bot && python -m pytest tests/ -q
 	cd services/guardian && python -m pytest tests/ -q
+	cd services/token-minter && python -m pytest tests/ -q
 
-lint: ## Ruff over both services
-	ruff check services/bot services/guardian
+lint: ## Ruff over all services
+	ruff check services/bot services/guardian services/token-minter
 
 build: ## Build all images without starting
 	$(COMPOSE) build
@@ -33,5 +34,5 @@ build: ## Build all images without starting
 deploy: ## Production deploy (run on the VM)
 	git pull origin master && $(COMPOSE) up -d --build
 
-reauth: ## YouTube OAuth device flow (legacy stack script; v2 flow lands in M2)
-	./scripts/reauth-youtube.sh
+reauth: ## YouTube OAuth device flow for the v2 stack (playbook F2)
+	./scripts/reauth-v2.sh
