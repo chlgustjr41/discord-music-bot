@@ -55,6 +55,11 @@ async def test_actor_cooldown_blocks_restart_storms(serve, http_session, monkeyp
     assert await actor.restart("lavalink") == "restarted"
 
 
+async def test_actor_reports_failed_when_docker_unreachable(http_session):
+    actor = Actor(DockerClient(http_session, base_url="http://127.0.0.1:1"))
+    assert await actor.restart("lavalink") == "failed"  # no exception escapes
+
+
 async def test_alerter_playbook_message_cooldown_and_resolved(serve, http_session):
     posts: list[dict] = []
 

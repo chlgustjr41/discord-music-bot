@@ -85,9 +85,14 @@ class Actor:
         return last is not None and (time.monotonic() - last) < RESTART_COOLDOWN_SECONDS
 
     async def restart(self, service: str) -> str:
-        """Returns 'restarted' | 'cooldown' | 'failed'."""
+        """Returns 'restarted' | 'cooldown' | 'failed'. Never raises: a broken
+        Docker socket must not abort the probe tick that requested the restart."""
         if self._in_cooldown(service):
             return "cooldown"
         self._last_restart[service] = time.monotonic()
-        ok = await self._docker.restart_service(service)
+        try:
+            ok = await self._docker.restart_service(service)
+        except Exception as exc:  # noqa: BLE001
+            log.error("restart %s failed: %s", service, exc)
+            return "failed"
         return "restarted" if ok else "failed"
