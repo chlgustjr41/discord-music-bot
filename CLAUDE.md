@@ -9,7 +9,7 @@
 - `services/lavalink/` — templated Lavalink config
 - `deploy/` — docker-compose.yml + .env contract
 - `docs/` — architecture, ADRs, runbook, deployment, roadmap
-- `bot/` — LEGACY v1 bot (production until the M5 cutover checklist in docs/operations/DEPLOYMENT.md; no new features)
+- `bot/` — LEGACY v1 bot (replaced in production 2026-07-04; rollback-only during soak week, then archived — see docs/STATUS.md)
 - `frontend/`, `functions/` — unchanged (web app + search proxy)
 
 ### Commands (v2)

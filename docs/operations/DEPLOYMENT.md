@@ -22,7 +22,8 @@ The VM cannot report its own death. A free-tier monitor (e.g. UptimeRobot)
 pings the guardian's heartbeat endpoint (M4) and emails/DMs on silence.
 
 ## M5 production cutover checklist (one-time, operator-run)
-The legacy `bot/` stays production until every box is checked:
+> Executed 2026-07-04 — v2 is production. Kept for reference (it is also
+> the Hetzner migration procedure). Current state: [../STATUS.md](../STATUS.md).
 
 1. On the VM: fill `deploy/.env` (Discord token, Lavalink password, plugin
    version, webhook, `FIREBASE_SERVICE_ACCOUNT_FILE`, `WEB_APP_URL`).

@@ -1,224 +1,143 @@
 # Jacky Music
 
-Discord music bot with a companion web dashboard for real-time playlist management. Users control playback from Discord or the web app — both stay in sync via Firestore.
+Discord music bot with a companion web dashboard for real-time playlist
+management. Users control playback from Discord (`j!` commands) or the web
+app — both stay in sync through Firestore.
 
-## Architecture (v2 — stability rewrite in progress)
+**Status: the v2 stability rewrite is in production** (GCP, since
+2026-07-04). Current operational state: [docs/STATUS.md](docs/STATUS.md).
 
-Four crash-only Docker services on one VM; state lives in Firestore + a
-token volume, so any container can be restarted at any time.
+## Architecture
+
+Five crash-only Docker Compose services on one VM. State lives in
+Firestore and a shared token volume — never in containers — so **any
+container can be killed at any instant** and the system converges back:
+the bot rebuilds every live session from Firestore on startup and resumes
+tracks at position.
+
+```
+                     Discord                YouTube
+                        ▲                      ▲
+                        │                      │ (poToken + OAuth + client order)
+                    ┌───┴───┐   REST/WS   ┌────┴─────┐
+                    │  bot  ├────────────►│ lavalink │◄─── poToken push
+                    └───┬───┘             └────▲─────┘          │
+       health ping      │        canary       │          ┌─────┴────────┐
+      ┌───────────┐◄────┘◄────────────────────┘          │ token-minter │
+      │ guardian  │                                      └─────▲────────┘
+      └─────┬─────┘                                            │ mint
+            ▼ restart / alert (Discord webhook)          ┌─────┴────────┐
+       Docker socket                                     │ pot-provider │
+                                                         └──────────────┘
+```
 
 | Service | Role |
 |---------|------|
-| `services/bot` | Discord commands, voice, playback (stateless) |
-| `services/lavalink` | Audio engine (templated config, layered YouTube auth) |
-| `services/token-minter` | Scheduled poToken mint (M2) |
-| `services/guardian` | Canary probe → classify (F1–F9) → restart/alert |
+| `services/bot` | Discord commands, voice, playback orchestration. Owns its Lavalink client (no wavelink, [ADR-0001](docs/architecture/decisions/0001-owned-lavalink-client.md)); stateless ([ADR-0003](docs/architecture/decisions/0003-crash-only-state.md)); zero watchdog code |
+| `services/lavalink` | Audio engine. Plugin version templated from `.env` (drift impossible); layered YouTube auth: client ordering + poToken + OAuth |
+| `services/token-minter` | Refreshes poToken/visitorData every 5.5h via pot-provider, pushes to Lavalink at runtime, persists for cold starts ([ADR-0004](docs/architecture/decisions/0004-bgutil-pot-provider.md)) |
+| `pot-provider` | Stock bgutil sidecar that solves YouTube's BotGuard attestation |
+| `services/guardian` | The supervisor: canary probe every 2 min → classify failures (playbooks F1–F9) → auto-restart via Docker socket → Discord webhook alerts with the exact fix command |
 
-Docs: [Architecture](docs/architecture/ARCHITECTURE.md) ·
-[Runbook](docs/operations/RUNBOOK.md) ·
+**Docs:** [Architecture](docs/architecture/ARCHITECTURE.md) ·
+[Runbook (F1–F9)](docs/operations/RUNBOOK.md) ·
 [Deployment](docs/operations/DEPLOYMENT.md) ·
-[Decisions](docs/architecture/decisions/) ·
+[Status](docs/STATUS.md) ·
+[ADRs](docs/architecture/decisions/) ·
 [Roadmap](docs/roadmap/FUTURE.md)
 
-Quickstart: `cp deploy/.env.example deploy/.env`, fill it, `make up`.
-All commands: `make help`.
+## Deployment
 
-> Legacy `bot/` + root `docker-compose.yml` remain in production until the
-> M5 cutover; do not add features there.
-
-## Prerequisites
-
-- Python 3.11+
-- Node.js 20+
-- Docker & Docker Compose
-- Firebase CLI (`npm install -g firebase-tools`)
-- Discord Bot Token ([Developer Portal](https://discord.com/developers/applications))
-- YouTube Data API Key ([Google Cloud Console](https://console.cloud.google.com))
-- Firebase Project with Firestore, Auth (Google provider), and Hosting enabled
-
-## Setup
-
-### 1. Clone and configure
+The contract on any Linux host with Docker:
 
 ```bash
-git clone https://github.com/chlgustjr41/discord-music-bot.git
-cd discord-music-bot
-cp .env.example .env
-# Fill in all values in .env
+git clone https://github.com/chlgustjr41/discord-music-bot.git && cd discord-music-bot
+cp deploy/.env.example deploy/.env     # fill it — every variable documented inline
+# place the Firebase service-account JSON at deploy/firebase-service-account.json
+make up
 ```
 
-### 2. Firebase setup
-
-```bash
-firebase login
-firebase use --add  # Select your Firebase project
-cd functions && npm install && cd ..
-cd frontend && npm install && cd ..
-```
-
-The frontend needs its own environment variables. Create `frontend/.env`:
-
-```
-VITE_FIREBASE_API_KEY=...
-VITE_FIREBASE_AUTH_DOMAIN=...
-VITE_FIREBASE_PROJECT_ID=...
-VITE_FIREBASE_STORAGE_BUCKET=...
-VITE_FIREBASE_MESSAGING_SENDER_ID=...
-VITE_FIREBASE_APP_ID=...
-```
-
-### 3. Local development
-
-```bash
-# Terminal 1: Lavalink
-docker compose up -d lavalink
-
-# Terminal 2: Bot
-cd bot && pip install -r requirements.txt && python main.py
-
-# Terminal 3: Web app
-cd frontend && npm run dev
-```
-
-### 4. Deploy
-
-See [PRODUCTION.md](PRODUCTION.md) for full deployment instructions.
+Day-2 operations: `make help` lists everything —
+`deploy` (pull + rebuild), `logs s=<svc>`, `restart s=<svc>`,
+`reauth` (YouTube OAuth device flow, playbook F2), `test`, `lint`.
 
 ## Bot Commands
 
-All commands use the `j!` prefix.
+All commands use the `j!` prefix. A server must be activated once via the
+web app (Google sign-in) before commands work.
 
-### Playback
+| Playback | Queue | Playlists & Session |
+|---|---|---|
+| `j!play <query/URL>` — play or enqueue (YouTube/SoundCloud/Bandcamp; playlist URLs expand) | `j!queue [page]` — show queue | `j!playlist save/load/delete <name>` |
+| `j!pause` / `j!resume` | `j!remove <pos>` | `j!playlist list` |
+| `j!skip` — next track | `j!move <from> <to>` | `j!history` — recent sessions |
+| `j!stop` — disconnect, end session | `j!shuffle` | `j!session` — show dashboard code |
+| `j!volume <0-100>` · `j!loop` — off→track→queue | | `j!start` — join voice, mint a session code |
+| `j!nowplaying` · `j!reset` — rebuild the voice session, queue preserved | | |
 
-| Command | Description |
-|---------|-------------|
-| `j!play <query/URL>` | Play a song or add to queue (YouTube, SoundCloud, Bandcamp) |
-| `j!pause` | Pause playback |
-| `j!resume` | Resume playback |
-| `j!skip` | Skip current track |
-| `j!stop` | Stop playback and disconnect |
-| `j!nowplaying` | Show current track info |
-| `j!volume <0-100>` | Set volume |
-| `j!loop` | Cycle loop mode: off → track → queue |
-
-### Queue
-
-| Command | Description |
-|---------|-------------|
-| `j!queue [page]` | Show queue (paginated, 10 per page) |
-| `j!remove <position>` | Remove track by position |
-| `j!move <from> <to>` | Reorder a track |
-| `j!shuffle` | Shuffle the queue |
-
-### Playlists & History
-
-| Command | Description |
-|---------|-------------|
-| `j!playlist save <name>` | Save current queue as a playlist |
-| `j!playlist load <name>` | Load a saved playlist into queue |
-| `j!playlist list` | List all saved playlists |
-| `j!playlist delete <name>` | Delete a playlist |
-| `j!history` | Show recent play sessions |
-| `j!session` | Show session code and web link |
-
-### Local Audio Node
-
-Run a local Lavalink instance for lower latency audio. See [jacky-music-local](https://github.com/chlgustjr41/jacky-music-local) for the setup.
-
-| Command | Description |
-|---------|-------------|
-| `j!localnode connect <url> <password>` | Connect to your local Lavalink node |
-| `j!localnode disconnect` | Switch back to cloud audio |
-| `j!localnode status` | Show which audio backend is active |
+Local audio nodes (`j!localnode …`) are not part of v2 yet — see
+[FUTURE.md](docs/roadmap/FUTURE.md); the `NodeProvider` seam for them
+already exists.
 
 ## Web Dashboard
 
-When the bot joins a voice channel, it generates a 6-character session code. Anyone with the code can access the web dashboard to:
+Joining voice generates a 6-character session code (also shown in the
+bot's nickname). Anyone with the code can: see now-playing with live
+progress and seek, control playback, search YouTube and queue tracks,
+drag-to-reorder the queue, manage playlists, and view command/music
+history. The dashboard talks only to Firestore; the bot's snapshot
+listener translates doc changes into player actions.
 
-- View now-playing with live progress and seek
-- Control playback (play/pause, skip, shuffle, loop, volume)
-- Search YouTube and add tracks to queue
-- Drag-and-drop reorder the queue
-- Create, save, and load playlists (from queue, history, or YouTube playlist URL)
-- View command and music history
-- See real-time toast notifications for all session activity
+## Development
 
-## Project Structure
+```bash
+# Unit tests + lint for all three Python services (92 tests)
+make test && make lint
+
+# Single service, editable install
+cd services/bot && pip install -e ".[dev]" && pytest
+
+# Frontend (React + Vite)
+cd frontend && npm install && npm run dev
+
+# Cloud Functions (YouTube search proxy)
+cd functions && npm install && npm run build
+```
+
+CI runs ruff + pytest + image builds per service on every PR, plus a
+compose-based integration smoke (Lavalink boot, synthetic + real token
+injection, guardian boot). A daily scheduled run doubles as the live
+YouTube mint canary.
+
+## Repository Structure
 
 ```
 discord-music-bot/
-├── bot/                    # Python Discord bot
-│   ├── main.py             # Entry point, Lavalink + Firebase init
-│   ├── config.py           # Environment variables and constants
-│   ├── player.py           # Custom wavelink Player (Lavalink 4.2+ compat)
-│   ├── cogs/
-│   │   ├── activation.py   # Server activation gate
-│   │   ├── playback.py     # Core playback engine + auto-play logic
-│   │   ├── queue_cmd.py    # Queue management commands
-│   │   ├── playlist_cmd.py # Playlist save/load/list/delete
-│   │   ├── history_cmd.py  # Play history command
-│   │   ├── session_cmd.py  # Session code display
-│   │   └── localnode_cmd.py # Local Lavalink node management
-│   ├── services/
-│   │   ├── firestore_client.py   # Full Firestore ORM (state, queue, playlists, history)
-│   │   ├── firestore_listener.py # Real-time listener for web app changes
-│   │   ├── session_manager.py    # Session code generation
-│   │   └── spotify_client.py     # Spotify URL detection (stub)
-│   └── utils/
-│       └── embeds.py       # Discord embed builders
-├── frontend/               # React web app
-│   └── src/
-│       ├── App.tsx          # Router + toast provider
-│       ├── firebase.ts      # Firebase SDK init
-│       ├── types.ts         # Shared TypeScript interfaces
-│       ├── components/
-│       │   ├── EntryScreen.tsx      # Landing (session code input)
-│       │   ├── ActivateServer.tsx   # Google login + server activation
-│       │   ├── Dashboard.tsx        # Main dashboard layout
-│       │   ├── NowPlaying.tsx       # Current track + seek slider
-│       │   ├── PlaybackControls.tsx # Play/pause/skip/shuffle/loop/volume
-│       │   ├── Queue.tsx            # Drag-to-reorder queue
-│       │   ├── SearchPanel.tsx      # YouTube search + add to queue
-│       │   ├── PlaylistManager.tsx  # Playlist CRUD + YouTube import
-│       │   ├── CommandHistory.tsx   # Command usage history
-│       │   └── MusicHistory.tsx     # Track play history
-│       ├── hooks/
-│       │   ├── useServerState.ts    # Real-time Firestore subscription
-│       │   ├── useAuth.ts           # Firebase Auth (Google login)
-│       │   └── useActivityToasts.tsx # Toast notifications for state changes
-│       └── services/
-│           └── api.ts       # Cloud Function proxy for YouTube search
-├── functions/              # Firebase Cloud Functions
-│   └── src/index.ts        # YouTube Data API v3 search proxy
-├── lavalink/
-│   └── application.yml     # Lavalink server config
-├── deploy/
-│   └── startup.sh          # GCP VM Docker installation script
-├── docker-compose.yml      # Bot + Lavalink services
-├── firebase.json           # Firebase project config
-├── firestore.rules         # Firestore security rules
-└── .env.example            # Environment variable template
+├── services/            # v2 production services (see table above)
+│   ├── bot/src/jacky/   #   audio/ (node, player, voice) · state/ (repos, listener)
+│   │                    #   commands/ (cogs) · core/ (bot wiring, health, runtime)
+│   ├── guardian/src/guardian/  # probe / classify / act / alert / monitor / watcher
+│   ├── token-minter/src/minter/
+│   └── lavalink/        # application.yml.tmpl + entrypoint (env-templated)
+├── deploy/              # docker-compose.yml + .env contract (secrets live on the host)
+├── docs/                # architecture, ADRs, runbook, deployment, status, roadmap
+├── frontend/            # React dashboard (Firebase Hosting)
+├── functions/           # Cloud Functions (YouTube Data API search proxy)
+├── scripts/             # reauth-v2.sh (OAuth device flow)
+└── bot/                 # LEGACY v1 — kept only as rollback during the soak week
 ```
 
 ## Firestore Data Model
 
 ```
 discord-music-bot (database)
-├── sessionCodes/{code}              # Session code → server mapping
-│   ├── serverId
-│   └── createdAt
-├── servers/{serverId}               # Server playback state
+├── sessionCodes/{code}          # session code → server mapping
+├── servers/{serverId}           # live playback state (the bot↔dashboard contract)
 │   ├── sessionCode, currentTrack, queue[], isPlaying, isPaused
-│   ├── loopMode, volume, voiceChannelId, voiceChannelName
-│   ├── seekPosition, searchQuery, searchResults[]
-│   ├── serverName, serverIcon
-│   └── subcollections:
-│       ├── playlists/{name}         # Saved playlists
-│       ├── musicHistory/{docId}     # Per-track play counts
-│       └── commandHistory/{docId}   # Per-command usage counts
-└── serverOwners/{serverId}          # Activation records
-    ├── ownerEmail, firebaseUid
-    ├── activatedAt, isActive
+│   ├── loopMode, volume, voiceChannelId, textChannelId, seekPosition
+│   ├── searchQuery → searchResults[] (dashboard search round-trip)
+│   └── playlists/{name} · musicHistory/ · commandHistory/ · history/
+└── serverOwners/{serverId}      # activation records (isActive)
 ```
 
 ## License

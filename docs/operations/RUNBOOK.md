@@ -3,9 +3,9 @@
 Guardian alerts carry a playbook ID (F1–F9). Find the ID below; run exactly
 what it says. All commands run on the VM from the repo root.
 
-> **Status:** All layers live (M2 tokens, M3 bot, M4 guardian). Alerts carry
-> playbook IDs; automated responses run as described per ID. Production
-> cutover from the legacy bot is gated on the M5 checklist in DEPLOYMENT.md.
+> **Status:** v2 is PRODUCTION (cut over 2026-07-04). Alerts carry playbook
+> IDs; automated responses run as described per ID. Live system state and
+> known degradations: [../STATUS.md](../STATUS.md).
 
 > **Reading logs:** `make logs s=<svc>` follows live output (Ctrl-C to exit;
 > silence after a few seconds means no match) and starts from the last 100
