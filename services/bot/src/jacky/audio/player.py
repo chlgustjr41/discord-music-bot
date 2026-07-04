@@ -52,6 +52,7 @@ class PlayerService:
         self.history_buffer: dict[int, list] = {}
         self.session_start: dict[int, datetime.datetime] = {}
         self.positions: dict[int, dict] = {}  # guild -> last playerUpdate state (cache)
+        self.playing: dict[int, bool] = {}    # bot's own belief, fed to /health for F6
         self.idle_tasks: dict[int, asyncio.Task] = {}
         self.empty_channel_tasks: dict[int, asyncio.Task] = {}
         self._stopping: set[int] = set()
@@ -194,6 +195,7 @@ class PlayerService:
             self.cancel_idle_timer(guild_id)
             self.cancel_empty_channel_timer(guild_id)
             self.positions.pop(guild_id, None)
+            self.playing.pop(guild_id, None)
             self._clear_failures(guild_id)
             if disconnect:
                 voice = self._voice(guild_id)
@@ -243,6 +245,7 @@ class PlayerService:
         ok = await self._issue_play(guild_id, track["encoded"])
         if ok:
             await self.repo.update_state(sid, {"isPlaying": True})
+            self.playing[guild_id] = True
             self.cancel_idle_timer(guild_id)
             self._clear_failures(guild_id)
         else:
@@ -334,6 +337,7 @@ class PlayerService:
         node = self.provider.node_for(guild_id)
         await node.update_player(guild_id, {"paused": paused})
         await self.repo.update_state(str(guild_id), {"isPaused": paused})
+        self.playing[guild_id] = not paused
 
     async def set_volume(self, guild_id: int, volume: int) -> int:
         volume = max(0, min(100, volume))
@@ -360,6 +364,7 @@ class PlayerService:
         self.cancel_idle_timer(guild_id)
 
     async def on_track_end(self, guild_id: int, reason: str) -> None:
+        self.playing[guild_id] = False
         if guild_id in self._stopping:
             return
         reason = reason.lower()

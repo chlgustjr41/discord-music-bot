@@ -68,6 +68,12 @@ services:
       LAVALINK_PORT: "2333"
       LAVALINK_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
       ALERT_WEBHOOK_URL: ${ALERT_WEBHOOK_URL:?set in .env}
+      BOT_HEALTH_URL: http://bot:8080/health
+      # Must match the compose project (top-level `name:`) — restart targeting
+      # filters containers by the com.docker.compose.project label.
+      COMPOSE_PROJECT: jacky-music
+      YOUTUBE_PLUGIN_VERSION: ${YOUTUBE_PLUGIN_VERSION:?set in .env}
+      PROBE_INTERVAL_SECONDS: ${PROBE_INTERVAL_SECONDS:-120}
     volumes:
       # Root-equivalent access to the host, accepted by design (spec §3.4):
       # guardian uses it only to restart sibling services (playbook F4/F5).

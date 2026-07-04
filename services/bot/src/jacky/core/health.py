@@ -22,6 +22,7 @@ def build_app(bot: Any, service: Any) -> web.Application:
                 "position": pos.get("position", 0),
                 "connected": pos.get("connected", False),
                 "time": pos.get("time", 0),
+                "playing": service.playing.get(guild_id, False),
             }
         return web.json_response({
             "status": "ok" if bot.is_ready() else "starting",
