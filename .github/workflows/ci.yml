@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Pinned: red CI blocks merge, so lint rules may only change via a deliberate bump
+      - run: pip install "ruff==0.15.20"
+      - run: ruff check services/bot services/guardian services/token-minter
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [bot, guardian, token-minter]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]"
+        working-directory: services/${{ matrix.service }}
+      - run: python -m pytest tests/ -v
+        working-directory: services/${{ matrix.service }}
+
+  compose-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp deploy/.env.example deploy/.env
+      - run: docker compose -f deploy/docker-compose.yml --env-file deploy/.env config -q
+
+  docker-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [bot, guardian, lavalink, token-minter]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build services/${{ matrix.service }}

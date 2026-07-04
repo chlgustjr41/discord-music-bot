@@ -1,0 +1,52 @@
+server:
+  port: 2333
+  address: 0.0.0.0
+
+lavalink:
+  plugins:
+    - dependency: "dev.lavalink.youtube:youtube-plugin:__YOUTUBE_PLUGIN_VERSION__"
+      repository: "https://maven.lavalink.dev/releases"
+      snapshot: false
+  server:
+    password: "${LAVALINK_SERVER_PASSWORD}"
+    sources:
+      youtube: false  # handled by youtube-plugin above
+
+plugins:
+  youtube:
+    enabled: true
+    allowSearch: true
+    allowDirectVideoIds: true
+    allowDirectPlaylistIds: true
+    # Client order matters: Lavalink tries top-to-bottom until one resolves.
+    # MUSIC: search-only. TVHTML5_SIMPLY first for playback: TV-class IP
+    # reputation survives datacenter IPs. TV last: carries OAuth for
+    # sign-in-gated streams (metadata support: none, useless alone).
+    clients:
+      - MUSIC
+      - TVHTML5_SIMPLY
+      - WEB
+      - WEBEMBEDDED
+      - ANDROID_VR
+      - TV
+    clientOptions:
+      MUSIC:
+        playback: false
+        videoLoading: false
+    oauth:
+      enabled: true
+      refreshToken: "${YOUTUBE_OAUTH_REFRESH_TOKEN:}"
+      skipInitialization: false
+    # POT_BLOCK_START (rendered from /data/tokens/tokens.env at container start)
+    pot:
+      token: "__POT_TOKEN__"
+      visitorData: "__POT_VISITOR_DATA__"
+    # POT_BLOCK_END
+
+logging:
+  level:
+    root: INFO
+    lavalink: INFO
+    # INFO required so the reauth flow (playbook F2) can scrape the device
+    # code and refresh token from the logs.
+    dev.lavalink.youtube.http.YoutubeOauth2Handler: INFO
