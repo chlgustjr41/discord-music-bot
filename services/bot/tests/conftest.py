@@ -1,0 +1,221 @@
+"""Shared fakes: in-memory repo, recording node, capture notifier, stub bot."""
+
+from dataclasses import dataclass, field
+
+import pytest
+
+from jacky.audio.models import LoadResult
+
+
+class FakeRepo:
+    def __init__(self) -> None:
+        self.states: dict[str, dict] = {}
+        self.music_log: list = []
+        self.command_log: list = []
+        self.history: list = []
+        self.session_codes: dict[str, str] = {}
+
+    async def init_state(self, sid):
+        self.states.setdefault(sid, {
+            "sessionCode": None, "currentTrack": None, "queue": [],
+            "isPlaying": False, "isPaused": False, "loopMode": "off",
+            "volume": 80, "voiceChannelId": None, "textChannelId": None,
+        })
+
+    async def get_state(self, sid):
+        return self.states.get(sid)
+
+    async def update_state(self, sid, data):
+        self.states.setdefault(sid, {}).update(data)
+
+    async def set_current_track(self, sid, track):
+        await self.update_state(sid, {
+            "currentTrack": track, "isPlaying": track is not None, "isPaused": False,
+        })
+
+    async def get_queue(self, sid):
+        return list(self.states.get(sid, {}).get("queue", []))
+
+    async def add_to_queue(self, sid, track):
+        self.states.setdefault(sid, {}).setdefault("queue", []).append(track)
+
+    async def remove_from_queue(self, sid, index):
+        queue = self.states.get(sid, {}).get("queue", [])
+        if not (0 <= index < len(queue)):
+            return None
+        return queue.pop(index)
+
+    async def reorder_queue(self, sid, from_idx, to_idx):
+        queue = self.states.get(sid, {}).get("queue", [])
+        if not (0 <= from_idx < len(queue) and 0 <= to_idx < len(queue)):
+            return False
+        queue.insert(to_idx, queue.pop(from_idx))
+        return True
+
+    async def shuffle_queue(self, sid):
+        return len(self.states.get(sid, {}).get("queue", []))
+
+    async def pop_next_track(self, sid):
+        queue = self.states.get(sid, {}).get("queue", [])
+        return queue.pop(0) if queue else None
+
+    async def set_session_code(self, sid, code):
+        self.session_codes[sid] = code
+        await self.update_state(sid, {"sessionCode": code})
+
+    async def invalidate_session_code(self, sid):
+        self.session_codes.pop(sid, None)
+        if sid in self.states:
+            self.states[sid]["sessionCode"] = None
+
+    async def active_server_ids(self):
+        return [sid for sid, s in self.states.items() if s.get("voiceChannelId")]
+
+    async def save_history(self, sid, session_id, tracks, started, ended):
+        self.history.append((sid, session_id, tracks))
+
+    async def log_music(self, sid, track):
+        self.music_log.append((sid, track))
+
+    async def log_command(self, sid, command, args, user, user_id):
+        self.command_log.append((sid, command, args, user))
+
+    async def set_search_results(self, sid, results, playlist_name=None):
+        await self.update_state(sid, {
+            "searchResults": results, "searchQuery": None,
+            "searchPlaylistName": playlist_name,
+        })
+
+    async def is_activated(self, sid):
+        return True
+
+
+def make_track(title="Song", url="https://youtu.be/abc123", encoded="ENC1",
+               identifier="abc123", length_ms=180000, author="Artist"):
+    return {
+        "encoded": encoded,
+        "info": {
+            "identifier": identifier, "title": title, "author": author,
+            "length": length_ms, "uri": url, "artworkUrl": "",
+        },
+    }
+
+
+class FakeNode:
+    """Records update_player calls; serves canned load results."""
+
+    def __init__(self) -> None:
+        self.connected = True
+        self.session_id = "fake-session"
+        self.updates: list[tuple[int, dict]] = []
+        self.destroyed: list[int] = []
+        self.load_results: dict[str, LoadResult] = {}
+        self.default_result = LoadResult(kind="track", tracks=[make_track()])
+        self.fail_loads = False
+
+    async def load_tracks(self, identifier):
+        if self.fail_loads:
+            raise RuntimeError("load failure (fake)")
+        return self.load_results.get(identifier, self.default_result)
+
+    async def update_player(self, guild_id, data, *, no_replace=False):
+        self.updates.append((guild_id, data))
+        return {}
+
+    async def destroy_player(self, guild_id):
+        self.destroyed.append(guild_id)
+
+
+class FakeNotifier:
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def send(self, guild_id, **kwargs):
+        self.sent.append({"guild_id": guild_id, **kwargs})
+
+
+@dataclass
+class FakeVoice:
+    channel: object = None
+    disconnected: bool = False
+    voice_resent: bool = True
+
+    async def disconnect(self, *, force=False):
+        self.disconnected = True
+
+    async def resend_voice(self):
+        return self.voice_resent
+
+
+@dataclass
+class FakeMe:
+    nick: str | None = None
+
+    async def edit(self, nick=None):
+        self.nick = nick
+
+
+@dataclass
+class FakeGuild:
+    id: int
+    voice_client: object = None
+    me: FakeMe = field(default_factory=FakeMe)
+    name: str = "Guild"
+    icon: object = None
+
+    def get_channel(self, channel_id):
+        return None
+
+
+class FakeBot:
+    def __init__(self) -> None:
+        self.guilds: list[FakeGuild] = []
+
+    def get_guild(self, guild_id):
+        for g in self.guilds:
+            if g.id == guild_id:
+                return g
+        return None
+
+    def get_channel(self, channel_id):
+        return None
+
+
+@dataclass(frozen=True)
+class FakeSettings:
+    idle_timeout_seconds: int = 300
+    empty_channel_timeout_seconds: int = 120
+    web_app_url: str = "http://web.test"
+
+
+@pytest.fixture
+def guild_id():
+    return 123
+
+
+@pytest.fixture
+def sid(guild_id):
+    return str(guild_id)
+
+
+@pytest.fixture
+async def service(guild_id):
+    """A PlayerService over all-fake dependencies, with one active guild."""
+    from jacky.audio.player import PlayerService
+    from jacky.audio.provider import SingleNodeProvider
+
+    repo = FakeRepo()
+    node = FakeNode()
+    notifier = FakeNotifier()
+    bot = FakeBot()
+    bot.guilds.append(FakeGuild(id=guild_id, voice_client=FakeVoice()))
+    svc = PlayerService(
+        bot, SingleNodeProvider(node), repo, FakeSettings(), notifier
+    )
+    await repo.init_state(str(guild_id))
+    svc.search_retry_delay = 0
+    svc.node = node
+    svc.fake_notifier = notifier
+    yield svc
+    for task in list(svc.idle_tasks.values()) + list(svc.empty_channel_tasks.values()):
+        task.cancel()

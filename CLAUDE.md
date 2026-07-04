@@ -3,12 +3,13 @@
 ## Project: Jacky Music (Discord Music Bot)
 
 ### Repository Structure
-- `services/bot/` — Python Discord bot v2 (`src/jacky/`) — ACTIVE DEVELOPMENT
-- `services/guardian/` — supervisor (M1 skeleton; probe/classify/act/alert land in M4)
+- `services/bot/` — Python Discord bot v2 (`src/jacky/`): owned Lavalink client, Firestore state, j! commands
+- `services/guardian/` — supervisor: probe/classify/act/alert (playbooks F1–F9)
+- `services/token-minter/` — poToken refresh via pot-provider sidecar (ADR-0004)
 - `services/lavalink/` — templated Lavalink config
 - `deploy/` — docker-compose.yml + .env contract
 - `docs/` — architecture, ADRs, runbook, deployment, roadmap
-- `bot/` — LEGACY v1 bot (production until M5 cutover; no new features)
+- `bot/` — LEGACY v1 bot (production until the M5 cutover checklist in docs/operations/DEPLOYMENT.md; no new features)
 - `frontend/`, `functions/` — unchanged (web app + search proxy)
 
 ### Commands (v2)

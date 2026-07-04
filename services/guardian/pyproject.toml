@@ -3,7 +3,7 @@ name = "jacky-guardian"
 version = "2.0.0"
 description = "Supervisor: canary probe, failure classification, recovery, alerting"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["aiohttp>=3.9"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.4"]

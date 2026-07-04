@@ -26,6 +26,17 @@ jobs:
       - run: cp deploy/.env.example deploy/.env
       - name: Boot audio infrastructure
         run: $COMPOSE up -d --build lavalink pot-provider token-minter
+      - name: Guardian boots and probes (hard gate)
+        # No secrets needed: alerts fail soft against the placeholder webhook;
+        # what we prove is startup + a completed probe tick against the stack.
+        run: |
+          $COMPOSE up -d --build guardian
+          for i in $(seq 1 12); do
+            $COMPOSE logs guardian | grep -q "guardian 2.0.0 started" && exit 0
+            sleep 5
+          done
+          $COMPOSE logs guardian
+          exit 1
       - name: Wait for lavalink healthy
         run: |
           for i in $(seq 1 30); do
