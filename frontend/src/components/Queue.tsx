@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { doc, updateDoc } from "firebase/firestore";
+import { doc, updateDoc, setDoc, increment, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
 import type { Track } from "../types";
 import {
@@ -290,6 +290,26 @@ export function Queue({ queue, serverId }: Props) {
     const reordered = arrayMove([...localQueue], oldIndex, newIndex);
     setLocalQueue(reordered);
     writeQueue(reordered);
+    logDrag(localQueue[oldIndex]);
+  };
+
+  // Leaderboard instrumentation (FUTURE #3): count how often each track gets
+  // dragged around the queue. Best-effort — never blocks the reorder itself.
+  const logDrag = (track: Track | undefined) => {
+    if (!track?.url) return;
+    const key = track.url.replace(/[^A-Za-z0-9_-]/g, "_").slice(-100);
+    setDoc(
+      doc(db, "servers", serverId, "dragStats", key),
+      {
+        title: track.title,
+        artist: track.artist || "",
+        thumbnail: track.thumbnail || "",
+        url: track.url,
+        count: increment(1),
+        lastDraggedAt: serverTimestamp(),
+      },
+      { merge: true }
+    ).catch(() => {});
   };
 
   const handleDragCancel = () => {

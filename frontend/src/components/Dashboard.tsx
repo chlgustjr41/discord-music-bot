@@ -11,6 +11,7 @@ import { SearchPanel } from "./SearchPanel";
 import { PlaylistManager } from "./PlaylistManager";
 import { CommandHistory } from "./CommandHistory";
 import { MusicHistory } from "./MusicHistory";
+import { StatsPanel } from "./StatsPanel";
 import { ActivityLog } from "./ActivityLog";
 import { NodeStatus } from "./NodeStatus";
 import { Button } from "@/components/ui/button";
@@ -187,6 +188,7 @@ export function Dashboard() {
         searchQuery={state.searchQuery}
         searchPlaylistName={state.searchPlaylistName}
       />
+      <StatsPanel serverId={serverId} />
       <MusicHistory serverId={serverId} />
       <CommandHistory serverId={serverId} />
       <ActivityLog entries={logEntries} />

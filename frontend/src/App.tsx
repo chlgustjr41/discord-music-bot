@@ -4,6 +4,7 @@ import { LandingPage } from "./components/LandingPage";
 import { EntryScreen } from "./components/EntryScreen";
 import { Dashboard } from "./components/Dashboard";
 import { ActivateServer } from "./components/ActivateServer";
+import { MyServers } from "./components/MyServers";
 import { SetupGuide } from "./components/SetupGuide";
 
 function App() {
@@ -28,6 +29,7 @@ function App() {
         <Route path="/app" element={<EntryScreen />} />
         <Route path="/dashboard/:sessionCode" element={<Dashboard />} />
         <Route path="/activate" element={<ActivateServer />} />
+        <Route path="/me" element={<MyServers />} />
         <Route path="/guide" element={<SetupGuide />} />
       </Routes>
     </BrowserRouter>

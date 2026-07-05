@@ -685,6 +685,14 @@ export function LandingPage() {
                 Open Dashboard
                 <ArrowRight style={{ width: 15, height: 15 }} />
               </button>
+              <button
+                onClick={() => goTo("/me")}
+                className="lp-btn-outline"
+                style={{ borderColor: "rgba(29,245,192,0.25)" }}
+              >
+                My Servers
+                <ArrowRight style={{ width: 15, height: 15 }} />
+              </button>
             </div>
           </div>
 
