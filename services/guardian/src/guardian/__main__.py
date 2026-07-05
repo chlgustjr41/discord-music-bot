@@ -8,7 +8,7 @@ from guardian.act import Actor, DockerClient
 from guardian.alert import Alerter
 from guardian.config import Settings
 from guardian.core.runtime import wait_for_shutdown
-from guardian.monitor import Guardian
+from guardian.monitor import Guardian, start_status_server
 from guardian.watcher import ReleaseWatcher
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -41,6 +41,7 @@ async def main() -> None:
     alerter = Alerter(session, settings.alert_webhook_url)
     guardian = Guardian(settings, session, actor, alerter)
     watcher = ReleaseWatcher(session, alerter, settings.plugin_version)
+    status_runner = await start_status_server(guardian, settings.status_port)
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -53,6 +54,7 @@ async def main() -> None:
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+    await status_runner.cleanup()
     await docker.close()
     await session.close()
     log.info("shutdown signal received; exiting cleanly")

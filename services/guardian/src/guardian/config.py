@@ -15,6 +15,7 @@ class Settings:
     probe_interval_seconds: float
     canary_query: str
     plugin_version: str
+    status_port: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -32,4 +33,5 @@ class Settings:
                 "CANARY_QUERY", "ytsearch:rick astley never gonna give you up"
             ),
             plugin_version=os.environ.get("YOUTUBE_PLUGIN_VERSION", ""),
+            status_port=int(os.environ.get("STATUS_PORT", "8081")),
         )

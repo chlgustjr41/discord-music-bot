@@ -28,6 +28,7 @@ EXTENSIONS = [
     "jacky.commands.activation",
     "jacky.commands.playback",
     "jacky.commands.library",
+    "jacky.commands.status",
 ]
 
 

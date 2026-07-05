@@ -14,6 +14,7 @@ class Settings:
     firestore_database: str
     web_app_url: str
     health_port: int
+    guardian_status_url: str
     idle_timeout_seconds: int
     empty_channel_timeout_seconds: int
 
@@ -28,6 +29,9 @@ class Settings:
             firestore_database=os.environ.get("FIRESTORE_DATABASE", "discord-music-bot"),
             web_app_url=os.environ.get("WEB_APP_URL", "http://localhost:5173").rstrip("/"),
             health_port=int(os.environ.get("HEALTH_PORT", "8080")),
+            guardian_status_url=os.environ.get(
+                "GUARDIAN_STATUS_URL", "http://guardian:8081/status"
+            ),
             idle_timeout_seconds=int(os.environ.get("IDLE_TIMEOUT_SECONDS", "300")),
             empty_channel_timeout_seconds=int(
                 os.environ.get("EMPTY_CHANNEL_TIMEOUT_SECONDS", "120")

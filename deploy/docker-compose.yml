@@ -74,6 +74,8 @@ services:
       COMPOSE_PROJECT: jacky-music
       YOUTUBE_PLUGIN_VERSION: ${YOUTUBE_PLUGIN_VERSION:?set in .env}
       PROBE_INTERVAL_SECONDS: ${PROBE_INTERVAL_SECONDS:-120}
+    expose:
+      - "8081"  # /status, consumed by the bot's j!status command
     volumes:
       # Root-equivalent access to the host, accepted by design (spec §3.4):
       # guardian uses it only to restart sibling services (playbook F4/F5).

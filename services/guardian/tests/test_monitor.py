@@ -123,6 +123,39 @@ async def test_frozen_position_two_strikes_then_restart_f6(guardian):
     assert guardian.alerter.alerts[0][0] == "F6"
 
 
+async def test_status_snapshot_and_actions_populate(guardian):
+    guardian.prime(
+        CanaryResult(reachable=True, ok=False, error="Sign in to confirm you're not a bot"),
+        HEALTHY_BOT,
+    )
+    await guardian.tick()
+    assert guardian.status["canary"] == {
+        "ok": False, "playbook": "F1", "error": "Sign in to confirm you're not a bot",
+    }
+    assert guardian.status["activeFailures"] == ["F1"]
+    assert guardian.status["lastProbeAt"]
+    assert guardian.actions[-1]["playbook"] == "F1"
+
+    guardian.prime(OK_CANARY, HEALTHY_BOT)
+    await guardian.tick()
+    assert guardian.status["canary"] == {"ok": True}
+    assert guardian.status["activeFailures"] == []
+
+
+async def test_status_endpoint_serves_snapshot(guardian, http_session):
+    guardian.prime(OK_CANARY, HEALTHY_BOT)
+    await guardian.tick()
+    runner = await monitor_module.start_status_server(guardian, 0)
+    try:
+        port = next(iter(runner.sites))._server.sockets[0].getsockname()[1]
+        async with http_session.get(f"http://127.0.0.1:{port}/status") as resp:
+            body = await resp.json()
+        assert body["canary"] == {"ok": True}
+        assert body["actions"] == []
+    finally:
+        await runner.cleanup()
+
+
 async def test_advancing_position_resets_frozen_strikes(guardian):
     p1 = {"123": {"position": 5000, "playing": True, "connected": True}}
     guardian.prime(OK_CANARY, BotHealth(ok=True, players=p1))
