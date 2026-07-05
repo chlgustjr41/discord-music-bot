@@ -66,11 +66,24 @@ async def test_all_healthy_no_action(guardian):
     assert guardian.alerter.alerts == []
 
 
-async def test_lavalink_unreachable_restarts_and_alerts_f4(guardian):
+async def test_lavalink_unreachable_two_strikes_then_restart_f4(guardian):
     guardian.prime(CanaryResult(reachable=False, ok=False, error="conn refused"), HEALTHY_BOT)
+    await guardian.tick()
+    # First strike: a booting Lavalink must not be restart-killed.
+    assert guardian.actor.restarts == []
     await guardian.tick()
     assert "lavalink" in guardian.actor.restarts
     assert guardian.alerter.alerts[0][0] == "F4"
+
+
+async def test_lavalink_recovery_between_strikes_resets_f4(guardian):
+    guardian.prime(CanaryResult(reachable=False, ok=False, error="conn refused"), HEALTHY_BOT)
+    await guardian.tick()
+    guardian.prime(OK_CANARY, HEALTHY_BOT)
+    await guardian.tick()
+    guardian.prime(CanaryResult(reachable=False, ok=False, error="conn refused"), HEALTHY_BOT)
+    await guardian.tick()
+    assert guardian.actor.restarts == []  # strikes reset by the healthy probe
 
 
 async def test_potoken_failure_restarts_minter_and_alerts_f1(guardian):

@@ -42,6 +42,7 @@ class Guardian:
         self.alerter = alerter
         self._prev_players: dict = {}
         self._bot_strikes = 0
+        self._lavalink_strikes = 0
         self._frozen_strikes: dict[str, int] = {}
         self._active_failures: set[str] = set()
         # Snapshot served by the /status endpoint (read from Discord via j!status).
@@ -72,19 +73,30 @@ class Guardian:
         )
         if canary.ok:
             self.status["canary"] = {"ok": True}
+            self._lavalink_strikes = 0
             for playbook_id in sorted(self._active_failures):
                 await self.alerter.resolved(playbook_id)
             self._active_failures.clear()
             return
 
         if not canary.reachable:
-            log.warning("canary: lavalink unreachable: %s", canary.error)
+            # Two strikes before restarting: the guardian probes immediately on
+            # start, and a one-strike F4 restart-kills a Lavalink that is merely
+            # still booting after a stack (re)start — observed live 2026-07-05.
+            self._lavalink_strikes += 1
+            log.warning(
+                "canary: lavalink unreachable (strike %d): %s",
+                self._lavalink_strikes, canary.error,
+            )
             self.status["canary"] = {"ok": False, "playbook": "F4", "error": canary.error}
-            self._active_failures.add("F4")
-            outcome = await self.actor.restart("lavalink")
-            self._record_action("F4", f"restart lavalink: {outcome}")
-            await self.alerter.alert("F4", f"{canary.error} (restart: {outcome})")
+            if self._lavalink_strikes >= STRIKE_THRESHOLD:
+                self._lavalink_strikes = 0
+                self._active_failures.add("F4")
+                outcome = await self.actor.restart("lavalink")
+                self._record_action("F4", f"restart lavalink: {outcome}")
+                await self.alerter.alert("F4", f"{canary.error} (restart: {outcome})")
             return
+        self._lavalink_strikes = 0
 
         playbook_id = classify_canary_error(canary.error)
         log.warning("canary failing [%s]: %s", playbook_id, canary.error)
