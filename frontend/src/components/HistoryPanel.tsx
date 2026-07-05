@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { collection, getDocs, query, orderBy, limit, doc, updateDoc, arrayUnion } from "firebase/firestore";
 import { db } from "../firebase";
+import { getIdentityName } from "../lib/identity";
 import type { HistorySession } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,7 +37,7 @@ export function HistoryPanel({ serverId }: Props) {
           url: track.url,
           thumbnail: track.thumbnail,
           duration: track.duration,
-          requestedBy: "Web User",
+          requestedBy: getIdentityName(),
         }),
       });
     }

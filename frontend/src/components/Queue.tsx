@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { doc, updateDoc, setDoc, increment, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
+import { getIdentityName } from "../lib/identity";
+import { bumpMemberStat } from "../lib/social";
 import type { Track } from "../types";
 import {
   DndContext,
@@ -307,9 +309,11 @@ export function Queue({ queue, serverId }: Props) {
         url: track.url,
         count: increment(1),
         lastDraggedAt: serverTimestamp(),
+        lastDraggedBy: getIdentityName(),
       },
       { merge: true }
     ).catch(() => {});
+    bumpMemberStat(serverId, "drags");
   };
 
   const handleDragCancel = () => {

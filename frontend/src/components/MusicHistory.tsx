@@ -11,6 +11,7 @@ import {
   deleteDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import { getIdentityName } from "../lib/identity";
 import type { MusicHistoryEntry, Track } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -93,7 +94,7 @@ export function MusicHistory({ serverId }: Props) {
         url: t.url,
         thumbnail: t.thumbnail,
         duration: t.duration || 0,
-        requestedBy: "Web User",
+        requestedBy: getIdentityName(),
       }));
 
     if (selectedTracks.length === 0) return;

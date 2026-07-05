@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { doc, updateDoc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
+import { getIdentityName } from "../lib/identity";
+import { bumpMemberStat } from "../lib/social";
 import type { SearchResult, Track } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -96,6 +98,7 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
         searchQuery: q,
         searchResults: [],
       });
+      bumpMemberStat(serverId, "searches");
     } catch {
       setError("Search failed.");
       setLoading(false);
@@ -165,7 +168,7 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
         url: r.url,
         thumbnail: r.thumbnail,
         duration: r.duration || 0,
-        requestedBy: "Web User",
+        requestedBy: getIdentityName(),
       }));
 
     if (tracks.length === 0) return;
@@ -177,6 +180,7 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
       position === "top" ? [...tracks, ...currentQueue] : [...currentQueue, ...tracks];
 
     await updateDoc(doc(db, "servers", serverId), { queue: newQueue });
+    bumpMemberStat(serverId, "queueAdds", tracks.length);
 
     setResults((prev) => prev.filter((r) => !selected.has(r.videoId)));
     setSelected(new Set());

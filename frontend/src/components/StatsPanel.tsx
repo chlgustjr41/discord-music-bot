@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import { db } from "../firebase";
-import type { MusicHistoryEntry } from "../types";
+import { addTracksToQueue } from "../lib/social";
+import type { MusicHistoryEntry, Track } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -9,27 +10,47 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { ChevronDown, Crown, GripVertical, Mic2, Trophy, Users } from "lucide-react";
+import {
+  ChevronDown,
+  Crown,
+  GripVertical,
+  Mic2,
+  Plus,
+  Trophy,
+  UserRound,
+  Users,
+} from "lucide-react";
 
 interface DragStat {
   id: string;
   title: string;
   artist: string;
   thumbnail?: string;
+  url?: string;
   count: number;
+}
+
+interface MemberStat {
+  id: string;
+  name: string;
+  queueAdds?: number;
+  drags?: number;
+  searches?: number;
+  total?: number;
 }
 
 interface Props {
   serverId: string;
 }
 
-type Tab = "tracks" | "artists" | "requesters" | "dragged";
+type Tab = "tracks" | "artists" | "requesters" | "dragged" | "members";
 
 const TABS: { id: Tab; label: string; icon: typeof Trophy }[] = [
   { id: "tracks", label: "Top Tracks", icon: Trophy },
   { id: "artists", label: "Artists", icon: Mic2 },
   { id: "requesters", label: "Requesters", icon: Users },
   { id: "dragged", label: "Most Dragged", icon: GripVertical },
+  { id: "members", label: "Members", icon: UserRound },
 ];
 
 const MEDALS = ["🥇", "🥈", "🥉"];
@@ -44,6 +65,30 @@ export function StatsPanel({ serverId }: Props) {
   const [tab, setTab] = useState<Tab>("tracks");
   const [tracks, setTracks] = useState<MusicHistoryEntry[]>([]);
   const [drags, setDrags] = useState<DragStat[]>([]);
+  const [members, setMembers] = useState<MemberStat[]>([]);
+  const [addedMsg, setAddedMsg] = useState("");
+  const [adding, setAdding] = useState<string | null>(null);
+
+  const addToQueue = async (id: string, track: Partial<Track>) => {
+    if (!track.url || adding) return;
+    setAdding(id);
+    try {
+      await addTracksToQueue(serverId, [{
+        title: track.title || "Unknown",
+        artist: track.artist || "",
+        url: track.url,
+        thumbnail: track.thumbnail || "",
+        duration: track.duration || 0,
+        requestedBy: "",  // stamped by addTracksToQueue
+      }]);
+      setAddedMsg(`Added “${track.title}” to the queue`);
+      setTimeout(() => setAddedMsg(""), 3000);
+    } catch {
+      setAddedMsg("Failed to add — try again");
+    } finally {
+      setAdding(null);
+    }
+  };
 
   useEffect(() => {
     if (!expanded) return;
@@ -64,9 +109,18 @@ export function StatsPanel({ serverId }: Props) {
       ),
       (snap) => setDrags(snap.docs.map((d) => ({ id: d.id, ...d.data() } as DragStat)))
     );
+    const unsubMembers = onSnapshot(
+      query(
+        collection(db, "servers", serverId, "memberStats"),
+        orderBy("total", "desc"),
+        limit(10)
+      ),
+      (snap) => setMembers(snap.docs.map((d) => ({ id: d.id, ...d.data() } as MemberStat)))
+    );
     return () => {
       unsubTracks();
       unsubDrags();
+      unsubMembers();
     };
   }, [expanded, serverId]);
 
@@ -145,6 +199,8 @@ export function StatsPanel({ serverId }: Props) {
               ))}
             </div>
 
+            {addedMsg && <p className="text-xs text-primary">{addedMsg}</p>}
+
             {tab === "tracks" &&
               (tracks.length === 0 ? (
                 <p className="py-3 text-center text-xs text-muted-foreground">
@@ -173,6 +229,14 @@ export function StatsPanel({ serverId }: Props) {
                       <Badge variant="secondary" className="text-xs">
                         {t.playCount || 1} plays
                       </Badge>
+                      <button
+                        onClick={() => addToQueue(t.id, t)}
+                        disabled={adding !== null || !t.url}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:opacity-40"
+                        title="Add to queue"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -209,6 +273,37 @@ export function StatsPanel({ serverId }: Props) {
                       <Badge variant="secondary" className="text-xs">
                         {d.count}× dragged
                       </Badge>
+                      <button
+                        onClick={() => addToQueue(d.id, d)}
+                        disabled={adding !== null || !d.url}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-input text-muted-foreground transition-colors hover:border-primary hover:text-primary disabled:opacity-40"
+                        title="Add to queue"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ))}
+
+            {tab === "members" &&
+              (members.length === 0 ? (
+                <p className="py-3 text-center text-xs text-muted-foreground">
+                  Nobody has claimed a name yet — set yours with the name chip
+                  up top and your adds, drags, and searches get counted.
+                </p>
+              ) : (
+                <ul className="space-y-1">
+                  {members.map((m, i) => (
+                    <li
+                      key={m.id}
+                      className="flex items-center gap-2 rounded-md p-2 hover:bg-muted/50"
+                    >
+                      {rank(i)}
+                      <p className="min-w-0 flex-1 truncate text-sm font-medium">{m.name}</p>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {m.queueAdds || 0} adds · {m.drags || 0} drags · {m.searches || 0} searches
+                      </span>
                     </li>
                   ))}
                 </ul>

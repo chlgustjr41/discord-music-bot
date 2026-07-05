@@ -7,6 +7,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import { getIdentityName } from "../lib/identity";
 import type { Track, CurrentTrack, SearchResult } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -80,7 +81,7 @@ export function PlaylistManager({
   }
 
   async function loadPlaylist(p: PlaylistDoc, mode: "add" | "replace") {
-    const tracks = p.tracks.map((t) => ({ ...t, requestedBy: "Web User" }));
+    const tracks = p.tracks.map((t) => ({ ...t, requestedBy: getIdentityName() }));
     if (mode === "replace") {
       await updateDoc(doc(db, "servers", serverId), { queue: tracks });
     } else {
