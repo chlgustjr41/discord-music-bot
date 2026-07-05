@@ -145,6 +145,45 @@ async def test_cycle_loop_mode(service, guild_id, sid):
     assert await service.cycle_loop_mode(guild_id) == "off"
 
 
+async def test_recover_playback_reissues_at_cached_position(service, guild_id, sid):
+    service.recovery_settle_delay = 0
+    await service.repo.set_current_track(sid, {
+        "title": "Song", "url": "https://youtu.be/abc123",
+        "startedAt": "2026-07-05T00:00:00+00:00",
+    })
+    service.positions[guild_id] = {"position": 92000, "connected": True}
+
+    await service.recover_playback(guild_id, "voice endpoint changed")
+
+    _, payload = service.node.updates[-1]
+    assert payload["track"]["encoded"] == "ENC1"
+    assert payload["position"] == 92000  # cached position wins over startedAt estimate
+
+
+async def test_recover_playback_debounces_and_skips_idle(service, guild_id, sid):
+    service.recovery_settle_delay = 0
+    # Idle guild: nothing to recover.
+    await service.recover_playback(guild_id, "voice ws closed (4014)")
+    assert service.node.updates == []
+
+    await service.repo.set_current_track(sid, {"title": "Song", "url": "https://youtu.be/a"})
+    service.positions[guild_id] = {"position": 1000}
+    await service.recover_playback(guild_id, "flap 1")
+    # The idle attempt above already consumed the debounce window.
+    assert service.node.updates == []
+
+
+async def test_voice_ws_closed_routes_to_recovery(service, guild_id, sid):
+    service.recovery_settle_delay = 0
+    await service.repo.set_current_track(sid, {"title": "Song", "url": "https://youtu.be/a"})
+    service.positions[guild_id] = {"position": 5000}
+
+    await service.on_voice_ws_closed(guild_id, {"code": 4014, "byRemote": True})
+
+    assert service.node.updates  # play re-issued
+    assert service.node.updates[-1][1]["position"] == 5000
+
+
 async def test_begin_session_sets_code_and_state(service, guild_id, sid):
     from types import SimpleNamespace
 

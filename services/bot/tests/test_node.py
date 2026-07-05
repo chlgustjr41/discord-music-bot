@@ -189,6 +189,24 @@ async def test_reconnects_with_session_id_and_reports_resumed(stack):
     assert node.session_id == "sess-1"
 
 
+async def test_websocket_closed_event_dispatches(stack):
+    fake, node = stack
+    seen: dict = {}
+
+    async def on_voice_ws_closed(gid, payload):
+        seen["closed"] = (gid, payload.get("code"))
+
+    node.on_voice_ws_closed = on_voice_ws_closed
+    node.start()
+    await node.wait_ready(timeout=5)
+    await fake.send_event({
+        "op": "event", "type": "WebSocketClosedEvent", "guildId": "123",
+        "code": 4014, "reason": "Disconnected.", "byRemote": True,
+    })
+    await asyncio.sleep(0.1)
+    assert seen["closed"] == (123, 4014)
+
+
 async def test_json_event_parsing_ignores_stats(stack):
     fake, node = stack
     node.start()

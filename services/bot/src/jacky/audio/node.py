@@ -54,6 +54,7 @@ class LavalinkNode:
         self.on_track_start: Callable[[int, dict], Awaitable[None]] | None = None
         self.on_track_end: Callable[[int, str], Awaitable[None]] | None = None
         self.on_track_exception: Callable[[int, dict], Awaitable[None]] | None = None
+        self.on_voice_ws_closed: Callable[[int, dict], Awaitable[None]] | None = None
         self.on_disconnected: Callable[[], Awaitable[None]] | None = None
 
     # ── lifecycle ────────────────────────────────────────────────────────
@@ -145,8 +146,11 @@ class LavalinkNode:
         elif event in ("TrackExceptionEvent", "TrackStuckEvent"):
             if self.on_track_exception:
                 await self.on_track_exception(guild_id, payload)
-        # WebSocketClosedEvent (Discord voice WS) is informational; voice
-        # recovery is driven by on_ready(resumed=False) + cached voice state.
+        elif event == "WebSocketClosedEvent":
+            # Discord closed the voice WS (server migration, session
+            # invalidation). Playback stalls silently unless someone reacts.
+            if self.on_voice_ws_closed:
+                await self.on_voice_ws_closed(guild_id, payload)
 
     # ── REST ─────────────────────────────────────────────────────────────
 

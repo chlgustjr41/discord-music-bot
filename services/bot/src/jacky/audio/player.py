@@ -58,7 +58,9 @@ class PlayerService:
         self._stopping: set[int] = set()
         self._advancing: set[int] = set()
         self._failures: dict[int, list[float]] = {}
+        self._last_recovery: dict[int, float] = {}
         self.search_retry_delay = SEARCH_RETRY_DELAY  # tests dial this to 0
+        self.recovery_settle_delay = 2.0              # tests dial this to 0
 
     # ── helpers ──────────────────────────────────────────────────────────
 
@@ -245,6 +247,7 @@ class PlayerService:
             self.cancel_empty_channel_timer(guild_id)
             self.positions.pop(guild_id, None)
             self.playing.pop(guild_id, None)
+            self._last_recovery.pop(guild_id, None)
             self._clear_failures(guild_id)
             if disconnect:
                 voice = self._voice(guild_id)
@@ -451,6 +454,38 @@ class PlayerService:
     async def on_player_update(self, guild_id: int, state: dict) -> None:
         self.positions[guild_id] = state
 
+    async def on_voice_ws_closed(self, guild_id: int, payload: dict) -> None:
+        code = payload.get("code")
+        log.warning(
+            "voice websocket closed for guild %s: code=%s reason=%r byRemote=%s",
+            guild_id, code, payload.get("reason"), payload.get("byRemote"),
+        )
+        await self.recover_playback(guild_id, f"voice ws closed ({code})")
+
+    async def recover_playback(self, guild_id: int, reason: str) -> None:
+        """Voice-route flap recovery: re-issue the current track at the last
+        known position after Discord migrates/kills the voice connection.
+        Debounced — endpoint change and WS-close usually arrive together."""
+        if guild_id in self._stopping:
+            return
+        now = time.monotonic()
+        if now - self._last_recovery.get(guild_id, 0.0) < 15.0:
+            return
+        self._last_recovery[guild_id] = now
+
+        state = await self.repo.get_state(str(guild_id)) or {}
+        current = state.get("currentTrack")
+        if not current or not state.get("isPlaying"):
+            return
+        log.warning("recovering playback for guild %s (%s)", guild_id, reason)
+        await asyncio.sleep(self.recovery_settle_delay)  # let the new route settle
+        position_ms = (self.positions.get(guild_id) or {}).get("position")
+        await self.resume_track(
+            guild_id, current,
+            paused=state.get("isPaused", False),
+            position_ms=position_ms,
+        )
+
     async def on_node_ready(self, resumed: bool) -> None:
         if resumed:
             log.info("Lavalink session resumed — players intact")
@@ -475,21 +510,25 @@ class PlayerService:
         except Exception as exc:  # noqa: BLE001 — per-guild recovery must not cascade
             log.error("re-prime failed for guild %s: %s", guild_id, exc)
 
-    async def resume_track(self, guild_id: int, td: dict, *, paused: bool = False) -> bool:
-        """Play td at the position estimated from its startedAt timestamp."""
+    async def resume_track(
+        self, guild_id: int, td: dict, *, paused: bool = False,
+        position_ms: int | None = None,
+    ) -> bool:
+        """Play td at position_ms, or the position estimated from startedAt."""
         track = await self._resolve_track_data(guild_id, td)
         if track is None:
             await self.play_next(guild_id)
             return False
-        position_ms = 0
-        started_at = td.get("startedAt")
-        if started_at:
-            try:
-                dt = datetime.datetime.fromisoformat(started_at)
-                elapsed = (datetime.datetime.now(timezone.utc) - dt).total_seconds()
-                position_ms = int(max(0.0, elapsed) * 1000)
-            except ValueError:
-                pass
+        if position_ms is None:
+            position_ms = 0
+            started_at = td.get("startedAt")
+            if started_at:
+                try:
+                    dt = datetime.datetime.fromisoformat(started_at)
+                    elapsed = (datetime.datetime.now(timezone.utc) - dt).total_seconds()
+                    position_ms = int(max(0.0, elapsed) * 1000)
+                except ValueError:
+                    pass
         ok = await self._issue_play(guild_id, track["encoded"], position_ms=position_ms)
         if ok and paused:
             try:

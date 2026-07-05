@@ -8,11 +8,14 @@ touching Discord at all — the fix for the legacy bot's silent-after-restart
 failure class (spec §1 Class B).
 """
 
+import asyncio
 import logging
 
 import discord
 
 log = logging.getLogger("jacky.voice")
+
+HANDSHAKE_TIMEOUT = 15.0
 
 
 class LavalinkVoiceClient(discord.VoiceProtocol):
@@ -26,6 +29,9 @@ class LavalinkVoiceClient(discord.VoiceProtocol):
         self._server: dict | None = None
         self.last_voice_payload: dict | None = None
         self._destroyed = False
+        # Set once the first voice payload has actually reached Lavalink —
+        # connect() blocks on it so a play can never race the handshake.
+        self._voice_pushed = asyncio.Event()
 
     @property
     def node(self):
@@ -53,6 +59,7 @@ class LavalinkVoiceClient(discord.VoiceProtocol):
         token = self._server.get("token")
         if not endpoint or not token:
             return
+        previous_endpoint = (self.last_voice_payload or {}).get("endpoint")
         payload = {
             "token": token,
             "endpoint": endpoint,
@@ -67,6 +74,22 @@ class LavalinkVoiceClient(discord.VoiceProtocol):
             await self.node.update_player(self.guild.id, {"voice": payload})
         except Exception as exc:
             log.error("voice update rejected for guild %s: %s", self.guild.id, exc)
+            return
+        self._voice_pushed.set()
+        # Discord migrated the voice server mid-session (e.g. region
+        # re-evaluation after listeners join): Lavalink's media connection
+        # tears down and the playing track stalls silently. Hand recovery to
+        # the player service instead of waiting for the guardian's F6.
+        if previous_endpoint and previous_endpoint != endpoint:
+            log.warning(
+                "voice endpoint changed for guild %s: %s -> %s",
+                self.guild.id, previous_endpoint, endpoint,
+            )
+            service = getattr(self.client, "service", None)
+            if service:
+                asyncio.get_running_loop().create_task(
+                    service.recover_playback(self.guild.id, "voice endpoint changed")
+                )
 
     async def resend_voice(self) -> bool:
         """Re-prime a fresh Lavalink session with the cached voice payload."""
@@ -84,6 +107,13 @@ class LavalinkVoiceClient(discord.VoiceProtocol):
     ) -> None:
         await self.guild.change_voice_state(
             channel=self.channel, self_deaf=self_deaf, self_mute=self_mute
+        )
+        # Block until Lavalink actually holds the voice credentials: a play
+        # issued before that lands on a voiceless player and sits silent
+        # (the "first track never plays" bug). Raising lets discord.py tear
+        # the protocol down and the command surface a clear error instead.
+        await asyncio.wait_for(
+            self._voice_pushed.wait(), timeout=min(timeout or HANDSHAKE_TIMEOUT, HANDSHAKE_TIMEOUT)
         )
 
     async def disconnect(self, *, force: bool = False) -> None:
