@@ -59,8 +59,10 @@ class PlayerService:
         self._advancing: set[int] = set()
         self._failures: dict[int, list[float]] = {}
         self._last_recovery: dict[int, float] = {}
+        self._last_reconcile: dict[int, float] = {}
         self.search_retry_delay = SEARCH_RETRY_DELAY  # tests dial this to 0
         self.recovery_settle_delay = 2.0              # tests dial this to 0
+        self.reconcile_interval = 30.0                # tests dial this to 0
 
     # ── helpers ──────────────────────────────────────────────────────────
 
@@ -248,6 +250,7 @@ class PlayerService:
             self.positions.pop(guild_id, None)
             self.playing.pop(guild_id, None)
             self._last_recovery.pop(guild_id, None)
+            self._last_reconcile.pop(guild_id, None)
             self._clear_failures(guild_id)
             if disconnect:
                 voice = self._voice(guild_id)
@@ -453,6 +456,36 @@ class PlayerService:
 
     async def on_player_update(self, guild_id: int, state: dict) -> None:
         self.positions[guild_id] = state
+        await self._reconcile_if_wedged(guild_id, state)
+
+    async def _reconcile_if_wedged(self, guild_id: int, position_state: dict) -> None:
+        """Self-heal the contradictory doc state `isPlaying && !currentTrack`.
+
+        It arises when a restart/flap interrupts the gap between clearing the
+        current track and starting the next one. Nothing else ever repairs
+        it, and it wedges the dashboard (play/skip diffs no-op against it).
+        Firestore is only read when the local caches already look idle, at
+        most once per reconcile_interval per guild.
+        """
+        if (
+            not position_state.get("connected")
+            or self.playing.get(guild_id)
+            or guild_id in self._advancing
+            or guild_id in self._stopping
+        ):
+            return
+        now = time.monotonic()
+        if now - self._last_reconcile.get(guild_id, 0.0) < self.reconcile_interval:
+            return
+        self._last_reconcile[guild_id] = now
+        state = await self.repo.get_state(str(guild_id)) or {}
+        if state.get("isPlaying") and not state.get("currentTrack") and state.get("queue"):
+            log.warning(
+                "reconciling wedged state for guild %s: isPlaying with no "
+                "currentTrack and %d queued — starting the queue",
+                guild_id, len(state.get("queue", [])),
+            )
+            await self.play_next(guild_id)
 
     async def on_voice_ws_closed(self, guild_id: int, payload: dict) -> None:
         code = payload.get("code")

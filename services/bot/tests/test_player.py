@@ -184,6 +184,52 @@ async def test_voice_ws_closed_routes_to_recovery(service, guild_id, sid):
     assert service.node.updates[-1][1]["position"] == 5000
 
 
+WEDGED_QUEUE = [{"title": "Song", "artist": "", "url": "https://youtu.be/abc123",
+                 "thumbnail": "", "duration": 0, "requestedBy": "Jacob"}]
+
+
+async def test_reconciler_unwedges_isplaying_without_current_track(service, guild_id, sid):
+    service.reconcile_interval = 0
+    # The production wedge: isPlaying stuck true, no current track, full queue.
+    await service.repo.update_state(sid, {
+        "isPlaying": True, "currentTrack": None, "queue": list(WEDGED_QUEUE),
+    })
+
+    await service.on_player_update(guild_id, {"connected": True, "position": 0})
+
+    state = await service.repo.get_state(sid)
+    assert state["currentTrack"]["title"] == "Song"
+    assert service.node.updates  # play issued
+    assert service.playing[guild_id] is True
+
+
+async def test_reconciler_leaves_healthy_and_stopped_states_alone(service, guild_id, sid):
+    service.reconcile_interval = 0
+    # Actively playing: belief flag short-circuits before any Firestore read.
+    service.playing[guild_id] = True
+    await service.on_player_update(guild_id, {"connected": True, "position": 5000})
+    assert service.node.updates == []
+
+    # Deliberately stopped (isPlaying False) with a queue: must NOT auto-start.
+    service.playing[guild_id] = False
+    await service.repo.update_state(sid, {
+        "isPlaying": False, "currentTrack": None, "queue": list(WEDGED_QUEUE),
+    })
+    await service.on_player_update(guild_id, {"connected": True, "position": 0})
+    assert service.node.updates == []
+
+
+def test_listener_playing_signal_uses_bot_belief_not_voice_connected(service, guild_id):
+    from jacky.state.listener import ServerDocListener
+
+    listener = ServerDocListener(service.bot, service.repo, service, str(guild_id))
+    # Idle in voice: connected playerUpdates exist but nothing is playing.
+    service.positions[guild_id] = {"connected": True, "position": 0}
+    assert listener._playing_now() is False
+    service.playing[guild_id] = True
+    assert listener._playing_now() is True
+
+
 async def test_begin_session_sets_code_and_state(service, guild_id, sid):
     from types import SimpleNamespace
 

@@ -122,8 +122,9 @@ class ServerDocListener:
         return guild.voice_client if guild else None
 
     def _playing_now(self) -> bool:
-        pos = self.service.positions.get(int(self.server_id)) or {}
-        return bool(pos.get("connected"))
+        # The bot's own belief — NOT the voice `connected` flag, which stays
+        # true while idling in voice and used to suppress queue auto-start.
+        return bool(self.service.playing.get(int(self.server_id)))
 
     async def _resolve_new_queue_items(self, queue: list) -> None:
         """Resolve items whose title is still a raw URL; expand playlist URLs."""
