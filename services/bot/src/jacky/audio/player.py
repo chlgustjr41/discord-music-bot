@@ -53,6 +53,7 @@ class PlayerService:
         self.session_start: dict[int, datetime.datetime] = {}
         self.positions: dict[int, dict] = {}  # guild -> last playerUpdate state (cache)
         self.playing: dict[int, bool] = {}    # bot's own belief, fed to /health for F6
+        self.track_ids: dict[int, str] = {}   # guild -> playing track id (F6 track-awareness)
         self.idle_tasks: dict[int, asyncio.Task] = {}
         self.empty_channel_tasks: dict[int, asyncio.Task] = {}
         self._stopping: set[int] = set()
@@ -250,6 +251,7 @@ class PlayerService:
             self.cancel_empty_channel_timer(guild_id)
             self.positions.pop(guild_id, None)
             self.playing.pop(guild_id, None)
+            self.track_ids.pop(guild_id, None)
             self._last_recovery.pop(guild_id, None)
             self._last_reconcile.pop(guild_id, None)
             self._clear_failures(guild_id)
@@ -477,6 +479,9 @@ class PlayerService:
 
     async def on_track_start(self, guild_id: int, track: dict) -> None:
         self.cancel_idle_timer(guild_id)
+        identifier = (track.get("info") or {}).get("identifier")
+        if identifier:
+            self.track_ids[guild_id] = identifier
 
     async def on_track_end(self, guild_id: int, reason: str) -> None:
         self.playing[guild_id] = False

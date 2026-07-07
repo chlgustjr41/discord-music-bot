@@ -73,7 +73,13 @@ async def probe_bot(session: aiohttp.ClientSession, health_url: str) -> BotHealt
 
 
 def frozen_guilds(previous: dict, current: dict) -> list[str]:
-    """Guilds claiming to play whose position did not advance since last probe."""
+    """Guilds claiming to play that are truly stalled since the last probe.
+
+    A stalled player reports the SAME track at the EXACT same position
+    forever. Position regressions are healthy (track change, skip, loop
+    restart, flap recovery) and previously caused false F6 restarts when
+    two probes each caught a different track at a lower position.
+    """
     frozen = []
     for gid, now in current.items():
         if not (now.get("playing") and now.get("connected")):
@@ -81,6 +87,9 @@ def frozen_guilds(previous: dict, current: dict) -> list[str]:
         before = previous.get(gid)
         if before is None or not before.get("playing"):
             continue
-        if now.get("position", 0) <= before.get("position", 0):
+        if (
+            now.get("trackId") == before.get("trackId")
+            and now.get("position", 0) == before.get("position", 0)
+        ):
             frozen.append(gid)
     return frozen

@@ -66,14 +66,34 @@ async def test_bot_health_ok_and_down(serve, http_session):
 
 def test_frozen_guilds_detects_stalled_position_only_when_playing():
     prev = {
-        "1": {"position": 5000, "playing": True, "connected": True},
-        "2": {"position": 5000, "playing": True, "connected": True},
-        "3": {"position": 5000, "playing": False, "connected": True},
+        "1": {"position": 5000, "playing": True, "connected": True, "trackId": "a"},
+        "2": {"position": 5000, "playing": True, "connected": True, "trackId": "a"},
+        "3": {"position": 5000, "playing": False, "connected": True, "trackId": "a"},
     }
     curr = {
-        "1": {"position": 5000, "playing": True, "connected": True},   # frozen
-        "2": {"position": 9000, "playing": True, "connected": True},   # advancing
-        "3": {"position": 5000, "playing": False, "connected": True},  # paused: fine
-        "4": {"position": 0, "playing": True, "connected": True},      # new: no baseline
+        "1": {"position": 5000, "playing": True, "connected": True, "trackId": "a"},   # frozen
+        "2": {"position": 9000, "playing": True, "connected": True, "trackId": "a"},   # advancing
+        "3": {"position": 5000, "playing": False, "connected": True, "trackId": "a"},  # paused
+        "4": {"position": 0, "playing": True, "connected": True, "trackId": "b"},      # no baseline
     }
+    assert frozen_guilds(prev, curr) == ["1"]
+
+
+def test_position_regressions_are_not_frozen():
+    """Track changes, skips, loop restarts, and flap recovery all regress the
+    position while audio plays fine — the historical F6 false positive."""
+    prev = {
+        "1": {"position": 180000, "playing": True, "connected": True, "trackId": "a"},
+        "2": {"position": 90000, "playing": True, "connected": True, "trackId": "b"},
+    }
+    curr = {
+        "1": {"position": 30000, "playing": True, "connected": True, "trackId": "z"},  # next track
+        "2": {"position": 4000, "playing": True, "connected": True, "trackId": "b"},   # loop restart
+    }
+    assert frozen_guilds(prev, curr) == []
+
+
+def test_same_track_same_position_is_frozen_even_at_zero():
+    prev = {"1": {"position": 0, "playing": True, "connected": True, "trackId": "a"}}
+    curr = {"1": {"position": 0, "playing": True, "connected": True, "trackId": "a"}}
     assert frozen_guilds(prev, curr) == ["1"]
