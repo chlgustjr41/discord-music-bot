@@ -13,6 +13,7 @@ import { CommandHistory } from "./CommandHistory";
 import { MusicHistory } from "./MusicHistory";
 import { StatsPanel } from "./StatsPanel";
 import { IdentityChip } from "./IdentityChip";
+import { PinServerButton } from "./PinServerButton";
 import { ActivityLog } from "./ActivityLog";
 import { NodeStatus } from "./NodeStatus";
 import { Button } from "@/components/ui/button";
@@ -161,6 +162,7 @@ export function Dashboard() {
             </div>
           </div>
           <IdentityChip />
+          <PinServerButton serverId={serverId} serverName={state.serverName} />
           <Button
             variant="ghost"
             size="sm"

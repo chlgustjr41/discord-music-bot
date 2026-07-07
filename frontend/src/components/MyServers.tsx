@@ -61,12 +61,16 @@ export function MyServers() {
     let cancelled = false;
     (async () => {
       try {
-        const owned = await getDocs(
-          query(collection(db, "serverOwners"), where("firebaseUid", "==", user.uid))
-        );
-        const ids = owned.docs
-          .filter((d) => d.data().isActive !== false)
-          .map((d) => d.id);
+        const [owned, pinned] = await Promise.all([
+          getDocs(query(collection(db, "serverOwners"), where("firebaseUid", "==", user.uid))),
+          getDocs(collection(db, "users", user.uid, "pinnedServers")),
+        ]);
+        const ids = [
+          ...new Set([
+            ...owned.docs.filter((d) => d.data().isActive !== false).map((d) => d.id),
+            ...pinned.docs.map((d) => d.id),
+          ]),
+        ];
         if (cancelled) return;
         setServers(ids.map((id) => ({ id, state: null })));
         for (const id of ids) {
