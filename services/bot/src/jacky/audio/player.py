@@ -56,6 +56,7 @@ class PlayerService:
         self.idle_tasks: dict[int, asyncio.Task] = {}
         self.empty_channel_tasks: dict[int, asyncio.Task] = {}
         self._stopping: set[int] = set()
+        self._resetting: set[int] = set()
         self._advancing: set[int] = set()
         self._failures: dict[int, list[float]] = {}
         self._last_recovery: dict[int, float] = {}
@@ -265,6 +266,65 @@ class PlayerService:
                                          text_channel_id=state.get("textChannelId"))
         finally:
             self._stopping.discard(guild_id)
+
+    async def reset_session(self, guild_id: int, *, reason: str = "manual reset") -> bool:
+        """Force-rebuild the voice session in place (dashboard Reset button /
+        j!reset): disconnect, rejoin the same channel, resume the queue. The
+        web session survives — sessionCode, text channel, and listener are
+        all kept; only the voice route and player are rebuilt."""
+        if guild_id in self._resetting:
+            return False
+        sid = str(guild_id)
+        state = await self.repo.get_state(sid) or {}
+        channel_id = state.get("voiceChannelId")
+        guild = self.bot.get_guild(guild_id)
+        channel = guild.get_channel(int(channel_id)) if (guild and channel_id) else None
+        if channel is None:
+            log.warning("reset for guild %s ignored: no voice channel", guild_id)
+            return False
+
+        self._resetting.add(guild_id)
+        try:
+            log.warning("resetting session for guild %s (%s)", guild_id, reason)
+            # Requeue the interrupted track so nothing is lost.
+            updates: dict = {"isPlaying": False, "isPaused": False, "currentTrack": None}
+            current = state.get("currentTrack")
+            if current:
+                queue_item = {k: v for k, v in current.items()
+                              if k not in ("startedAt", "seekPosition")}
+                updates["queue"] = [queue_item] + state.get("queue", [])
+            await self.repo.update_state(sid, updates)
+
+            voice = self._voice(guild_id)
+            if voice:
+                try:
+                    await voice.disconnect(force=True)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("reset disconnect failed for guild %s: %s", guild_id, exc)
+            self.positions.pop(guild_id, None)
+            self.playing.pop(guild_id, None)
+            self._clear_failures(guild_id)
+            await asyncio.sleep(self.recovery_settle_delay / 2)  # let Discord process the leave
+
+            from jacky.audio.voice import LavalinkVoiceClient
+
+            await channel.connect(cls=LavalinkVoiceClient)
+            await self.play_next(guild_id)
+            await self.notifier.send(
+                guild_id, text="🔁 Session reset — rejoined voice and resumed the queue."
+            )
+            return True
+        except Exception as exc:  # noqa: BLE001 — surfaced, session left recoverable
+            log.error("reset failed for guild %s: %s", guild_id, exc)
+            await self.notifier.send(
+                guild_id,
+                text="⚠️ Reset failed to rejoin voice — run `j!start` to reconnect. "
+                     "Your queue is preserved.",
+                error=True,
+            )
+            return False
+        finally:
+            self._resetting.discard(guild_id)
 
     async def _set_nickname(self, guild_id: int, code: str | None) -> None:
         guild = self.bot.get_guild(guild_id)

@@ -69,8 +69,8 @@ class Playback(commands.Cog):
         guild_id = member.guild.id
         if member.id == self.bot.user.id:
             if before.channel is not None and after.channel is None:
-                if guild_id in self.service._stopping:
-                    return  # teardown_session already owns this exit
+                if guild_id in self.service._stopping or guild_id in self.service._resetting:
+                    return  # teardown/reset already owns this exit
                 log.info("bot removed from voice in guild %s (kicked/moved)", guild_id)
                 await self.service.teardown_session(
                     guild_id, requeue_current=True, disconnect=False
@@ -192,12 +192,16 @@ class Playback(commands.Cog):
 
     @commands.command(name="reset", brief="Reset the voice session (recovers silent playback)")
     async def reset(self, ctx: commands.Context) -> None:
-        """Tear down and rebuild the voice session; the queue is preserved."""
+        """Rebuild the voice session in place: rejoin the channel and resume
+        the queue. The web session and queue are preserved."""
         await self._log_cmd(ctx)
-        await self.service.teardown_session(
-            ctx.guild.id, requeue_current=True,
-            message="✅ Session reset — run `j!play` or `j!start` to resume.",
+        ok = await self.service.reset_session(
+            ctx.guild.id, reason=f"j!reset by {ctx.author.display_name}"
         )
+        if not ok:
+            await ctx.send(embed=error_embed(
+                "Nothing to reset — no active voice session. Use `j!start`."
+            ))
 
     @commands.command(name="volume", aliases=["vol"], brief="Set volume (0-100)")
     async def volume(self, ctx: commands.Context, vol: int) -> None:

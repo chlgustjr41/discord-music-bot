@@ -72,6 +72,14 @@ class ServerDocListener:
             await self._handle_end_session()
             return
 
+        # Dashboard Reset button: force-rebuild the voice session, queue kept.
+        if new.get("resetRequested") and not old.get("resetRequested"):
+            try:
+                await self.service.reset_session(guild_id, reason="dashboard reset")
+            finally:
+                await self.repo.update_state(self.server_id, {"resetRequested": None})
+            return
+
         queue_grew = False
         if not self._resolving:
             old_queue, new_queue = old.get("queue", []), new.get("queue", [])

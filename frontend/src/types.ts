@@ -29,6 +29,7 @@ export interface ServerState {
   sessionCode: string | null;
   knownVoiceChannels?: KnownVoiceChannel[];
   summonRequest?: { channelId: string } | null;
+  resetRequested?: boolean | null;
   currentTrack: CurrentTrack | null;
   queue: Track[];
   isPlaying: boolean;

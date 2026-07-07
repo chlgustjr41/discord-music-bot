@@ -230,6 +230,43 @@ def test_listener_playing_signal_uses_bot_belief_not_voice_connected(service, gu
     assert listener._playing_now() is True
 
 
+async def test_reset_session_rebuilds_voice_and_resumes_queue(service, guild_id, sid):
+    service.recovery_settle_delay = 0
+    guild = service.bot.get_guild(guild_id)
+    old_voice = guild.voice_client
+    guild.add_voice_channel(42, name="Lounge")
+    await service.repo.update_state(sid, {
+        "voiceChannelId": "42",
+        "sessionCode": "ABC123",
+        "currentTrack": {"title": "Interrupted", "url": "https://youtu.be/abc123",
+                         "startedAt": "2026-07-06T00:00:00+00:00"},
+        "queue": [{"title": "Next", "url": "https://youtu.be/next", "artist": "",
+                   "thumbnail": "", "duration": 0, "requestedBy": ""}],
+        "isPlaying": True,
+    })
+
+    ok = await service.reset_session(guild_id)
+
+    assert ok
+    assert old_voice.disconnected
+    assert guild.voice_client is not None and guild.voice_client is not old_voice
+    state = await service.repo.get_state(sid)
+    # Interrupted track requeued at the front and popped first — its resolved
+    # metadata (fake node title "Song") is now playing; "Next" still queued;
+    # the web session survives (code intact).
+    assert state["sessionCode"] == "ABC123"
+    assert state["currentTrack"]["title"] == "Song"
+    assert "startedAt" in state["currentTrack"]
+    assert [t["title"] for t in state["queue"]] == ["Next"]
+    assert service.node.updates  # play issued on the rebuilt player
+
+
+async def test_reset_session_without_voice_channel_is_refused(service, guild_id, sid):
+    await service.repo.update_state(sid, {"voiceChannelId": None})
+    assert await service.reset_session(guild_id) is False
+    assert service.node.updates == []
+
+
 async def test_begin_session_sets_code_and_state(service, guild_id, sid):
     from types import SimpleNamespace
 

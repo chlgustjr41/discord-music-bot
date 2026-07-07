@@ -18,7 +18,7 @@ import { NodeStatus } from "./NodeStatus";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { Music, Loader2, WifiOff, AlertTriangle, LogOut } from "lucide-react";
+import { Music, Loader2, WifiOff, AlertTriangle, LogOut, RotateCcw } from "lucide-react";
 
 export function Dashboard() {
   const { sessionCode } = useParams<{ sessionCode: string }>();
@@ -26,8 +26,29 @@ export function Dashboard() {
   const navigate = useNavigate();
   const logEntries = useActivityToasts(state);
   const [exiting, setExiting] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const botConnected = !!state?.voiceChannelId;
+
+  // Force-rebuild the voice session (buggy-scenario escape hatch): the bot
+  // disconnects, rejoins, and resumes — queue and this web session survive.
+  async function handleReset() {
+    if (resetting || !serverId) return;
+    setResetting(true);
+    try {
+      await updateDoc(doc(db, "servers", serverId), { resetRequested: true });
+    } catch {
+      setResetting(false);
+      return;
+    }
+    setTimeout(() => setResetting(false), 12000);
+  }
+
+  useEffect(() => {
+    // The bot clears the flag when the reset completes.
+    if (resetting && state && !state.resetRequested) setResetting(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.resetRequested]);
 
   async function handleExit() {
     if (exiting) return;
@@ -140,6 +161,21 @@ export function Dashboard() {
             </div>
           </div>
           <IdentityChip />
+          <Button
+            variant="ghost"
+            size="sm"
+            className="shrink-0 text-muted-foreground hover:text-foreground"
+            onClick={handleReset}
+            disabled={resetting || !botConnected}
+            title="Force-restart the voice session (queue is preserved)"
+          >
+            {resetting ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <RotateCcw className="mr-1 h-4 w-4" />
+            )}
+            {resetting ? "Resetting…" : "Reset"}
+          </Button>
           <Button
             variant="ghost"
             size="sm"
