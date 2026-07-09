@@ -4,7 +4,21 @@ set -eu
 case "$YOUTUBE_PLUGIN_VERSION" in
   *[!A-Za-z0-9._-]*) echo "YOUTUBE_PLUGIN_VERSION contains invalid characters" >&2; exit 1 ;;
 esac
-sed "s|__YOUTUBE_PLUGIN_VERSION__|${YOUTUBE_PLUGIN_VERSION}|g" \
+# A 40-hex version is a youtube-source commit hash: pull it from the snapshot
+# repo (upstream publishes one build per master commit). Anything else is a
+# release tag. Lets deploy/.env hotfix to an unreleased commit when YouTube
+# breaks the newest release (playbook F3).
+case "$YOUTUBE_PLUGIN_VERSION" in
+  *[!0-9a-f]*)
+    PLUGIN_REPOSITORY="https://maven.lavalink.dev/releases"; PLUGIN_SNAPSHOT=false ;;
+  ????????????????????????????????????????)
+    PLUGIN_REPOSITORY="https://maven.lavalink.dev/snapshots"; PLUGIN_SNAPSHOT=true ;;
+  *)
+    PLUGIN_REPOSITORY="https://maven.lavalink.dev/releases"; PLUGIN_SNAPSHOT=false ;;
+esac
+sed "s|__YOUTUBE_PLUGIN_VERSION__|${YOUTUBE_PLUGIN_VERSION}|g; \
+     s|__YOUTUBE_PLUGIN_REPOSITORY__|${PLUGIN_REPOSITORY}|g; \
+     s|__YOUTUBE_PLUGIN_SNAPSHOT__|${PLUGIN_SNAPSHOT}|g" \
     /opt/Lavalink/application.yml.tmpl > /tmp/application.yml
 # Cold-start poToken injection: the token-minter persists tokens.env to the
 # shared volume; values are charset-guarded at write time (ADR-0004: websafe
