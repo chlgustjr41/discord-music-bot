@@ -37,6 +37,14 @@ plugins:
       enabled: true
       refreshToken: "${YOUTUBE_OAUTH_REFRESH_TOKEN:}"
       skipInitialization: false
+    # Offloads signature/n-function extraction to the yt-cipher sidecar
+    # (compose service `cipher`), which runs the real player JS — survives
+    # YouTube player rollouts that break LocalSignatureCipherManager
+    # ("Must find n function", 2026-07-10 outage).
+    remoteCipher:
+      url: "${YOUTUBE_REMOTE_CIPHER_URL:}"
+      password: "${YOUTUBE_REMOTE_CIPHER_PASSWORD:}"
+      userAgent: "jacky-music"
     # POT_BLOCK_START (rendered from /data/tokens/tokens.env at container start)
     pot:
       token: "__POT_TOKEN__"

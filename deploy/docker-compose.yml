@@ -16,6 +16,8 @@ services:
       LAVALINK_SERVER_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
       YOUTUBE_PLUGIN_VERSION: ${YOUTUBE_PLUGIN_VERSION:?set in .env}
       YOUTUBE_OAUTH_REFRESH_TOKEN: ${YOUTUBE_OAUTH_REFRESH_TOKEN:-}
+      YOUTUBE_REMOTE_CIPHER_URL: ${YOUTUBE_REMOTE_CIPHER_URL:-http://cipher:8001}
+      YOUTUBE_REMOTE_CIPHER_PASSWORD: ${YOUTUBE_REMOTE_CIPHER_PASSWORD:?set in .env}
     expose:
       - "2333"
     volumes:
@@ -82,6 +84,32 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - lavalink
+    networks: [jacky]
+
+  cipher:
+    # Remote signature/n-function deciphering for the youtube plugin (playbook
+    # F3 escalation, 2026-07-10): executes YouTube's player JS instead of
+    # regex-parsing it, so player rollouts that break the plugin's
+    # LocalSignatureCipherManager don't take playback down.
+    # Deliberately UNPINNED (:master, upstream publishes no version tags): a
+    # cipher server only works while it tracks YouTube's player changes — a
+    # stale pin here recreates the very outage this service exists to absorb.
+    image: ghcr.io/kikkia/yt-cipher:master
+    restart: unless-stopped
+    environment:
+      API_TOKEN: ${YOUTUBE_REMOTE_CIPHER_PASSWORD:?set in .env}
+      # IAS is the only variant upstream marks as consistently working.
+      OVERRIDE_PLAYER_VARIANT: IAS
+      # 2GB-VM budget (spec §2): single worker, small player-script cache.
+      MAX_THREADS: "1"
+      PREPROCESSED_CACHE_SIZE: "20"
+    expose:
+      - "8001"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
     networks: [jacky]
 
   pot-provider:
