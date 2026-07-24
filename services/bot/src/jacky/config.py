@@ -17,6 +17,10 @@ class Settings:
     guardian_status_url: str
     idle_timeout_seconds: int
     empty_channel_timeout_seconds: int
+    # voice control (dormant unless enabled)
+    voice_control_enabled: bool
+    voice_listener_url: str
+    voice_internal_token: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -36,6 +40,12 @@ class Settings:
             empty_channel_timeout_seconds=int(
                 os.environ.get("EMPTY_CHANNEL_TIMEOUT_SECONDS", "120")
             ),
+            voice_control_enabled=os.environ.get("VOICE_CONTROL_ENABLED", "")
+                .lower() in ("1", "true", "yes"),
+            voice_listener_url=os.environ.get(
+                "VOICE_LISTENER_URL", "http://voice-listener:8090"
+            ),
+            voice_internal_token=os.environ.get("VOICE_INTERNAL_TOKEN", ""),
         )
 
     @property
