@@ -12,7 +12,7 @@ import json
 import time
 from typing import Callable, Protocol
 
-from ears.intents import Intent, parse_intent
+from ears.intents import parse_intent
 from ears.phrases import normalize_phrase
 
 

@@ -28,6 +28,8 @@ assets = Path(__file__).resolve().parent.parent / "assets"
 assets.mkdir(exist_ok=True)
 for name, spec in EARCONS.items():
     with wave.open(str(assets / name), "wb") as w:
-        w.setnchannels(2); w.setsampwidth(2); w.setframerate(RATE)
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(RATE)
         w.writeframes(tone(spec))
     print("wrote", assets / name)
