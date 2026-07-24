@@ -1,7 +1,10 @@
+import aiohttp
 import pytest
+from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
-from ears.api import build_app
+from ears.api import build_app, ship_intent
+from ears.intents import Intent
 
 
 class StubGateway:
@@ -50,7 +53,48 @@ async def test_validate(client):
     assert body == {"ok": False, "problems": ["unknown word: zorblatt"]}
 
 
+async def test_session_leave(client):
+    c, gw = client
+    r = await c.post("/session", json={"guild_id": "1", "action": "leave"},
+                     headers={"X-Voice-Token": "sekrit"})
+    assert r.status == 200
+    assert gw.calls == [("leave", "1")]
+
+
 async def test_health_open(client):
     c, _ = client
     r = await c.get("/health")
     assert r.status == 200
+
+
+async def test_ship_intent_success():
+    """Bot receives the intent body + token; ship_intent reports True on 200."""
+    received = {}
+
+    async def handler(request: web.Request) -> web.Response:
+        received["body"] = await request.json()
+        received["token"] = request.headers.get("X-Voice-Token")
+        return web.json_response({"ok": True})
+
+    app = web.Application()
+    app.add_routes([web.post("/voice-intent", handler)])
+    server = TestServer(app)
+    await server.start_server()
+    try:
+        url = str(server.make_url("/voice-intent"))
+        async with aiohttp.ClientSession() as session:
+            ok = await ship_intent(session, url, "sekrit", "42", Intent("skip", None))
+        assert ok is True
+        assert received["token"] == "sekrit"
+        assert received["body"] == {"guild_id": "42", "intent": "skip", "arg": None}
+    finally:
+        await server.close()
+
+
+async def test_ship_intent_failure_returns_false():
+    """A connection error is swallowed: ship_intent returns False, never raises."""
+    async with aiohttp.ClientSession() as session:
+        # Nothing is listening on this port -> ClientConnectorError.
+        ok = await ship_intent(session, "http://127.0.0.1:1/voice-intent",
+                               "sekrit", "42", Intent("play", "a song"))
+    assert ok is False
