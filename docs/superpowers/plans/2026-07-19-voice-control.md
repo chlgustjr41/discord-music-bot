@@ -778,7 +778,12 @@ class EarsSink(voice_recv.AudioSink):
             return
         if is_silence(data.pcm):
             return
-        ds, eng = self.engines.setdefault(user.id, self._new_engine())
+        # NB: not setdefault(user.id, self._new_engine()) — that eagerly builds
+        # (and discards) two Vosk recognizers on EVERY frame (~50/s/speaker).
+        pair = self.engines.get(user.id)
+        if pair is None:
+            pair = self.engines[user.id] = self._new_engine()
+        ds, eng = pair
         event = eng.feed(ds.feed(data.pcm))
         if event:
             self.client.dispatch_event(self.guild_id, event)
