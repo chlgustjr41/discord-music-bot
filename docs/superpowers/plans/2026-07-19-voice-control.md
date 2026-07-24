@@ -1215,8 +1215,12 @@ CMD ["python", "-m", "ears"]
     mem_limit: 400m
     cpus: 0.5
     environment:
-      DISCORD_EARS_TOKEN: ${DISCORD_EARS_TOKEN:?set in .env}
-      VOICE_INTERNAL_TOKEN: ${VOICE_INTERNAL_TOKEN:?set in .env}
+      # NOT `:?set in .env` — compose interpolates the whole file even for
+      # profiled-out services, so a `:?` guard aborts the DEFAULT stack boot
+      # when unset. Optional here; the listener is crash-only on empty tokens
+      # (fails fast, contained to this container) when the voice profile is on.
+      DISCORD_EARS_TOKEN: ${DISCORD_EARS_TOKEN:-}
+      VOICE_INTERNAL_TOKEN: ${VOICE_INTERNAL_TOKEN:-}
       BOT_INTENT_URL: http://bot:8080/voice-intent
     expose:
       - "8090"
