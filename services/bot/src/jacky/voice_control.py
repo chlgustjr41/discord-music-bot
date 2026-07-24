@@ -2,6 +2,7 @@
 notify the listener when sessions start/stop. Whole module is dormant when
 settings.voice_control_enabled is False (nothing constructs it)."""
 
+import asyncio
 import logging
 from typing import Any
 
@@ -67,7 +68,9 @@ class ListenerNotifier:
                                   headers={"X-Voice-Token": self.token},
                                   timeout=aiohttp.ClientTimeout(total=5)) as r:
                     return await r.json() if r.status == 200 else None
-        except aiohttp.ClientError as exc:
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            # TimeoutError (not a ClientError) is what ClientTimeout raises on a
+            # connected-but-hung listener — must be soft too, or j!wake raises.
             log.warning("listener call %s failed: %s", path, exc)
             return None
 

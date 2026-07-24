@@ -1,3 +1,5 @@
+import asyncio
+
 import aiohttp
 import pytest
 from aiohttp import web
@@ -97,4 +99,17 @@ async def test_ship_intent_failure_returns_false():
         # Nothing is listening on this port -> ClientConnectorError.
         ok = await ship_intent(session, "http://127.0.0.1:1/voice-intent",
                                "sekrit", "42", Intent("play", "a song"))
+    assert ok is False
+
+
+async def test_ship_intent_timeout_returns_false():
+    """A hung (connected but slow) bot raises TimeoutError, NOT a ClientError;
+    ship_intent must still return False rather than let it escape. Simulate the
+    timeout directly (no 5s real wait) by making session.post raise it."""
+    class TimingOutSession:
+        def post(self, *a, **k):
+            raise asyncio.TimeoutError
+
+    ok = await ship_intent(TimingOutSession(), "http://x/voice-intent",
+                           "sekrit", "42", Intent("skip", None))
     assert ok is False

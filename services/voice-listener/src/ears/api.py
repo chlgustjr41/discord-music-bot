@@ -1,5 +1,6 @@
 """Inbound control API (bot -> listener) and outbound intent shipping."""
 
+import asyncio
 import logging
 from typing import Any, Protocol
 
@@ -58,6 +59,9 @@ async def ship_intent(session: aiohttp.ClientSession, url: str, token: str,
         }, headers={"X-Voice-Token": token},
                 timeout=aiohttp.ClientTimeout(total=5)) as resp:
             return resp.status == 200
-    except aiohttp.ClientError as exc:
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        # TimeoutError (not a ClientError) is what ClientTimeout raises on a
+        # connected-but-hung bot; must be soft too or the sink thread's ship
+        # coroutine dies with an unretrieved exception instead of an error buzz.
         log.warning("intent ship failed: %s", exc)
         return False
