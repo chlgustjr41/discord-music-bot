@@ -114,6 +114,10 @@ no cloud speech API and no recording.
   `VOICE_INTERNAL_TOKEN` must be identical on the bot and listener. The listener
   is crash-only: it exits fast on a bad/empty token (visible in
   `docker compose logs voice-listener`). This never affects the music stack.
+  If the token is empty on the **bot** side (`VOICE_CONTROL_ENABLED=true` but no
+  `VOICE_INTERNAL_TOKEN`), the bot logs an error and runs with voice control
+  **disabled** rather than exposing an unauthenticated `/voice-intent` endpoint —
+  grep the bot log for "disabling voice control".
 - **Wake word not triggering:** confirm Jacky Ears is in the same voice channel;
   check the listener log for recognized partials.
 - **`j!wake` says offline:** the container is down or the bot can't reach

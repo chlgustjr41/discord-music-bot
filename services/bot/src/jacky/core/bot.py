@@ -123,7 +123,16 @@ class JackyBot(commands.Bot):
         # only when the flag is on, attach the notifier to the service, and
         # register the wake cog. Nothing below runs when the flag is off.
         extensions = list(EXTENSIONS)
-        if self.settings.voice_control_enabled:
+        if self.settings.voice_control_enabled and not self.settings.voice_internal_token:
+            # Refuse to stand up the /voice-intent endpoint with an empty shared
+            # secret — the X-Voice-Token check would be a no-op, leaving playback
+            # control open to anything on the internal network. Degrade to
+            # voice-off rather than crash the production bot.
+            log.error(
+                "voice control enabled but VOICE_INTERNAL_TOKEN is empty; "
+                "disabling voice control (would expose an unauthenticated endpoint)"
+            )
+        elif self.settings.voice_control_enabled:
             from jacky.voice_control import ListenerNotifier, VoiceIntentDispatcher
 
             self.voice_dispatcher = VoiceIntentDispatcher(self.service, self.repo)
