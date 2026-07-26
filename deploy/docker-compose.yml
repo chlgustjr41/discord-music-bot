@@ -48,6 +48,11 @@ services:
       LAVALINK_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
       FIREBASE_SERVICE_ACCOUNT_KEY: /run/secrets/firebase-service-account.json
       WEB_APP_URL: ${WEB_APP_URL:?set in .env}
+      # Voice control (opt-in). Dormant unless VOICE_CONTROL_ENABLED=true AND
+      # the listener is started via COMPOSE_PROFILES=voice — see .env.example.
+      VOICE_CONTROL_ENABLED: ${VOICE_CONTROL_ENABLED:-false}
+      VOICE_LISTENER_URL: http://voice-listener:8090
+      VOICE_INTERNAL_TOKEN: ${VOICE_INTERNAL_TOKEN:-}
     volumes:
       - ${FIREBASE_SERVICE_ACCOUNT_FILE:?set in .env}:/run/secrets/firebase-service-account.json:ro
     expose:
@@ -155,6 +160,39 @@ services:
         condition: service_healthy
       pot-provider:
         condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks: [jacky]
+
+  voice-listener:
+    # Voice control companion ("Jacky Ears"). Entire feature is opt-in:
+    # started only with COMPOSE_PROFILES=voice (VOICE_CONTROL_ENABLED on the
+    # bot side). Hard-capped so STT can never starve the music stack.
+    build: ../services/voice-listener
+    profiles: ["voice"]
+    restart: unless-stopped
+    mem_limit: 400m
+    cpus: 0.5
+    environment:
+      # Empty-default (not `:?`) on purpose: compose interpolates the whole
+      # file even for profiled-out services, so a `:?` guard here would abort
+      # the DEFAULT stack boot when these are unset. Kept optional so the base
+      # stack is unaffected; when the `voice` profile is active the listener is
+      # crash-only on empty tokens (fails fast, contained to this container).
+      DISCORD_EARS_TOKEN: ${DISCORD_EARS_TOKEN:-}
+      VOICE_INTERNAL_TOKEN: ${VOICE_INTERNAL_TOKEN:-}
+      BOT_INTENT_URL: http://bot:8080/voice-intent
+    expose:
+      - "8090"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8090/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     logging:
       driver: json-file
       options:

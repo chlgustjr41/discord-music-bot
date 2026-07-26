@@ -155,6 +155,10 @@ class PlayerService:
         self.history_buffer[guild.id] = []
         self.session_start[guild.id] = datetime.datetime.now(timezone.utc)
         self.start_listener(guild.id)
+        if getattr(self, "voice_notifier", None):
+            asyncio.create_task(
+                self.voice_notifier.session_started(guild.id, str(voice_channel.id))
+            )
         return code
 
     @staticmethod
@@ -226,6 +230,8 @@ class PlayerService:
         self._stopping.add(guild_id)
         try:
             self.stop_listener(guild_id)
+            if getattr(self, "voice_notifier", None):
+                asyncio.create_task(self.voice_notifier.session_ended(guild_id))
             await self.save_session_history(guild_id)
             await self.repo.invalidate_session_code(sid)
             state = await self.repo.get_state(sid) or {}

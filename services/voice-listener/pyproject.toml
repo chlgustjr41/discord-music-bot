@@ -1,0 +1,29 @@
+[project]
+name = "jacky-voice-listener"
+version = "0.1.0"
+description = "Jacky Ears — wake-word voice control companion"
+requires-python = ">=3.11"
+dependencies = [
+    "discord.py[voice]>=2.4",
+    "discord-ext-voice-recv>=0.5",
+    "vosk>=0.3.45",
+    "aiohttp>=3.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.4"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

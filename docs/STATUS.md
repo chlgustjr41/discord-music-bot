@@ -41,6 +41,16 @@
   not part of the rewrite and had been crash-looping. Code survives on
   branch `backup-stt-era-20260612` if ever wanted.
 
+## Optional features (off in production)
+
+- **Voice control ("Jacky Ears"):** wake-word voice commands via a second
+  Discord app + local Vosk STT (`services/voice-listener/`). **Not deployed** —
+  the compose service is behind `profiles: ["voice"]` and the bot side is gated
+  on `VOICE_CONTROL_ENABLED` (default false), so the running stack is unaffected.
+  Lives on branch `feat/voice-control` pending the soak checklist in a test
+  guild. Enable/disable/revert + Discord app setup + privacy note:
+  [voice-control runbook](operations/voice-control-runbook.md).
+
 ## Operator checklist (remaining)
 
 - [ ] External uptime monitor pointed at the VM (playbook F7) — the
