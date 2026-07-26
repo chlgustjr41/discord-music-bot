@@ -1,8 +1,13 @@
 """Jacky Ears Discord client: join/leave voice, receive audio, play earcons.
 
 Audio path (voice_recv callback thread -> asyncio):
-  AudioSink.write(user, data) -> Downsampler -> silence gate -> SpeakerEngine
-  engine events -> loop.call_soon_threadsafe -> earcon + ship_intent
+  AudioSink.write(user, data) -> opus decode -> Downsampler -> silence gate
+  -> SpeakerEngine -> loop.call_soon_threadsafe -> earcon + ship_intent
+
+We set wants_opus() = True and decode packets OURSELVES: voice_recv's own
+decoder runs inside the packet-router loop with no per-packet error handling,
+so a single "corrupted stream" OpusError there kills ALL listening (prod
+outage 2026-07-26). Decoding in write() lets us skip a bad packet instead.
 """
 
 import asyncio
@@ -11,6 +16,7 @@ from pathlib import Path
 
 import discord
 from discord.ext import voice_recv
+from discord.opus import Decoder, OpusError
 
 from ears.api import ship_intent
 from ears.config import Settings
@@ -31,39 +37,54 @@ class EarsSink(voice_recv.AudioSink):
         # `client` as a read-only property; assigning self.client raises
         # AttributeError and silently breaks sink attachment (prod outage 07-26).
         self.ears, self.guild_id, self.wake_phrase = ears, guild_id, wake_phrase
-        self.engines: dict[int, tuple[Downsampler, SpeakerEngine]] = {}
+        # Per-speaker (opus decoder, downsampler, engine) — all stateful across
+        # frames, so built once per user and reused.
+        self.streams: dict[int, tuple[Decoder, Downsampler, SpeakerEngine]] = {}
 
     def wants_opus(self) -> bool:
-        return False                      # receive decoded 48k stereo PCM
+        return True     # decode ourselves; see module docstring (crash-safety)
 
     def write(self, user, data: voice_recv.VoiceData) -> None:
+        # Skip bots BEFORE decoding: the music bot's Lavalink stream is both
+        # irrelevant (we only act on human speech) and the likely source of the
+        # "corrupted stream" packets — not decoding it avoids the error entirely
+        # and saves the CPU of decoding+STT on the music.
         if user is None or user.bot:
             return
-        if is_silence(data.pcm):
+        opus = data.opus
+        if not opus:
             return
-        # NB: not setdefault(user.id, self._new_engine()) — that eagerly builds
-        # (and discards) two Vosk recognizers on EVERY frame (~50/s/speaker).
-        pair = self.engines.get(user.id)
-        if pair is None:
-            pair = self.engines[user.id] = self._new_engine()
-        ds, eng = pair
-        event = eng.feed(ds.feed(data.pcm))
+        dec, ds, eng = self._stream_for(user.id)
+        try:
+            pcm = dec.decode(opus, fec=False)
+        except OpusError:
+            return          # skip this packet; a bad decode must never be fatal
+        if is_silence(pcm):
+            return
+        event = eng.feed(ds.feed(pcm))
         if event:
             self.ears.dispatch_event(self.guild_id, event)
 
-    def _new_engine(self) -> tuple[Downsampler, SpeakerEngine]:
-        model = self.ears.model
-        return Downsampler(), SpeakerEngine(
-            passive=VoskRecognizer(model, build_passive_grammar(self.wake_phrase)),
-            active=VoskRecognizer(model, build_active_grammar()),
-            wake_phrase=self.wake_phrase,
-            active_window_seconds=self.ears.settings.active_window_seconds,
-        )
+    def _stream_for(self, user_id: int) -> tuple[Decoder, Downsampler, SpeakerEngine]:
+        st = self.streams.get(user_id)
+        if st is None:
+            model = self.ears.model
+            st = self.streams[user_id] = (
+                Decoder(),
+                Downsampler(),
+                SpeakerEngine(
+                    passive=VoskRecognizer(model, build_passive_grammar(self.wake_phrase)),
+                    active=VoskRecognizer(model, build_active_grammar()),
+                    wake_phrase=self.wake_phrase,
+                    active_window_seconds=self.ears.settings.active_window_seconds,
+                ),
+            )
+        return st
 
     def cleanup(self) -> None:
         # AudioSink.__del__ calls this; guard so a partially-constructed sink
         # never raises during garbage collection.
-        getattr(self, "engines", {}).clear()
+        getattr(self, "streams", {}).clear()
 
 
 class EarsClient(discord.Client):

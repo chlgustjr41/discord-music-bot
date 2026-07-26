@@ -2,12 +2,19 @@
 
 gateway.py is thin Discord I/O, but EarsSink's construction and per-speaker
 fan-out are pure enough to test without a live voice connection — and MUST be,
-because the base voice_recv.AudioSink defines `client` as a read-only property:
-assigning self.client in __init__ raised AttributeError and silently broke the
-whole feature in production (the sink never attached, so no audio was processed).
+because two production outages hid here:
+
+1. The base voice_recv.AudioSink defines `client` as a read-only property, so
+   assigning self.client in __init__ raised AttributeError and the sink never
+   attached (no audio processed at all).
+2. voice_recv's own opus decode runs in the packet-router loop with no
+   per-packet error handling, so one "corrupted stream" OpusError killed all
+   listening. We now decode in write() (wants_opus=True) and skip bad packets.
 """
 
 import struct
+
+from discord.opus import OpusError
 
 from ears.gateway import EarsSink
 
@@ -23,8 +30,8 @@ class FakeEarsClient:
 
 
 class FakeVoiceData:
-    def __init__(self, pcm: bytes):
-        self.pcm = pcm
+    def __init__(self, opus: bytes):
+        self.opus = opus
 
 
 class FakeUser:
@@ -32,24 +39,65 @@ class FakeUser:
         self.id, self.bot = uid, bot
 
 
-def _loud_frame() -> bytes:
+def _loud_pcm() -> bytes:
     # 20 ms of full-amplitude 48k stereo s16le — well above the silence gate.
     return struct.pack("<hh", 20000, 20000) * 960
+
+
+class FakeDecoder:
+    def __init__(self, pcm: bytes | None = None, raises: bool = False):
+        self._pcm, self._raises = pcm or _loud_pcm(), raises
+
+    def decode(self, opus, *, fec=False):
+        if self._raises:
+            # __new__ bypasses OpusError.__init__, which needs libopus loaded
+            # (absent in the local test env); the `except OpusError` in write()
+            # still matches by type. Real decodes on the VM raise it normally.
+            raise OpusError.__new__(OpusError)
+        return self._pcm
+
+
+class FakeDS:
+    def feed(self, pcm):
+        return pcm
+
+
+class FakeEngine:
+    def __init__(self, event=("wake", None)):
+        self.event = event
+
+    def feed(self, pcm):
+        return self.event
 
 
 def test_sink_constructs_without_client_property_collision():
     """The bug: assigning self.client shadowed AudioSink's read-only property."""
     sink = EarsSink(FakeEarsClient(), "1", "hey jacky")
-    assert sink.engines == {}
+    assert sink.streams == {}
     assert sink.wake_phrase == "hey jacky"
     assert sink.guild_id == "1"
 
 
-def test_sink_skips_silence_and_bots():
+def test_wants_opus_true():
+    """Must be True so voice_recv doesn't decode in its fatal loop."""
+    assert EarsSink(FakeEarsClient(), "1", "hey jacky").wants_opus() is True
+
+
+def test_sink_skips_bots_and_empty_packets():
     client = FakeEarsClient()
     sink = EarsSink(client, "1", "hey jacky")
-    sink.write(FakeUser(42, bot=True), FakeVoiceData(_loud_frame()))   # bot
-    sink.write(FakeUser(43), FakeVoiceData(b"\x00\x00" * 1920))        # silence
+    sink.streams[99] = (FakeDecoder(), FakeDS(), FakeEngine())
+    sink.write(FakeUser(99, bot=True), FakeVoiceData(b"\xfe\xff"))   # bot
+    sink.write(FakeUser(99), FakeVoiceData(b""))                     # empty
+    assert client.dispatched == []
+
+
+def test_corrupt_packet_is_skipped_not_fatal():
+    """A decode error must NOT propagate (that killed the whole loop in prod)."""
+    client = FakeEarsClient()
+    sink = EarsSink(client, "1", "hey jacky")
+    sink.streams[42] = (FakeDecoder(raises=True), FakeDS(), FakeEngine())
+    sink.write(FakeUser(42), FakeVoiceData(b"\x01\x02\x03"))   # must not raise
     assert client.dispatched == []
 
 
@@ -57,22 +105,13 @@ def test_sink_write_dispatches_engine_events():
     """A recognized event from a speaker's engine reaches the client."""
     client = FakeEarsClient()
     sink = EarsSink(client, "7", "hey jacky")
-
-    class FakeDS:
-        def feed(self, pcm):
-            return pcm
-
-    class FakeEngine:
-        def feed(self, pcm):
-            return ("wake", None)
-
-    sink.engines[42] = (FakeDS(), FakeEngine())   # inject: no Vosk model needed
-    sink.write(FakeUser(42), FakeVoiceData(_loud_frame()))
+    sink.streams[42] = (FakeDecoder(), FakeDS(), FakeEngine(("wake", None)))
+    sink.write(FakeUser(42), FakeVoiceData(b"\x01\x02\x03"))
     assert client.dispatched == [("7", ("wake", None))]
 
 
 def test_cleanup_is_safe_before_full_init():
-    """AudioSink.__del__ calls cleanup(); it must never raise even if engines
+    """AudioSink.__del__ calls cleanup(); it must never raise even if streams
     was never set (construction failed partway)."""
     sink = EarsSink.__new__(EarsSink)   # skip __init__
     sink.cleanup()                       # must not raise
