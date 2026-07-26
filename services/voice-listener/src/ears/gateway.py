@@ -63,7 +63,8 @@ class EarsSink(voice_recv.AudioSink):
             return          # skip this packet; a bad decode must never be fatal
         silent = is_silence(pcm)
         if self.ears.settings.debug:
-            self._debug_frame(user, pcm, silent)
+            seq = getattr(getattr(data, "packet", None), "sequence", 0) or 0
+            self._debug_frame(user, seq, opus, pcm, silent)
         # Do NOT drop silence here: the engine needs the trailing silence to
         # know an utterance ended (Vosk won't endpoint on its own). We only
         # flag it so the engine can detect the pause.
@@ -89,40 +90,49 @@ class EarsSink(voice_recv.AudioSink):
             )
         return st
 
-    def _debug_frame(self, user, pcm: bytes, silent: bool) -> None:
-        """VOICE_DEBUG: per-speaker rx stats + a bounded WAV capture so the exact
-        LIVE audio can be replayed through the recognizer offline."""
+    def _debug_frame(self, user, seq: int, opus: bytes, pcm: bytes, silent: bool) -> None:
+        """VOICE_DEBUG: per-speaker rx stats + a bounded capture of BOTH the
+        decoded WAV and the raw opus payloads (seq + length prefixed), so the
+        live audio can be replayed and re-decoded every possible way offline."""
         import audioop
+        import struct
         d = self._dbg.get(user.id)
         if d is None:
             cap = self.ears.settings.debug_capture_seconds * 50   # 50 frames/s
-            path = f"/tmp/voicedbg/{self.guild_id}_{user.id}.wav"
+            base = f"/tmp/voicedbg/{self.guild_id}_{user.id}"
             Path("/tmp/voicedbg").mkdir(parents=True, exist_ok=True)
-            wav = wave.open(path, "wb")
+            wav = wave.open(base + ".wav", "wb")
             wav.setnchannels(2)
             wav.setsampwidth(2)
             wav.setframerate(48000)
             d = self._dbg[user.id] = {"n": 0, "sil": 0, "wav": wav,
+                                      "opus": open(base + ".opusbin", "wb"),
                                       "cap": cap, "name": getattr(user, "name", "?")}
-            log.info("[dbg] capturing %s frames of %s -> %s", cap, d["name"], path)
+            log.info("[dbg] capturing %s frames of %s -> %s.*", cap, d["name"], base)
         d["n"] += 1
         d["sil"] += 1 if silent else 0
-        if d["wav"] and d["n"] <= d["cap"]:
-            d["wav"].writeframes(pcm)
+        if d["n"] <= d["cap"]:
+            if d["wav"]:
+                d["wav"].writeframes(pcm)
+            if d["opus"]:
+                d["opus"].write(struct.pack("<HH", seq, len(opus)) + opus)
             if d["n"] == d["cap"]:
                 d["wav"].close()
-                d["wav"] = None
+                d["opus"].close()
+                d["wav"] = d["opus"] = None
                 log.info("[dbg] capture complete for %s (%s frames)", d["name"], d["cap"])
         if d["n"] % 50 == 0:      # ~1s
-            log.info("[dbg] rx %s: frames=%d silent=%d%% rms_last=%d",
-                     d["name"], d["n"], 100 * d["sil"] // d["n"], audioop.rms(pcm, 2))
+            log.info("[dbg] rx %s: frames=%d silent=%d%% rms_last=%d opus_len=%d",
+                     d["name"], d["n"], 100 * d["sil"] // d["n"], audioop.rms(pcm, 2),
+                     len(opus))
 
     def cleanup(self) -> None:
         # AudioSink.__del__ calls this; guard so a partially-constructed sink
         # never raises during garbage collection.
         for d in getattr(self, "_dbg", {}).values():
-            if d.get("wav"):
-                d["wav"].close()
+            for key in ("wav", "opus"):
+                if d.get(key):
+                    d[key].close()
         getattr(self, "streams", {}).clear()
 
 
