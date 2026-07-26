@@ -24,13 +24,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: cp deploy/.env.example deploy/.env
-      - name: Voice profile is opt-in (kill-switch)
-        # No secrets: config-only. Proves the voice-listener service is absent
-        # from the default stack and appears only under the `voice` profile, so
-        # the whole feature stays dormant unless deliberately enabled.
-        run: |
-          $COMPOSE config --services | grep -qx voice-listener && { echo "voice-listener must NOT be in the default stack"; exit 1; } || true
-          COMPOSE_PROFILES=voice $COMPOSE config --services | grep -qx voice-listener || { echo "voice profile did not enable voice-listener"; exit 1; }
       - name: Boot audio infrastructure
         run: $COMPOSE up -d --build lavalink pot-provider token-minter
       - name: Guardian boots and probes (hard gate)

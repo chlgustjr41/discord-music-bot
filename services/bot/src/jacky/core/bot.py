@@ -84,9 +84,6 @@ class JackyBot(commands.Bot):
         self.node: LavalinkNode | None = None
         self.node_provider: SingleNodeProvider | None = None
         self.service: PlayerService | None = None
-        # Voice control stays dormant unless settings.voice_control_enabled.
-        self.voice_notifier = None
-        self.voice_dispatcher = None
         self._health_runner = None
 
     async def setup_hook(self) -> None:
@@ -119,38 +116,12 @@ class JackyBot(commands.Bot):
         self.node.on_voice_ws_closed = self.service.on_voice_ws_closed
         self.node.start()
 
-        # Voice control (dormant unless enabled): construct dispatcher/notifier
-        # only when the flag is on, attach the notifier to the service, and
-        # register the wake cog. Nothing below runs when the flag is off.
-        extensions = list(EXTENSIONS)
-        if self.settings.voice_control_enabled and not self.settings.voice_internal_token:
-            # Refuse to stand up the /voice-intent endpoint with an empty shared
-            # secret — the X-Voice-Token check would be a no-op, leaving playback
-            # control open to anything on the internal network. Degrade to
-            # voice-off rather than crash the production bot.
-            log.error(
-                "voice control enabled but VOICE_INTERNAL_TOKEN is empty; "
-                "disabling voice control (would expose an unauthenticated endpoint)"
-            )
-        elif self.settings.voice_control_enabled:
-            from jacky.voice_control import ListenerNotifier, VoiceIntentDispatcher
-
-            self.voice_dispatcher = VoiceIntentDispatcher(self.service, self.repo)
-            self.voice_notifier = ListenerNotifier(
-                self.settings.voice_listener_url,
-                self.settings.voice_internal_token,
-                self.repo,
-            )
-            self.service.voice_notifier = self.voice_notifier
-            extensions.append("jacky.commands.wake")
-
-        for ext in extensions:
+        for ext in EXTENSIONS:
             await self.load_extension(ext)
         self.summon_watcher = SummonWatcher(self, self.repo, self.service)
         self.summon_watcher.start()
         self._health_runner = await start_health_server(
-            self, self.service, self.settings.health_port,
-            self.voice_dispatcher, self.settings.voice_internal_token,
+            self, self.service, self.settings.health_port
         )
 
     async def on_ready(self) -> None:

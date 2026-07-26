@@ -24,10 +24,9 @@ test: ## Run all unit tests
 	cd services/bot && python -m pytest tests/ -q
 	cd services/guardian && python -m pytest tests/ -q
 	cd services/token-minter && python -m pytest tests/ -q
-	cd services/voice-listener && python -m pytest tests/ -q
 
 lint: ## Ruff over all services
-	ruff check services/bot services/guardian services/token-minter services/voice-listener
+	ruff check services/bot services/guardian services/token-minter
 
 build: ## Build all images without starting
 	$(COMPOSE) build
