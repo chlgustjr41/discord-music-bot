@@ -69,8 +69,10 @@ jobs:
         # daily schedule run — that is the canary, and it must turn red when
         # Google-side minting breaks.
         # 120s ceiling is enough because token-minter's depends_on gates on a
-        # healthy pot-provider, so the first cycle no longer loses the boot
-        # race (a real mint takes ~15-30s, ADR-0004).
+        # healthy pot-provider AND a healthy lavalink (push target), so the
+        # first cycle no longer loses either boot race (a real mint takes
+        # ~15-30s, ADR-0004). The cycle completes before the synthetic step
+        # stops the minter, so this grep reads it from the retained logs.
         continue-on-error: ${{ github.event_name != 'schedule' }}
         run: |
           for i in $(seq 1 24); do

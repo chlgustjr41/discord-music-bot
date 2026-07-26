@@ -145,11 +145,14 @@ services:
     volumes:
       - tokens:/data/tokens
     depends_on:
+      # A mint cycle is mint (pot-provider) + push (lavalink REST), so BOTH
+      # dependencies must be healthy or the first cycle loses a boot race and
+      # the poToken layer stays dark for the whole 300s retry window.
+      # service_started was not enough for lavalink: the container exists long
+      # before the JVM listens on 2333 (daily Integration canary red since
+      # 2026-07-04 with "Cannot connect to host lavalink:2333").
       lavalink:
-        condition: service_started
-      # Gating on a healthy provider kills the first-boot race: without it
-      # the minter's first cycle loses to the node server's startup and the
-      # poToken layer stays dark for the whole 300s retry window.
+        condition: service_healthy
       pot-provider:
         condition: service_healthy
     logging:
