@@ -19,8 +19,11 @@ def tone(freqs: list[tuple[float, float]], amp: float = 0.35) -> bytes:
     return bytes(out)
 
 EARCONS = {
-    "ack.wav": [(660, 0.09), (880, 0.12)],       # rising: "listening"
-    "confirm.wav": [(880, 0.08)],                # blip: "done"
+    # Wake confirmation ("I heard you — now listening"): a bright rising
+    # two-tone ring (G5 · gap · C6 · E6) so it clearly stands out over music
+    # and reads as an "active listening" cue. freq=0 renders as a short gap.
+    "ack.wav": [(784, 0.10), (0, 0.04), (1047, 0.12), (1319, 0.16)],
+    "confirm.wav": [(880, 0.08)],                # blip: "command done"
     "error.wav": [(220, 0.18)],                  # low buzz: "didn't get that"
 }
 
