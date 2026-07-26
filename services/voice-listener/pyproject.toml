@@ -5,7 +5,10 @@ description = "Jacky Ears — wake-word voice control companion"
 requires-python = ">=3.11"
 dependencies = [
     "discord.py[voice]>=2.4",
-    "discord-ext-voice-recv>=0.5",
+    # Pinned to an exact pre-release: this project publishes ONLY alphas, and
+    # pip won't match a `>=0.5` spec against pre-releases in a clean build
+    # (the wheel resolves locally only when already cached). Bump deliberately.
+    "discord-ext-voice-recv==0.5.2a179",
     "vosk>=0.3.45",
     "aiohttp>=3.9",
 ]
