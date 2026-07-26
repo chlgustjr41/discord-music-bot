@@ -25,9 +25,12 @@ ASSETS = Path(__file__).resolve().parent.parent.parent / "assets"
 class EarsSink(voice_recv.AudioSink):
     """Fan out per-speaker PCM into engines. Runs on voice-recv's thread."""
 
-    def __init__(self, client: "EarsClient", guild_id: str, wake_phrase: str):
+    def __init__(self, ears: "EarsClient", guild_id: str, wake_phrase: str):
         super().__init__()
-        self.client, self.guild_id, self.wake_phrase = client, guild_id, wake_phrase
+        # NB: attribute is `ears`, NOT `client` — voice_recv.AudioSink defines
+        # `client` as a read-only property; assigning self.client raises
+        # AttributeError and silently breaks sink attachment (prod outage 07-26).
+        self.ears, self.guild_id, self.wake_phrase = ears, guild_id, wake_phrase
         self.engines: dict[int, tuple[Downsampler, SpeakerEngine]] = {}
 
     def wants_opus(self) -> bool:
@@ -46,19 +49,21 @@ class EarsSink(voice_recv.AudioSink):
         ds, eng = pair
         event = eng.feed(ds.feed(data.pcm))
         if event:
-            self.client.dispatch_event(self.guild_id, event)
+            self.ears.dispatch_event(self.guild_id, event)
 
     def _new_engine(self) -> tuple[Downsampler, SpeakerEngine]:
-        model = self.client.model
+        model = self.ears.model
         return Downsampler(), SpeakerEngine(
             passive=VoskRecognizer(model, build_passive_grammar(self.wake_phrase)),
             active=VoskRecognizer(model, build_active_grammar()),
             wake_phrase=self.wake_phrase,
-            active_window_seconds=self.client.settings.active_window_seconds,
+            active_window_seconds=self.ears.settings.active_window_seconds,
         )
 
     def cleanup(self) -> None:
-        self.engines.clear()
+        # AudioSink.__del__ calls this; guard so a partially-constructed sink
+        # never raises during garbage collection.
+        getattr(self, "engines", {}).clear()
 
 
 class EarsClient(discord.Client):
