@@ -19,6 +19,9 @@ class StubGateway:
         self.calls.append(("leave", guild_id))
     def knows_word(self, w: str) -> bool:
         return w in self.vocab
+    def status(self) -> dict:
+        return {"guilds": {"1": {"channel": "General", "wake_phrase": "hey jacky",
+                                 "speakers": 0, "connected": True}}}
 
 
 @pytest.fixture
@@ -67,6 +70,19 @@ async def test_health_open(client):
     c, _ = client
     r = await c.get("/health")
     assert r.status == 200
+
+
+async def test_status_requires_auth(client):
+    c, _ = client
+    assert (await c.get("/status")).status == 401
+
+
+async def test_status_returns_gateway_state(client):
+    c, _ = client
+    r = await c.get("/status", headers={"X-Voice-Token": "sekrit"})
+    assert r.status == 200
+    body = await r.json()
+    assert body["guilds"]["1"]["wake_phrase"] == "hey jacky"
 
 
 async def test_ship_intent_success():

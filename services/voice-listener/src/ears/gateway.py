@@ -95,6 +95,7 @@ class EarsClient(discord.Client):
         self.model = None                 # vosk.Model, loaded in setup_hook
         self.http_session = None          # aiohttp.ClientSession
         self._vocab: set[str] = set()
+        self._sinks: dict[str, EarsSink] = {}   # guild_id -> active sink (for /status)
 
     async def setup_hook(self) -> None:
         import aiohttp
@@ -115,14 +116,31 @@ class EarsClient(discord.Client):
             log.warning("join ignored: channel %s not visible", channel_id)
             return
         vc = await channel.connect(cls=voice_recv.VoiceRecvClient)
-        vc.listen(EarsSink(self, guild_id, wake_phrase))
+        sink = EarsSink(self, guild_id, wake_phrase)
+        vc.listen(sink)
+        self._sinks[guild_id] = sink
         log.info("listening in guild %s channel %s (wake=%r)",
                  guild_id, channel_id, wake_phrase)
 
     async def leave(self, guild_id: str) -> None:
+        self._sinks.pop(guild_id, None)
         guild = self.get_guild(int(guild_id))
         if guild and guild.voice_client:
             await guild.voice_client.disconnect(force=True)
+
+    def status(self) -> dict:
+        """Per-guild listener state for the bot's j!ears diagnostic command."""
+        guilds = {}
+        for gid, sink in self._sinks.items():
+            guild = self.get_guild(int(gid))
+            vc = guild.voice_client if guild else None
+            guilds[gid] = {
+                "channel": vc.channel.name if vc and vc.channel else None,
+                "wake_phrase": sink.wake_phrase,
+                "speakers": len(sink.streams),
+                "connected": bool(vc and vc.is_connected()),
+            }
+        return {"guilds": guilds}
 
     # -- engine events (called from sink thread) ------------------------------
     def dispatch_event(self, guild_id: str, event) -> None:

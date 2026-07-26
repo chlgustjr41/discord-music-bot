@@ -16,6 +16,7 @@ class Gateway(Protocol):
     async def join(self, guild_id: str, channel_id: str, wake_phrase: str) -> None: ...
     async def leave(self, guild_id: str) -> None: ...
     def knows_word(self, word: str) -> bool: ...
+    def status(self) -> dict: ...
 
 
 def build_app(gateway: Gateway, internal_token: str) -> web.Application:
@@ -43,9 +44,13 @@ def build_app(gateway: Gateway, internal_token: str) -> web.Application:
     async def health(_r: web.Request) -> web.Response:
         return web.json_response({"status": "ok"})
 
+    async def status(_r: web.Request) -> web.Response:
+        # Auth-gated (reveals guild/channel names); powers the bot's j!ears.
+        return web.json_response(gateway.status())
+
     app = web.Application(middlewares=[auth])
     app.add_routes([web.post("/session", session), web.post("/validate", validate),
-                    web.get("/health", health)])
+                    web.get("/health", health), web.get("/status", status)])
     return app
 
 

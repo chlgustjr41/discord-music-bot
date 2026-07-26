@@ -90,3 +90,15 @@ class ListenerNotifier:
 
     async def validate_phrase(self, phrase: str) -> dict | None:
         return await self._post("/validate", {"phrase": phrase})
+
+    async def get_status(self) -> dict | None:
+        """GET the listener's per-guild state (for j!ears). None if offline."""
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"{self.base_url}/status",
+                                 headers={"X-Voice-Token": self.token},
+                                 timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    return await r.json() if r.status == 200 else None
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            log.warning("listener status failed: %s", exc)
+            return None

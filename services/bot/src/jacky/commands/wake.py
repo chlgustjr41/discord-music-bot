@@ -40,6 +40,35 @@ class Wake(commands.Cog):
             await self.notifier.session_started(ctx.guild.id, state["voiceChannelId"])
         await ctx.send(embed=success_embed(f'Wake phrase set to **"{phrase}"**'))
 
+    @commands.command(name="ears", brief="Check the voice-control (Hey Jacky) listener")
+    async def ears(self, ctx: commands.Context) -> None:
+        """Report whether Jacky Ears is listening here, and how to test it."""
+        sid = str(ctx.guild.id)
+        state = await self.repo.get_state(sid) or {}
+        phrase = state.get("wakePhrase") or "hey jacky"
+        status = await self.notifier.get_status()
+        if status is None:
+            await ctx.send(embed=error_embed(
+                "🔇 Jacky Ears (voice control) is **offline**. It only runs when the "
+                "stack is started with the `voice` profile."
+            ))
+            return
+        here = (status.get("guilds") or {}).get(sid)
+        if not here or not here.get("connected"):
+            await ctx.send(embed=error_embed(
+                "🎧 Jacky Ears is online but **not in a voice channel here**.\n"
+                f"Run `j!start` to open a session (it joins automatically), then say "
+                f'**"{phrase}"** and a command.'
+            ))
+            return
+        await ctx.send(embed=success_embed(
+            f"🎤 **Jacky Ears is listening** in **{here['channel']}**.\n"
+            f'Wake phrase: **"{here["wake_phrase"]}"**\n\n'
+            f'**To test:** say **"{here["wake_phrase"]}"**, wait for the ring tone, '
+            f"then a command — *skip*, *pause*, *resume*, *volume up*, *volume down*, "
+            f"*stop*, or *play <song>*."
+        ))
+
 
 async def setup(bot: commands.Bot) -> None:
     if getattr(bot, "voice_notifier", None):
