@@ -59,9 +59,10 @@ class EarsSink(voice_recv.AudioSink):
             pcm = dec.decode(opus, fec=False)
         except OpusError:
             return          # skip this packet; a bad decode must never be fatal
-        if is_silence(pcm):
-            return
-        event = eng.feed(ds.feed(pcm))
+        # Do NOT drop silence here: the engine needs the trailing silence to
+        # know an utterance ended (Vosk won't endpoint on its own). We only
+        # flag it so the engine can detect the pause.
+        event = eng.feed(ds.feed(pcm), is_silence(pcm))
         if event:
             self.ears.dispatch_event(self.guild_id, event)
 

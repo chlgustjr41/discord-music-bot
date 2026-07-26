@@ -65,8 +65,10 @@ class FakeDS:
 class FakeEngine:
     def __init__(self, event=("wake", None)):
         self.event = event
+        self.calls = []
 
-    def feed(self, pcm):
+    def feed(self, pcm, silent):
+        self.calls.append(silent)
         return self.event
 
 
