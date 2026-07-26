@@ -1,13 +1,17 @@
 """Jacky Ears Discord client: join/leave voice, receive audio, play earcons.
 
 Audio path (voice_recv callback thread -> asyncio):
-  AudioSink.write(user, data) -> opus decode -> Downsampler -> silence gate
-  -> SpeakerEngine -> loop.call_soon_threadsafe -> earcon + ship_intent
+  AudioSink.write(user, data) -> data.pcm -> Downsampler -> SpeakerEngine
+  -> loop.call_soon_threadsafe -> earcon + ship_intent
 
-We set wants_opus() = True and decode packets OURSELVES: voice_recv's own
-decoder runs inside the packet-router loop with no per-packet error handling,
-so a single "corrupted stream" OpusError there kills ALL listening (prod
-outage 2026-07-26). Decoding in write() lets us skip a bad packet instead.
+We let voice_recv DECODE the opus (wants_opus() = False) and consume data.pcm.
+Decoding opus ourselves per-packet desyncs the stateful decoder (no ordering,
+FEC or packet-loss concealment), which turns live speech into saturated garbage
+that Vosk can't read (2026-07-26 investigation). voice_recv's decoder does all
+that correctly. The only reason we ever decoded ourselves was to dodge a crash:
+voice_recv's packet-router loop has no per-packet error handling, so one
+"corrupted stream" OpusError (e.g. the music bot's Lavalink stream) kills ALL
+listening. We fix THAT at the source with a crash-safe decode wrapper below.
 """
 
 import asyncio
@@ -28,6 +32,33 @@ from ears.pipeline import Downsampler, is_silence
 log = logging.getLogger("ears.gateway")
 ASSETS = Path(__file__).resolve().parent.parent.parent / "assets"
 
+# One 20 ms frame of 48 kHz stereo s16le silence (960 samples * 2ch * 2 bytes).
+_SILENT_FRAME = b"\x00" * 3840
+
+
+def _crash_safe_decode(original):
+    """Wrap Decoder.decode so an OpusError yields silence instead of raising."""
+    def decode(self, data, *, fec=False):
+        try:
+            return original(self, data, fec=fec)
+        except OpusError:
+            log.debug("opus decode error -> emitting silence")
+            return _SILENT_FRAME
+    decode._crash_safe = True
+    return decode
+
+
+def _install_crash_safe_opus_decode() -> None:
+    """Make Decoder.decode never raise: voice_recv decodes inside a packet-router
+    loop that dies on any exception, so a single corrupted packet would stop all
+    listening. Return silence instead — the loop (and every other speaker) lives.
+    Idempotent."""
+    if not getattr(Decoder.decode, "_crash_safe", False):
+        Decoder.decode = _crash_safe_decode(Decoder.decode)
+
+
+_install_crash_safe_opus_decode()
+
 
 class EarsSink(voice_recv.AudioSink):
     """Fan out per-speaker PCM into engines. Runs on voice-recv's thread."""
@@ -38,33 +69,27 @@ class EarsSink(voice_recv.AudioSink):
         # `client` as a read-only property; assigning self.client raises
         # AttributeError and silently breaks sink attachment (prod outage 07-26).
         self.ears, self.guild_id, self.wake_phrase = ears, guild_id, wake_phrase
-        # Per-speaker (opus decoder, downsampler, engine) — all stateful across
-        # frames, so built once per user and reused.
-        self.streams: dict[int, tuple[Decoder, Downsampler, SpeakerEngine]] = {}
+        # Per-speaker (downsampler, engine) — both stateful across frames, so
+        # built once per user and reused. voice_recv owns the opus decoder.
+        self.streams: dict[int, tuple[Downsampler, SpeakerEngine]] = {}
         self._dbg: dict[int, dict] = {}     # per-user diagnostics (VOICE_DEBUG)
 
     def wants_opus(self) -> bool:
-        return True     # decode ourselves; see module docstring (crash-safety)
+        return False    # voice_recv decodes (correct ordering/FEC/PLC); we read pcm
 
     def write(self, user, data: voice_recv.VoiceData) -> None:
-        # Skip bots BEFORE decoding: the music bot's Lavalink stream is both
-        # irrelevant (we only act on human speech) and the likely source of the
-        # "corrupted stream" packets — not decoding it avoids the error entirely
-        # and saves the CPU of decoding+STT on the music.
+        # Only humans: the music bot's Lavalink stream is irrelevant (we act on
+        # speech, not music) and would just waste decode+STT CPU.
         if user is None or user.bot:
             return
-        opus = data.opus
-        if not opus:
+        pcm = data.pcm           # 48 kHz stereo s16le, decoded by voice_recv
+        if not pcm:
             return
-        dec, ds, eng = self._stream_for(user.id)
-        try:
-            pcm = dec.decode(opus, fec=False)
-        except OpusError:
-            return          # skip this packet; a bad decode must never be fatal
+        ds, eng = self._stream_for(user.id)
         silent = is_silence(pcm)
         if self.ears.settings.debug:
             seq = getattr(getattr(data, "packet", None), "sequence", 0) or 0
-            self._debug_frame(user, seq, opus, pcm, silent)
+            self._debug_frame(user, seq, data.opus or b"", pcm, silent)
         # Do NOT drop silence here: the engine needs the trailing silence to
         # know an utterance ended (Vosk won't endpoint on its own). We only
         # flag it so the engine can detect the pause.
@@ -72,12 +97,11 @@ class EarsSink(voice_recv.AudioSink):
         if event:
             self.ears.dispatch_event(self.guild_id, event)
 
-    def _stream_for(self, user_id: int) -> tuple[Decoder, Downsampler, SpeakerEngine]:
+    def _stream_for(self, user_id: int) -> tuple[Downsampler, SpeakerEngine]:
         st = self.streams.get(user_id)
         if st is None:
             model = self.ears.model
             st = self.streams[user_id] = (
-                Decoder(),
                 Downsampler(),
                 SpeakerEngine(
                     passive=VoskRecognizer(model, build_passive_grammar(self.wake_phrase)),

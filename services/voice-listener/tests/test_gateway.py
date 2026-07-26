@@ -37,7 +37,8 @@ class FakeEarsClient:
 
 
 class FakeVoiceData:
-    def __init__(self, opus: bytes):
+    def __init__(self, pcm: bytes, opus: bytes = b""):
+        self.pcm = pcm
         self.opus = opus
 
 
@@ -49,19 +50,6 @@ class FakeUser:
 def _loud_pcm() -> bytes:
     # 20 ms of full-amplitude 48k stereo s16le — well above the silence gate.
     return struct.pack("<hh", 20000, 20000) * 960
-
-
-class FakeDecoder:
-    def __init__(self, pcm: bytes | None = None, raises: bool = False):
-        self._pcm, self._raises = pcm or _loud_pcm(), raises
-
-    def decode(self, opus, *, fec=False):
-        if self._raises:
-            # __new__ bypasses OpusError.__init__, which needs libopus loaded
-            # (absent in the local test env); the `except OpusError` in write()
-            # still matches by type. Real decodes on the VM raise it normally.
-            raise OpusError.__new__(OpusError)
-        return self._pcm
 
 
 class FakeDS:
@@ -87,35 +75,45 @@ def test_sink_constructs_without_client_property_collision():
     assert sink.guild_id == "1"
 
 
-def test_wants_opus_true():
-    """Must be True so voice_recv doesn't decode in its fatal loop."""
-    assert EarsSink(FakeEarsClient(), "1", "hey jacky").wants_opus() is True
+def test_wants_opus_false():
+    """False so voice_recv does the correct (ordered/FEC/PLC) opus decode."""
+    assert EarsSink(FakeEarsClient(), "1", "hey jacky").wants_opus() is False
 
 
-def test_sink_skips_bots_and_empty_packets():
+def test_sink_skips_bots_and_empty_pcm():
     client = FakeEarsClient()
     sink = EarsSink(client, "1", "hey jacky")
-    sink.streams[99] = (FakeDecoder(), FakeDS(), FakeEngine())
-    sink.write(FakeUser(99, bot=True), FakeVoiceData(b"\xfe\xff"))   # bot
-    sink.write(FakeUser(99), FakeVoiceData(b""))                     # empty
+    sink.streams[99] = (FakeDS(), FakeEngine())
+    sink.write(FakeUser(99, bot=True), FakeVoiceData(_loud_pcm()))   # bot
+    sink.write(FakeUser(99), FakeVoiceData(b""))                     # empty pcm
     assert client.dispatched == []
 
 
-def test_corrupt_packet_is_skipped_not_fatal():
-    """A decode error must NOT propagate (that killed the whole loop in prod)."""
-    client = FakeEarsClient()
-    sink = EarsSink(client, "1", "hey jacky")
-    sink.streams[42] = (FakeDecoder(raises=True), FakeDS(), FakeEngine())
-    sink.write(FakeUser(42), FakeVoiceData(b"\x01\x02\x03"))   # must not raise
-    assert client.dispatched == []
+def test_crash_safe_decode_returns_silence_on_opuserror():
+    """The wrapper must swallow OpusError (that crash killed all listening)."""
+    from ears.gateway import _SILENT_FRAME, _crash_safe_decode
+
+    def raising(self, data, *, fec=False):
+        raise OpusError.__new__(OpusError)   # __new__ skips libopus-needing init
+
+    assert _crash_safe_decode(raising)(object(), b"x") == _SILENT_FRAME
+
+
+def test_crash_safe_decode_passes_through_success():
+    from ears.gateway import _crash_safe_decode
+
+    def ok(self, data, *, fec=False):
+        return b"pcm-out"
+
+    assert _crash_safe_decode(ok)(object(), b"x") == b"pcm-out"
 
 
 def test_sink_write_dispatches_engine_events():
     """A recognized event from a speaker's engine reaches the client."""
     client = FakeEarsClient()
     sink = EarsSink(client, "7", "hey jacky")
-    sink.streams[42] = (FakeDecoder(), FakeDS(), FakeEngine(("wake", None)))
-    sink.write(FakeUser(42), FakeVoiceData(b"\x01\x02\x03"))
+    sink.streams[42] = (FakeDS(), FakeEngine(("wake", None)))
+    sink.write(FakeUser(42), FakeVoiceData(_loud_pcm()))
     assert client.dispatched == [("7", ("wake", None))]
 
 
