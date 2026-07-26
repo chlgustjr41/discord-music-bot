@@ -19,11 +19,18 @@ from discord.opus import OpusError
 from ears.gateway import EarsSink
 
 
+class FakeSettings:
+    debug = False
+    debug_capture_seconds = 20
+    active_window_seconds = 5.0
+
+
 class FakeEarsClient:
     """Stands in for EarsClient: only the attributes EarsSink touches."""
 
     def __init__(self):
         self.dispatched: list = []
+        self.settings = FakeSettings()
 
     def dispatch_event(self, guild_id, event):
         self.dispatched.append((guild_id, event))

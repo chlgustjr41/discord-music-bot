@@ -12,6 +12,8 @@ class Settings:
     api_port: int
     model_path: str
     active_window_seconds: float
+    debug: bool
+    debug_capture_seconds: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -31,6 +33,11 @@ class Settings:
             api_port=int(os.environ.get("EARS_API_PORT", "8090")),
             model_path=os.environ.get("VOSK_MODEL_PATH", "/models/vosk-small-en"),
             active_window_seconds=float(os.environ.get("ACTIVE_WINDOW_SECONDS", "5")),
+            # VOICE_DEBUG turns on per-speaker rx stats, finalization transcript
+            # logging, and a bounded WAV capture of decoded audio for offline
+            # analysis. Off by default; a diagnostic toggle, not a prod default.
+            debug=os.environ.get("VOICE_DEBUG", "").lower() in ("1", "true", "yes"),
+            debug_capture_seconds=int(os.environ.get("VOICE_DEBUG_CAPTURE_SECONDS", "20")),
         )
 
 

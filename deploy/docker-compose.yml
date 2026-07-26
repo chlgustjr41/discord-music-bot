@@ -185,6 +185,9 @@ services:
       DISCORD_EARS_TOKEN: ${DISCORD_EARS_TOKEN:-}
       VOICE_INTERNAL_TOKEN: ${VOICE_INTERNAL_TOKEN:-}
       BOT_INTENT_URL: http://bot:8080/voice-intent
+      # Diagnostic toggle: per-speaker rx stats, finalization transcripts, and a
+      # bounded WAV capture of decoded audio. Leave empty in normal operation.
+      VOICE_DEBUG: ${VOICE_DEBUG:-}
     expose:
       - "8090"
     healthcheck:

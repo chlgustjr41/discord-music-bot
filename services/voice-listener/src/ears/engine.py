@@ -16,11 +16,14 @@ Events returned by feed():
 """
 
 import json
+import logging
 import time
 from typing import Callable, Protocol
 
 from ears.intents import parse_intent
 from ears.phrases import normalize_phrase
+
+log = logging.getLogger("ears.engine")
 
 # A run of this many silent frames (20 ms each) ends an utterance and triggers
 # finalization. 4 frames (~80 ms) fits inside Discord's ~5 trailing-silence
@@ -58,12 +61,15 @@ class VoskRecognizer:
 class SpeakerEngine:
     def __init__(self, passive: Recognizer, active: Recognizer, wake_phrase: str,
                  active_window_seconds: float, clock: Callable[[], float] = time.monotonic,
-                 silence_end_frames: int = SILENCE_END_FRAMES):
+                 silence_end_frames: int = SILENCE_END_FRAMES, debug: bool = False,
+                 label: str = ""):
         self.passive, self.active = passive, active
         self.wake_phrase = normalize_phrase(wake_phrase)
         self.window = active_window_seconds
         self.clock = clock
         self.silence_end_frames = silence_end_frames
+        self.debug = debug
+        self.label = label      # e.g. "guild/user" for debug logs
         self.state = "passive"
         self._active_until = 0.0
         self._had_speech = False
@@ -93,6 +99,9 @@ class SpeakerEngine:
 
         # Utterance boundary: finalize and act on what was heard.
         text = rec.final()
+        if self.debug:
+            log.info("[dbg] %s %s-final=%r (wake=%r)",
+                     self.label, self.state, text, self.wake_phrase)
         self._had_speech = False
         self._silence_run = 0
         return self._on_utterance(text)

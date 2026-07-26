@@ -12,6 +12,7 @@ outage 2026-07-26). Decoding in write() lets us skip a bad packet instead.
 
 import asyncio
 import logging
+import wave
 from pathlib import Path
 
 import discord
@@ -40,6 +41,7 @@ class EarsSink(voice_recv.AudioSink):
         # Per-speaker (opus decoder, downsampler, engine) — all stateful across
         # frames, so built once per user and reused.
         self.streams: dict[int, tuple[Decoder, Downsampler, SpeakerEngine]] = {}
+        self._dbg: dict[int, dict] = {}     # per-user diagnostics (VOICE_DEBUG)
 
     def wants_opus(self) -> bool:
         return True     # decode ourselves; see module docstring (crash-safety)
@@ -59,10 +61,13 @@ class EarsSink(voice_recv.AudioSink):
             pcm = dec.decode(opus, fec=False)
         except OpusError:
             return          # skip this packet; a bad decode must never be fatal
+        silent = is_silence(pcm)
+        if self.ears.settings.debug:
+            self._debug_frame(user, pcm, silent)
         # Do NOT drop silence here: the engine needs the trailing silence to
         # know an utterance ended (Vosk won't endpoint on its own). We only
         # flag it so the engine can detect the pause.
-        event = eng.feed(ds.feed(pcm), is_silence(pcm))
+        event = eng.feed(ds.feed(pcm), silent)
         if event:
             self.ears.dispatch_event(self.guild_id, event)
 
@@ -78,13 +83,46 @@ class EarsSink(voice_recv.AudioSink):
                     active=VoskRecognizer(model, build_active_grammar()),
                     wake_phrase=self.wake_phrase,
                     active_window_seconds=self.ears.settings.active_window_seconds,
+                    debug=self.ears.settings.debug,
+                    label=f"{self.guild_id}/{user_id}",
                 ),
             )
         return st
 
+    def _debug_frame(self, user, pcm: bytes, silent: bool) -> None:
+        """VOICE_DEBUG: per-speaker rx stats + a bounded WAV capture so the exact
+        LIVE audio can be replayed through the recognizer offline."""
+        import audioop
+        d = self._dbg.get(user.id)
+        if d is None:
+            cap = self.ears.settings.debug_capture_seconds * 50   # 50 frames/s
+            path = f"/tmp/voicedbg/{self.guild_id}_{user.id}.wav"
+            Path("/tmp/voicedbg").mkdir(parents=True, exist_ok=True)
+            wav = wave.open(path, "wb")
+            wav.setnchannels(2)
+            wav.setsampwidth(2)
+            wav.setframerate(48000)
+            d = self._dbg[user.id] = {"n": 0, "sil": 0, "wav": wav,
+                                      "cap": cap, "name": getattr(user, "name", "?")}
+            log.info("[dbg] capturing %s frames of %s -> %s", cap, d["name"], path)
+        d["n"] += 1
+        d["sil"] += 1 if silent else 0
+        if d["wav"] and d["n"] <= d["cap"]:
+            d["wav"].writeframes(pcm)
+            if d["n"] == d["cap"]:
+                d["wav"].close()
+                d["wav"] = None
+                log.info("[dbg] capture complete for %s (%s frames)", d["name"], d["cap"])
+        if d["n"] % 50 == 0:      # ~1s
+            log.info("[dbg] rx %s: frames=%d silent=%d%% rms_last=%d",
+                     d["name"], d["n"], 100 * d["sil"] // d["n"], audioop.rms(pcm, 2))
+
     def cleanup(self) -> None:
         # AudioSink.__del__ calls this; guard so a partially-constructed sink
         # never raises during garbage collection.
+        for d in getattr(self, "_dbg", {}).values():
+            if d.get("wav"):
+                d["wav"].close()
         getattr(self, "streams", {}).clear()
 
 
@@ -150,6 +188,8 @@ class EarsClient(discord.Client):
 
     async def _handle_event(self, guild_id: str, event) -> None:
         kind, intent = event
+        if self.settings.debug:
+            log.info("[dbg] event guild=%s kind=%s intent=%s", guild_id, kind, intent)
         if kind == "wake":
             self._play_earcon(guild_id, "ack.wav")
         elif kind == "error":
@@ -164,3 +204,6 @@ class EarsClient(discord.Client):
         vc = guild.voice_client if guild else None
         if vc and not vc.is_playing():
             vc.play(discord.FFmpegPCMAudio(str(ASSETS / name)))
+        elif self.settings.debug:
+            log.info("[dbg] earcon %s SKIPPED (vc=%s playing=%s)", name,
+                     bool(vc), vc.is_playing() if vc else None)
