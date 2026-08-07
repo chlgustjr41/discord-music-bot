@@ -167,6 +167,9 @@ services:
     # Stream Deck control API egress (spec 2026-08-06). Outbound-only named
     # tunnel: control.<domain> -> bot:8080 /control/*, no inbound VM ports.
     # Opt-in via COMPOSE_PROFILES=control in .env — the stack runs without it.
+    # Deliberately UNPINNED (:latest): Cloudflare deprecates old connector
+    # builds, and compose's pull policy freezes the tag at first pull anyway.
+    # Refresh deliberately with: docker compose --profile control pull cloudflared
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     profiles: [control]
