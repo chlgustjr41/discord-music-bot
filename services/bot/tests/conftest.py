@@ -19,6 +19,9 @@ class FakeRepo:
         self.history: list = []
         self.session_codes: dict[str, str] = {}
         self.control_tokens: dict[str, dict] = {}
+        # Per-guild activation override; falls back to the `activated` class
+        # attribute (all-or-nothing) when a guild id has no entry.
+        self.activated_overrides: dict[str, bool] = {}
 
     async def init_state(self, sid):
         self.states.setdefault(sid, {
@@ -94,7 +97,7 @@ class FakeRepo:
     activated = True
 
     async def is_activated(self, sid):
-        return self.activated
+        return self.activated_overrides.get(sid, self.activated)
 
     async def save_control_token(self, token_hash, data):
         self.control_tokens[token_hash] = data
