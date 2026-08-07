@@ -34,6 +34,9 @@ def register_control_routes(
         return wrapper
 
     def resolve_guild(user_id: int):
+        # Relies on discord.py's member cache, which is populated for
+        # voice-connected members via the voice_states intent (core/bot.py).
+        # A user not in voice is simply absent -> resolves to no session.
         for guild in bot.guilds:
             member = guild.get_member(user_id)
             voice = getattr(member, "voice", None)
@@ -67,9 +70,67 @@ def register_control_routes(
             "title": current.get("title") if current else None,
             "author": current.get("artist", "") if current else "",
             "paused": bool(state.get("isPaused", False)),
-            "volume": int(state.get("volume", 80)),
+            "volume": int(state.get("volume") or 80),
             "guildName": guild.name,
         })
 
-    app.add_routes([web.get("/control/now-playing", guarded(now_playing))])
+    async def action_target(request: web.Request):
+        """(guild, body, error_response) triple for POST action routes."""
+        body = await body_of(request)
+        user_id = parse_user_id(body.get("discordUserId"))
+        if user_id is None:
+            return None, body, web.json_response(
+                {"error": "bad-discordUserId"}, status=400
+            )
+        guild = resolve_guild(user_id)
+        if guild is None:
+            return None, body, web.json_response(
+                {"error": "no-active-session"}, status=409
+            )
+        return guild, body, None
+
+    async def play_pause(request: web.Request) -> web.Response:
+        guild, _body, err = await action_target(request)
+        if err:
+            return err
+        state = await service.repo.get_state(str(guild.id)) or {}
+        new_paused = not state.get("isPaused", False)
+        await service.pause(guild.id, new_paused)
+        return web.json_response({"paused": new_paused})
+
+    async def skip(request: web.Request) -> web.Response:
+        guild, _body, err = await action_target(request)
+        if err:
+            return err
+        await service.skip(guild.id)
+        return web.json_response({"ok": True})
+
+    async def stop(request: web.Request) -> web.Response:
+        guild, _body, err = await action_target(request)
+        if err:
+            return err
+        await service.teardown_session(guild.id, clear_queue=True)
+        return web.json_response({"ok": True})
+
+    async def volume(request: web.Request) -> web.Response:
+        guild, body, err = await action_target(request)
+        if err:
+            return err
+        try:
+            delta = int(body["delta"])
+        except (KeyError, TypeError, ValueError):
+            return web.json_response({"error": "bad-delta"}, status=400)
+        state = await service.repo.get_state(str(guild.id)) or {}
+        new = await service.set_volume(
+            guild.id, int(state.get("volume") or 80) + delta
+        )
+        return web.json_response({"volume": new})
+
+    app.add_routes([
+        web.get("/control/now-playing", guarded(now_playing)),
+        web.post("/control/play-pause", guarded(play_pause)),
+        web.post("/control/skip", guarded(skip)),
+        web.post("/control/stop", guarded(stop)),
+        web.post("/control/volume", guarded(volume)),
+    ])
     log.info("control API routes registered")
