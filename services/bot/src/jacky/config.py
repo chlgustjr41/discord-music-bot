@@ -17,6 +17,7 @@ class Settings:
     guardian_status_url: str
     idle_timeout_seconds: int
     empty_channel_timeout_seconds: int
+    control_api_token: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -36,6 +37,7 @@ class Settings:
             empty_channel_timeout_seconds=int(
                 os.environ.get("EMPTY_CHANNEL_TIMEOUT_SECONDS", "120")
             ),
+            control_api_token=os.environ.get("CONTROL_API_TOKEN", ""),
         )
 
     @property
