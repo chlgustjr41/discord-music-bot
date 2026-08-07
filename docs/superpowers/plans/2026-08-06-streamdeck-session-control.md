@@ -693,7 +693,7 @@ Plugin source: `streamdeck-plugin/` · Bot API: `services/bot/src/jacky/api/cont
 ## Verify from anywhere
 
 ```bash
-curl -s https://control.<your-domain>/control/now-playing?discordUserId=<your-id>
+curl -s "https://control.<your-domain>/control/now-playing?discordUserId=<your-id>"
 # → {"error": "unauthorized"} (401) — tunnel + routing work
 curl -s -H "Authorization: Bearer <token>" \
   "https://control.<your-domain>/control/now-playing?discordUserId=<your-id>"
@@ -719,7 +719,8 @@ settings (shared by all keys): **API URL** `https://control.<your-domain>`,
 - Keys act on the guild where *you* currently sit in a voice channel with a
   live bot session; nowhere → "No session" / brief ⚠ flash on presses.
 - Now Playing polls every 5 s, backing off to 30 s while unreachable.
-- Token rotation: new value in `deploy/.env` → `make restart s=bot` → update
+- Token rotation: new value in `deploy/.env` → `make up` (recreates the bot
+  with the new env — `make restart` alone does NOT re-read `.env`) → update
   the token in any key's settings.
 ```
 
