@@ -1,0 +1,75 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "UUID": "com.jacobchoi.jacky-control",
+  "Name": "Jacky Session Control",
+  "Description": "Control your Jacky Music Discord session: play/pause, skip, stop, volume, now playing.",
+  "Author": "Jacob Choi",
+  "Version": "0.1.0.0",
+  "Category": "Jacky Music",
+  "CategoryIcon": "imgs/plugin-icon",
+  "Icon": "imgs/plugin-icon",
+  "CodePath": "bin/plugin.js",
+  "SDKVersion": 2,
+  "Nodejs": { "Version": "20", "Debug": "disabled" },
+  "Software": { "MinimumVersion": "6.5" },
+  "OS": [{ "Platform": "windows", "MinimumVersion": "10" }],
+  "Actions": [
+    {
+      "UUID": "com.jacobchoi.jacky-control.play-pause",
+      "Name": "Play / Pause",
+      "Icon": "imgs/play-pause",
+      "Tooltip": "Toggle play/pause for your current session",
+      "PropertyInspectorPath": "ui/settings.html",
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "imgs/play-pause", "TitleAlignment": "bottom" },
+        { "Image": "imgs/paused", "TitleAlignment": "bottom" }
+      ]
+    },
+    {
+      "UUID": "com.jacobchoi.jacky-control.skip",
+      "Name": "Skip",
+      "Icon": "imgs/skip",
+      "Tooltip": "Skip to the next track",
+      "PropertyInspectorPath": "ui/settings.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/skip", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "com.jacobchoi.jacky-control.stop",
+      "Name": "Stop",
+      "Icon": "imgs/stop",
+      "Tooltip": "Stop playback and end the session",
+      "PropertyInspectorPath": "ui/settings.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/stop", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "com.jacobchoi.jacky-control.volume-up",
+      "Name": "Volume +",
+      "Icon": "imgs/volume-up",
+      "Tooltip": "Volume up 5",
+      "PropertyInspectorPath": "ui/settings.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/volume-up", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "com.jacobchoi.jacky-control.volume-down",
+      "Name": "Volume −",
+      "Icon": "imgs/volume-down",
+      "Tooltip": "Volume down 5",
+      "PropertyInspectorPath": "ui/settings.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/volume-down", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "com.jacobchoi.jacky-control.now-playing",
+      "Name": "Now Playing",
+      "Icon": "imgs/now-playing",
+      "Tooltip": "Shows the current track",
+      "PropertyInspectorPath": "ui/settings.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/now-playing", "TitleAlignment": "middle" }]
+    }
+  ]
+}

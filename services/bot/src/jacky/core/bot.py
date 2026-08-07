@@ -15,7 +15,7 @@ from jacky.audio.player import PlayerService
 from jacky.audio.provider import SingleNodeProvider
 from jacky.commands.embeds import error_embed, now_playing_embed, success_embed
 from jacky.config import Settings
-from jacky.core.health import start_health_server
+from jacky.core.health import build_app, start_health_server
 from jacky.state.listener import ServerDocListener
 from jacky.state.repository import ServerRepository
 from jacky.state.summon import SummonWatcher
@@ -120,8 +120,16 @@ class JackyBot(commands.Bot):
             await self.load_extension(ext)
         self.summon_watcher = SummonWatcher(self, self.repo, self.service)
         self.summon_watcher.start()
+        health_app = build_app(self, self.service)
+        if self.settings.control_api_token:
+            from jacky.api.control import register_control_routes
+
+            register_control_routes(
+                health_app, bot=self, service=self.service,
+                token=self.settings.control_api_token,
+            )
         self._health_runner = await start_health_server(
-            self, self.service, self.settings.health_port
+            self, self.service, self.settings.health_port, app=health_app
         )
 
     async def on_ready(self) -> None:

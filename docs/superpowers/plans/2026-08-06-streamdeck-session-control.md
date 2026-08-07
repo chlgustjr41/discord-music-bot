@@ -616,7 +616,13 @@ git commit -m "feat(control): mount control routes on health app when CONTROL_AP
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     profiles: [control]
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?set in .env}
+    command: tunnel --no-autoupdate run
+    environment:
+      # cloudflared reads TUNNEL_TOKEN natively; empty default keeps plain
+      # `docker compose <cmd>` working when the control profile is unused —
+      # `:?` in a command is interpolated before profile filtering and would
+      # break every compose invocation on token-less deployments.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     depends_on:
       - bot
     logging:
@@ -687,7 +693,7 @@ Plugin source: `streamdeck-plugin/` · Bot API: `services/bot/src/jacky/api/cont
 ## Verify from anywhere
 
 ```bash
-curl -s https://control.<your-domain>/control/now-playing?discordUserId=<your-id>
+curl -s "https://control.<your-domain>/control/now-playing?discordUserId=<your-id>"
 # → {"error": "unauthorized"} (401) — tunnel + routing work
 curl -s -H "Authorization: Bearer <token>" \
   "https://control.<your-domain>/control/now-playing?discordUserId=<your-id>"
@@ -713,7 +719,8 @@ settings (shared by all keys): **API URL** `https://control.<your-domain>`,
 - Keys act on the guild where *you* currently sit in a voice channel with a
   live bot session; nowhere → "No session" / brief ⚠ flash on presses.
 - Now Playing polls every 5 s, backing off to 30 s while unreachable.
-- Token rotation: new value in `deploy/.env` → `make restart s=bot` → update
+- Token rotation: new value in `deploy/.env` → `make up` (recreates the bot
+  with the new env — `make restart` alone does NOT re-read `.env`) → update
   the token in any key's settings.
 ```
 
@@ -1290,6 +1297,46 @@ describe("SessionPoller", () => {
     poller.unsubscribe(cb);
   });
 
+  it("does not stack chains when resubscribed while a poll is in flight", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const poll = vi.fn(async () => {
+      await gate;
+      return { active: false } as const;
+    });
+    const poller = new SessionPoller(poll, 5000, 30000);
+    const a = collect();
+    const b = collect();
+    poller.subscribe(a.cb);          // starts chain; poll 1 in flight, blocked
+    poller.unsubscribe(a.cb);        // timer is null; nothing to clear
+    poller.subscribe(b.cb);          // must NOT start a second chain
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(poll).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(poll).toHaveBeenCalledTimes(2);  // one chain, one poll per interval
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(poll).toHaveBeenCalledTimes(3);
+    poller.unsubscribe(b.cb);
+  });
+
+  it("keeps polling when a subscriber throws", async () => {
+    const poll = vi.fn(async () => {
+      throw new ControlApiError(500);
+    });
+    const poller = new SessionPoller(poll, 5000, 30000);
+    const bad = vi.fn(() => { throw new Error("boom"); });
+    const good = collect();
+    poller.subscribe(bad);
+    poller.subscribe(good.cb);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(good.states[0]).toEqual({ kind: "offline" });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(poll).toHaveBeenCalledTimes(2);  // loop survived the throw
+    poller.unsubscribe(bad);
+    poller.unsubscribe(good.cb);
+  });
+
   it("maps 401 to unauthorized and status 0 to unconfigured", async () => {
     const poller401 = new SessionPoller(async () => {
       throw new ControlApiError(401);
@@ -1308,6 +1355,43 @@ describe("SessionPoller", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(b.states[0]).toEqual({ kind: "unconfigured" });
     poller0.unsubscribe(b.cb);
+  });
+
+  it("kick resets backoff and polls immediately", async () => {
+    const poll = vi.fn(async () => {
+      throw new ControlApiError(0);
+    });
+    const poller = new SessionPoller(poll, 5000, 30000);
+    const { cb } = collect();
+    poller.subscribe(cb);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(5000);   // 3 failures -> 30s backoff pending
+    poller.kick();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(poll).toHaveBeenCalledTimes(4);     // kicked immediately, not after 30s
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(poll).toHaveBeenCalledTimes(5);     // failures were reset -> base interval
+    poller.unsubscribe(cb);
+  });
+
+  it("kick during an in-flight poll does not stack chains", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const poll = vi.fn(async () => {
+      await gate;
+      return { active: false } as const;
+    });
+    const poller = new SessionPoller(poll, 5000, 30000);
+    const { cb } = collect();
+    poller.subscribe(cb);            // poll 1 in flight, blocked
+    poller.kick();                   // must not start a second chain
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(poll).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(poll).toHaveBeenCalledTimes(2);
+    poller.unsubscribe(cb);
   });
 });
 ```
@@ -1332,6 +1416,12 @@ const BACKOFF_AFTER_FAILURES = 3;
 export class SessionPoller {
   private readonly subs = new Set<(s: PollState) => void>();
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** True iff a tick chain is alive (poll in flight or timer pending).
+   *  Guards against starting a second chain when a resubscribe happens
+   *  while a poll is still in flight (timer is null at that moment). */
+  private polling = false;
+  // Deliberately persists across unsubscribe/resubscribe: the server was
+  // just failing, so the backoff state is still real.
   private failures = 0;
 
   constructor(
@@ -1342,7 +1432,10 @@ export class SessionPoller {
 
   subscribe(cb: (s: PollState) => void): void {
     this.subs.add(cb);
-    if (this.subs.size === 1) void this.tick();
+    if (this.subs.size === 1 && !this.polling) {
+      this.polling = true;
+      void this.tick();
+    }
   }
 
   unsubscribe(cb: (s: PollState) => void): void {
@@ -1350,11 +1443,39 @@ export class SessionPoller {
     if (this.subs.size === 0 && this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
+      this.polling = false;
+    }
+  }
+
+  /** Reset backoff and poll again now (e.g. after settings change).
+   *  Chain invariant ("at most one tick chain"): if a timer is pending we
+   *  cancel it and tick immediately — the chain continues, just sooner. If a
+   *  poll is in flight (polling=true, timer=null) we must NOT tick, or we'd
+   *  start a second chain; resetting failures is enough, because the
+   *  in-flight tick reschedules at baseMs once failures is 0. */
+  kick(): void {
+    this.failures = 0;
+    const hadTimer = this.timer !== null;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    if (this.subs.size > 0 && (hadTimer || !this.polling)) {
+      this.polling = true;
+      void this.tick();
     }
   }
 
   private emit(s: PollState): void {
-    for (const cb of this.subs) cb(s);
+    // Set iteration is safe against self-unsubscribe; per-callback try/catch
+    // keeps one bad subscriber from killing the shared poll loop.
+    for (const cb of this.subs) {
+      try {
+        cb(s);
+      } catch {
+        // subscriber errors must not break polling
+      }
+    }
   }
 
   private async tick(): Promise<void> {
@@ -1376,6 +1497,8 @@ export class SessionPoller {
     if (this.subs.size > 0) {
       const delay = this.failures >= BACKOFF_AFTER_FAILURES ? this.maxMs : this.baseMs;
       this.timer = setTimeout(() => void this.tick(), delay);
+    } else {
+      this.polling = false;
     }
   }
 }
@@ -1421,6 +1544,7 @@ export const poller = new SessionPoller(async () => {
 export async function initRuntime(): Promise<void> {
   const apply = (s: GlobalSettings) => {
     client = settingsReady(s) ? new JackyClient(s) : null;
+    poller.kick();
   };
   streamDeck.settings.onDidReceiveGlobalSettings<GlobalSettings>((ev) =>
     apply(ev.settings),
@@ -1444,7 +1568,7 @@ export class PlayPause extends SingletonAction {
     if (s.kind !== "data" || !s.data.active) return;
     const state = s.data.paused ? 1 : 0; // manifest state 1 = paused icon
     for (const a of this.actions) {
-      if (a.isKey()) void a.setState(state);
+      if (a.isKey()) a.setState(state).catch(() => {});
     }
   };
 
@@ -1567,6 +1691,7 @@ const TITLE_WIDTH = 9;
 export class NowPlaying extends SingletonAction {
   private visible = 0;
   private offset = 0;
+  private lastTitle: string | null = null;
 
   private readonly onPoll = (s: PollState): void => {
     let text: string;
@@ -1576,11 +1701,15 @@ export class NowPlaying extends SingletonAction {
     else if (!s.data.active) text = "No\nsession";
     else if (!s.data.title) text = `${s.data.guildName}\n(idle)`;
     else {
+      if (s.data.title !== this.lastTitle) {
+        this.offset = 0;
+        this.lastTitle = s.data.title;
+      }
       text = marquee(s.data.title, this.offset, TITLE_WIDTH);
       if (s.data.paused) text += "\n⏸";
       this.offset += 2;
     }
-    for (const a of this.actions) void a.setTitle(text);
+    for (const a of this.actions) a.setTitle(text).catch(() => {});
   };
 
   override onWillAppear(_ev: WillAppearEvent): void {

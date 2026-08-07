@@ -48,6 +48,7 @@ services:
       LAVALINK_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
       FIREBASE_SERVICE_ACCOUNT_KEY: /run/secrets/firebase-service-account.json
       WEB_APP_URL: ${WEB_APP_URL:?set in .env}
+      CONTROL_API_TOKEN: ${CONTROL_API_TOKEN:-}
     volumes:
       - ${FIREBASE_SERVICE_ACCOUNT_FILE:?set in .env}:/run/secrets/firebase-service-account.json:ro
     expose:
@@ -155,6 +156,32 @@ services:
         condition: service_healthy
       pot-provider:
         condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    networks: [jacky]
+
+  cloudflared:
+    # Stream Deck control API egress (spec 2026-08-06). Outbound-only named
+    # tunnel: control.<domain> -> bot:8080 /control/*, no inbound VM ports.
+    # Opt-in via COMPOSE_PROFILES=control in .env — the stack runs without it.
+    # Deliberately UNPINNED (:latest): Cloudflare deprecates old connector
+    # builds, and compose's pull policy freezes the tag at first pull anyway.
+    # Refresh deliberately with: docker compose --profile control pull cloudflared
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    profiles: [control]
+    command: tunnel --no-autoupdate run
+    environment:
+      # cloudflared reads TUNNEL_TOKEN natively; empty default keeps plain
+      # `docker compose <cmd>` working when the control profile is unused —
+      # `:?` in a command is interpolated before profile filtering and would
+      # break every compose invocation on token-less deployments.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      - bot
     logging:
       driver: json-file
       options:

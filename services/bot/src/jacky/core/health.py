@@ -36,8 +36,10 @@ def build_app(bot: Any, service: Any) -> web.Application:
     return app
 
 
-async def start_health_server(bot: Any, service: Any, port: int) -> web.AppRunner:
-    runner = web.AppRunner(build_app(bot, service))
+async def start_health_server(
+    bot: Any, service: Any, port: int, app: web.Application | None = None
+) -> web.AppRunner:
+    runner = web.AppRunner(app or build_app(bot, service))
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
