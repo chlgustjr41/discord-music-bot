@@ -1,0 +1,23 @@
+{
+  "name": "jacky-control",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "rollup -c",
+    "watch": "rollup -c -w --watch.onEnd=\"streamdeck restart com.jacobchoi.jacky-control\"",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@elgato/streamdeck": "^1.3.0"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^28.0.0",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "@rollup/plugin-typescript": "^12.1.0",
+    "@tsconfig/node20": "^20.1.4",
+    "rollup": "^4.20.0",
+    "tslib": "^2.6.3",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}

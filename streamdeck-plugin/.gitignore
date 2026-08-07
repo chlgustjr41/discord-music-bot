@@ -1,0 +1,3 @@
+node_modules/
+com.jacobchoi.jacky-control.sdPlugin/bin/plugin.js
+*.streamDeckPlugin

@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <script src="sdpi-components.js"></script>
+</head>
+<body>
+  <!-- All three are GLOBAL settings: enter once on any key, shared by all. -->
+  <sdpi-item label="API URL">
+    <sdpi-textfield global setting="apiUrl" placeholder="https://control.example.com"></sdpi-textfield>
+  </sdpi-item>
+  <sdpi-item label="API token">
+    <sdpi-password global setting="apiToken"></sdpi-password>
+  </sdpi-item>
+  <sdpi-item label="Discord user ID">
+    <sdpi-textfield global setting="discordUserId" placeholder="123456789012345678"></sdpi-textfield>
+  </sdpi-item>
+</body>
+</html>
