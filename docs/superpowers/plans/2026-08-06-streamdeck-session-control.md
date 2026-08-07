@@ -616,7 +616,13 @@ git commit -m "feat(control): mount control routes on health app when CONTROL_AP
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     profiles: [control]
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN:?set in .env}
+    command: tunnel --no-autoupdate run
+    environment:
+      # cloudflared reads TUNNEL_TOKEN natively; empty default keeps plain
+      # `docker compose <cmd>` working when the control profile is unused —
+      # `:?` in a command is interpolated before profile filtering and would
+      # break every compose invocation on token-less deployments.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     depends_on:
       - bot
     logging:
