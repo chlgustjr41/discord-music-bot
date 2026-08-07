@@ -220,3 +220,15 @@ async def test_now_playing_survives_null_volume(client, service, guild_id, sid):
     resp = await client.get(f"/control/now-playing?discordUserId={USER_ID}", headers=AUTH)
     assert resp.status == 200
     assert (await resp.json())["volume"] == 80
+
+
+async def test_volume_zero_is_not_treated_as_unset(client, service, guild_id, sid):
+    """j!volume 0 (mute) must report 0 and delta from 0, not from 80."""
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {"volume": 0})
+    resp = await client.get(f"/control/now-playing?discordUserId={USER_ID}", headers=AUTH)
+    assert (await resp.json())["volume"] == 0
+    resp = await client.post(
+        "/control/volume", json={"discordUserId": USER_ID, "delta": 5}, headers=AUTH
+    )
+    assert (await resp.json()) == {"volume": 5}

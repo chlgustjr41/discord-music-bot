@@ -56,6 +56,12 @@ def register_control_routes(
         except Exception:  # noqa: BLE001 — malformed body == empty body
             return {}
 
+    def volume_of(state: dict) -> int:
+        # None-based default: 0 is a legal volume (j!volume 0 mutes) and must
+        # not be conflated with "unset" (web app can write volume: null).
+        vol = state.get("volume")
+        return 80 if vol is None else int(vol)
+
     async def now_playing(request: web.Request) -> web.Response:
         user_id = parse_user_id(request.query.get("discordUserId"))
         if user_id is None:
@@ -70,7 +76,7 @@ def register_control_routes(
             "title": current.get("title") if current else None,
             "author": current.get("artist", "") if current else "",
             "paused": bool(state.get("isPaused", False)),
-            "volume": int(state.get("volume") or 80),
+            "volume": volume_of(state),
             "guildName": guild.name,
         })
 
@@ -93,6 +99,8 @@ def register_control_routes(
         guild, _body, err = await action_target(request)
         if err:
             return err
+        # Read-then-write toggle: two overlapping presses can collapse into
+        # one. Acceptable for a single-user personal API.
         state = await service.repo.get_state(str(guild.id)) or {}
         new_paused = not state.get("isPaused", False)
         await service.pause(guild.id, new_paused)
@@ -121,9 +129,7 @@ def register_control_routes(
         except (KeyError, TypeError, ValueError):
             return web.json_response({"error": "bad-delta"}, status=400)
         state = await service.repo.get_state(str(guild.id)) or {}
-        new = await service.set_volume(
-            guild.id, int(state.get("volume") or 80) + delta
-        )
+        new = await service.set_volume(guild.id, volume_of(state) + delta)
         return web.json_response({"volume": new})
 
     app.add_routes([
