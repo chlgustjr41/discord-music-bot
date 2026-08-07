@@ -18,6 +18,7 @@ export const poller = new SessionPoller(async () => {
 export async function initRuntime(): Promise<void> {
   const apply = (s: GlobalSettings) => {
     client = settingsReady(s) ? new JackyClient(s) : null;
+    poller.kick();
   };
   streamDeck.settings.onDidReceiveGlobalSettings<GlobalSettings>((ev) =>
     apply(ev.settings),

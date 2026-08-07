@@ -14,6 +14,7 @@ const TITLE_WIDTH = 9;
 export class NowPlaying extends SingletonAction {
   private visible = 0;
   private offset = 0;
+  private lastTitle: string | null = null;
 
   private readonly onPoll = (s: PollState): void => {
     let text: string;
@@ -23,11 +24,15 @@ export class NowPlaying extends SingletonAction {
     else if (!s.data.active) text = "No\nsession";
     else if (!s.data.title) text = `${s.data.guildName}\n(idle)`;
     else {
+      if (s.data.title !== this.lastTitle) {
+        this.offset = 0;
+        this.lastTitle = s.data.title;
+      }
       text = marquee(s.data.title, this.offset, TITLE_WIDTH);
       if (s.data.paused) text += "\n⏸";
       this.offset += 2;
     }
-    for (const a of this.actions) void a.setTitle(text);
+    for (const a of this.actions) a.setTitle(text).catch(() => {});
   };
 
   override onWillAppear(_ev: WillAppearEvent): void {

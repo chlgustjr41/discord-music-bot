@@ -16,7 +16,7 @@ export class PlayPause extends SingletonAction {
     if (s.kind !== "data" || !s.data.active) return;
     const state = s.data.paused ? 1 : 0; // manifest state 1 = paused icon
     for (const a of this.actions) {
-      if (a.isKey()) void a.setState(state);
+      if (a.isKey()) a.setState(state).catch(() => {});
     }
   };
 

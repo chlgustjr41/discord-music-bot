@@ -119,4 +119,41 @@ describe("SessionPoller", () => {
     expect(b.states[0]).toEqual({ kind: "unconfigured" });
     poller0.unsubscribe(b.cb);
   });
+
+  it("kick resets backoff and polls immediately", async () => {
+    const poll = vi.fn(async () => {
+      throw new ControlApiError(0);
+    });
+    const poller = new SessionPoller(poll, 5000, 30000);
+    const { cb } = collect();
+    poller.subscribe(cb);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(5000);   // 3 failures -> 30s backoff pending
+    poller.kick();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(poll).toHaveBeenCalledTimes(4);     // kicked immediately, not after 30s
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(poll).toHaveBeenCalledTimes(5);     // failures were reset -> base interval
+    poller.unsubscribe(cb);
+  });
+
+  it("kick during an in-flight poll does not stack chains", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const poll = vi.fn(async () => {
+      await gate;
+      return { active: false } as const;
+    });
+    const poller = new SessionPoller(poll, 5000, 30000);
+    const { cb } = collect();
+    poller.subscribe(cb);            // poll 1 in flight, blocked
+    poller.kick();                   // must not start a second chain
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(poll).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(poll).toHaveBeenCalledTimes(2);
+    poller.unsubscribe(cb);
+  });
 });

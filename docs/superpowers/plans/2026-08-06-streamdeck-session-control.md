@@ -1356,6 +1356,43 @@ describe("SessionPoller", () => {
     expect(b.states[0]).toEqual({ kind: "unconfigured" });
     poller0.unsubscribe(b.cb);
   });
+
+  it("kick resets backoff and polls immediately", async () => {
+    const poll = vi.fn(async () => {
+      throw new ControlApiError(0);
+    });
+    const poller = new SessionPoller(poll, 5000, 30000);
+    const { cb } = collect();
+    poller.subscribe(cb);
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(5000);   // 3 failures -> 30s backoff pending
+    poller.kick();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(poll).toHaveBeenCalledTimes(4);     // kicked immediately, not after 30s
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(poll).toHaveBeenCalledTimes(5);     // failures were reset -> base interval
+    poller.unsubscribe(cb);
+  });
+
+  it("kick during an in-flight poll does not stack chains", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const poll = vi.fn(async () => {
+      await gate;
+      return { active: false } as const;
+    });
+    const poller = new SessionPoller(poll, 5000, 30000);
+    const { cb } = collect();
+    poller.subscribe(cb);            // poll 1 in flight, blocked
+    poller.kick();                   // must not start a second chain
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(poll).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(poll).toHaveBeenCalledTimes(2);
+    poller.unsubscribe(cb);
+  });
 });
 ```
 
@@ -1407,6 +1444,25 @@ export class SessionPoller {
       clearTimeout(this.timer);
       this.timer = null;
       this.polling = false;
+    }
+  }
+
+  /** Reset backoff and poll again now (e.g. after settings change).
+   *  Chain invariant ("at most one tick chain"): if a timer is pending we
+   *  cancel it and tick immediately — the chain continues, just sooner. If a
+   *  poll is in flight (polling=true, timer=null) we must NOT tick, or we'd
+   *  start a second chain; resetting failures is enough, because the
+   *  in-flight tick reschedules at baseMs once failures is 0. */
+  kick(): void {
+    this.failures = 0;
+    const hadTimer = this.timer !== null;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    if (this.subs.size > 0 && (hadTimer || !this.polling)) {
+      this.polling = true;
+      void this.tick();
     }
   }
 
@@ -1488,6 +1544,7 @@ export const poller = new SessionPoller(async () => {
 export async function initRuntime(): Promise<void> {
   const apply = (s: GlobalSettings) => {
     client = settingsReady(s) ? new JackyClient(s) : null;
+    poller.kick();
   };
   streamDeck.settings.onDidReceiveGlobalSettings<GlobalSettings>((ev) =>
     apply(ev.settings),
@@ -1511,7 +1568,7 @@ export class PlayPause extends SingletonAction {
     if (s.kind !== "data" || !s.data.active) return;
     const state = s.data.paused ? 1 : 0; // manifest state 1 = paused icon
     for (const a of this.actions) {
-      if (a.isKey()) void a.setState(state);
+      if (a.isKey()) a.setState(state).catch(() => {});
     }
   };
 
@@ -1634,6 +1691,7 @@ const TITLE_WIDTH = 9;
 export class NowPlaying extends SingletonAction {
   private visible = 0;
   private offset = 0;
+  private lastTitle: string | null = null;
 
   private readonly onPoll = (s: PollState): void => {
     let text: string;
@@ -1643,11 +1701,15 @@ export class NowPlaying extends SingletonAction {
     else if (!s.data.active) text = "No\nsession";
     else if (!s.data.title) text = `${s.data.guildName}\n(idle)`;
     else {
+      if (s.data.title !== this.lastTitle) {
+        this.offset = 0;
+        this.lastTitle = s.data.title;
+      }
       text = marquee(s.data.title, this.offset, TITLE_WIDTH);
       if (s.data.paused) text += "\n⏸";
       this.offset += 2;
     }
-    for (const a of this.actions) void a.setTitle(text);
+    for (const a of this.actions) a.setTitle(text).catch(() => {});
   };
 
   override onWillAppear(_ev: WillAppearEvent): void {

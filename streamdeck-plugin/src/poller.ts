@@ -44,6 +44,25 @@ export class SessionPoller {
     }
   }
 
+  /** Reset backoff and poll again now (e.g. after settings change).
+   *  Chain invariant ("at most one tick chain"): if a timer is pending we
+   *  cancel it and tick immediately — the chain continues, just sooner. If a
+   *  poll is in flight (polling=true, timer=null) we must NOT tick, or we'd
+   *  start a second chain; resetting failures is enough, because the
+   *  in-flight tick reschedules at baseMs once failures is 0. */
+  kick(): void {
+    this.failures = 0;
+    const hadTimer = this.timer !== null;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    if (this.subs.size > 0 && (hadTimer || !this.polling)) {
+      this.polling = true;
+      void this.tick();
+    }
+  }
+
   private emit(s: PollState): void {
     // Set iteration is safe against self-unsubscribe; per-callback try/catch
     // keeps one bad subscriber from killing the shared poll loop.
