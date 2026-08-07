@@ -8,6 +8,7 @@
 - `services/token-minter/` — poToken refresh via pot-provider sidecar (ADR-0004)
 - `services/lavalink/` — templated Lavalink config
 - `deploy/` — docker-compose.yml + .env contract
+- `streamdeck-plugin/` — Stream Deck plugin (TypeScript, @elgato/streamdeck): j! session control keys via the bot's /control API (docs/streamdeck-control.md)
 - `docs/` — architecture, ADRs, runbook, deployment, roadmap
 - `bot/` — LEGACY v1 bot (replaced in production 2026-07-04; rollback-only during soak week, then archived — see docs/STATUS.md)
 - `frontend/`, `functions/` — unchanged (web app + search proxy)

@@ -59,3 +59,18 @@ settings (shared by all keys): **API URL** `https://control.<your-domain>`,
 - Token rotation: new value in `deploy/.env` → `make up` (recreates the bot
   with the new env — `make restart` alone does NOT re-read `.env`) → update
   the token in any key's settings.
+
+## Known limitations / follow-ups (v1)
+
+- `@elgato/streamdeck` 1.x is npm-deprecated in favor of 2.x (Marketplace-only
+  concern; personal install unaffected). Revisit if Marketplace publishing or
+  security patches ever matter.
+- Play/Pause key keeps its last icon while offline / session-less (presses
+  still flash ⚠ honestly).
+- The Now Playing `⏸` glyph may render as a missing-glyph box on some
+  Stream Deck firmware fonts — swap for `||` in
+  `streamdeck-plugin/src/actions/now-playing.ts` if it looks wrong.
+- The marquee advances 2 characters per poll tick (every 5 s) — slow scroll
+  is by design (poll-driven), not a bug.
+- Plugin tests are not wired into `make test` (services/ only); run them with
+  `cd streamdeck-plugin && npm test`.

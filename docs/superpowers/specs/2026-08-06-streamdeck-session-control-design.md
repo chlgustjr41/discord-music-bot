@@ -24,7 +24,7 @@ Marketplace.
 | Where the Discord user ID lives | In the **plugin's settings** (Property Inspector, stored as Stream Deck global settings), alongside API URL and token — not hardcoded in bot env. |
 | Auth | Static bearer token: `CONTROL_API_TOKEN` env var on the bot, constant-time compare. Rotatable by changing the env var. |
 | Internet exposure | **Cloudflare named tunnel** (`cloudflared` sidecar in docker-compose) → `control.<domain>`. No inbound firewall ports opened on the GCP VM. A named tunnel (not a quick tunnel) so the URL is stable across restarts. |
-| Plugin runtime | Official `@elgato/streamdeck` SDK, Node.js ≥ 24, TypeScript, scaffolded with `streamdeck create`. Requires Stream Deck app ≥ 7.1. |
+| Plugin runtime | Official `@elgato/streamdeck` SDK (v1.x), Node.js 20 runtime (bundled by the Stream Deck app), TypeScript; requires Stream Deck app ≥ 6.5. |
 | Distribution | `streamdeck pack` → `.streamDeckPlugin` file, double-click local install. No Marketplace submission. |
 | Volume | Two key actions (+5 / −5). Stream Deck+ dial support out of scope for v1. |
 
