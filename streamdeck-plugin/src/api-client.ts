@@ -14,6 +14,7 @@ export type NowPlaying =
 export class ControlApiError extends Error {
   constructor(readonly status: number) {
     super(`control api responded ${status}`);
+    this.name = "ControlApiError";
   }
 }
 
@@ -35,6 +36,7 @@ export class JackyClient {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ discordUserId: this.s.discordUserId, ...extra }),
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) throw new ControlApiError(res.status);
   }
@@ -59,6 +61,7 @@ export class JackyClient {
     const query = `?discordUserId=${encodeURIComponent(this.s.discordUserId)}`;
     const res = await this.fetchFn(this.url("/control/now-playing") + query, {
       headers: { Authorization: `Bearer ${this.s.apiToken}` },
+      signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) throw new ControlApiError(res.status);
     return (await res.json()) as NowPlaying;

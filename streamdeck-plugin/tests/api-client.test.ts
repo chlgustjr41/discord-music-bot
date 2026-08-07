@@ -24,6 +24,7 @@ describe("JackyClient", () => {
     expect(init.method).toBe("POST");
     expect(init.headers.Authorization).toBe("Bearer tok");
     expect(JSON.parse(init.body)).toEqual({ discordUserId: "42", delta: 5 });
+    expect(init.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("GETs now-playing with the user id in the query", async () => {
@@ -35,6 +36,7 @@ describe("JackyClient", () => {
       "https://control.example.com/control/now-playing?discordUserId=42",
     );
     expect(result).toEqual({ active: false });
+    expect((f as any).mock.calls[0][1].headers.Authorization).toBe("Bearer tok");
   });
 
   it("throws ControlApiError carrying the status on non-2xx", async () => {
