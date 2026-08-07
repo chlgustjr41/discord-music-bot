@@ -158,6 +158,17 @@ class FakeMe:
 
 
 @dataclass
+class FakeVoiceState:
+    channel: object = None
+
+
+@dataclass
+class FakeMember:
+    id: int
+    voice: FakeVoiceState | None = None
+
+
+@dataclass
 class FakeVoiceChannel:
     id: int
     name: str = "General"
@@ -177,9 +188,13 @@ class FakeGuild:
     name: str = "Guild"
     icon: object = None
     channels: dict = field(default_factory=dict)
+    members_by_id: dict = field(default_factory=dict)
 
     def get_channel(self, channel_id):
         return self.channels.get(channel_id)
+
+    def get_member(self, user_id):
+        return self.members_by_id.get(user_id)
 
     def add_voice_channel(self, channel_id, name="General"):
         channel = FakeVoiceChannel(id=channel_id, name=name, guild=self)
@@ -199,6 +214,9 @@ class FakeBot:
 
     def get_channel(self, channel_id):
         return None
+
+    def is_ready(self):
+        return True
 
 
 @dataclass(frozen=True)
