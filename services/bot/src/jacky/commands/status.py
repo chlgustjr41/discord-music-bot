@@ -12,7 +12,7 @@ import discord
 from discord.ext import commands
 
 from jacky import __version__
-from jacky.commands.embeds import EMBED_COLOR
+from jacky.commands.embeds import EMBED_COLOR, error_embed, success_embed
 
 log = logging.getLogger("jacky.status")
 
@@ -145,6 +145,21 @@ class Status(commands.Cog):
 
         embed.set_footer(text="Playbook details: docs/operations/RUNBOOK.md")
         await ctx.send(embed=embed)
+
+    @commands.command(name="unlink", brief="Revoke your Stream Deck sign-ins")
+    async def unlink(self, ctx: commands.Context) -> None:
+        """Revoke every Stream Deck control token minted for your Discord
+        account. Sign in again from the Stream Deck to re-link."""
+        token_store = getattr(self.bot, "token_store", None)
+        if token_store is None:
+            await ctx.send(embed=error_embed("Stream Deck control is not enabled."))
+            return
+        count = await token_store.revoke_user(str(ctx.author.id))
+        if count > 0:
+            msg = f"Unlinked {count} Stream Deck sign-in(s)."
+        else:
+            msg = "No active sign-ins."
+        await ctx.send(embed=success_embed(msg))
 
 
 async def setup(bot: commands.Bot) -> None:

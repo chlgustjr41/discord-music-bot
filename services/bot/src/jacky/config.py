@@ -19,6 +19,7 @@ class Settings:
     empty_channel_timeout_seconds: int
     discord_client_id: str
     discord_client_secret: str
+    public_control_url: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -40,6 +41,9 @@ class Settings:
             ),
             discord_client_id=os.environ.get("DISCORD_CLIENT_ID", ""),
             discord_client_secret=os.environ.get("DISCORD_CLIENT_SECRET", ""),
+            public_control_url=os.environ.get(
+                "PUBLIC_CONTROL_URL", "https://control.jacky-music-bot.com"
+            ).rstrip("/"),
         )
 
     @property

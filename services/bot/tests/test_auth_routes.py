@@ -140,6 +140,42 @@ async def test_start_rate_limited_on_11th_call_from_one_ip(client):
     assert (await resp.json()) == {"error": "rate-limited"}
 
 
+async def test_start_rate_limit_buckets_by_cf_connecting_ip(client):
+    # Behind cloudflared, CF-Connecting-IP is the real client — each IP gets
+    # its own bucket, so two clients get 10 starts each before a 429.
+    for ip in ("1.1.1.1", "2.2.2.2"):
+        for _ in range(10):
+            resp = await client.post(
+                "/control/auth/start", headers={"CF-Connecting-IP": ip}
+            )
+            assert resp.status == 200
+    resp = await client.post(
+        "/control/auth/start", headers={"CF-Connecting-IP": "1.1.1.1"}
+    )
+    assert resp.status == 429
+    assert (await resp.json()) == {"error": "rate-limited"}
+    # the other "IP" is also at its limit — but a fresh one still gets in
+    resp = await client.post(
+        "/control/auth/start", headers={"CF-Connecting-IP": "3.3.3.3"}
+    )
+    assert resp.status == 200
+
+
+async def test_start_pending_cap_returns_busy(client):
+    # Fill the pending dict to the cap using distinct client IPs so the
+    # per-IP rate limit never trips before the global cap does.
+    for i in range(auth_mod.PENDING_CAP):
+        resp = await client.post(
+            "/control/auth/start", headers={"CF-Connecting-IP": f"10.0.{i // 250}.{i % 250}"}
+        )
+        assert resp.status == 200
+    resp = await client.post(
+        "/control/auth/start", headers={"CF-Connecting-IP": "203.0.113.99"}
+    )
+    assert resp.status == 429
+    assert (await resp.json()) == {"error": "busy"}
+
+
 # ── callback ─────────────────────────────────────────────────────────────
 
 

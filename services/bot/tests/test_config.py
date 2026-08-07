@@ -45,3 +45,15 @@ def test_discord_oauth_settings_default_empty(monkeypatch: pytest.MonkeyPatch) -
     s = Settings.from_env()
     assert s.discord_client_id == "123456789012345678"
     assert s.discord_client_secret == "secret123"
+
+
+def test_public_control_url_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    for var, val in REQUIRED.items():
+        monkeypatch.setenv(var, val)
+    monkeypatch.delenv("PUBLIC_CONTROL_URL", raising=False)
+    s = Settings.from_env()
+    assert s.public_control_url == "https://control.jacky-music-bot.com"
+
+    monkeypatch.setenv("PUBLIC_CONTROL_URL", "https://ctrl.example.com/")
+    s = Settings.from_env()
+    assert s.public_control_url == "https://ctrl.example.com"

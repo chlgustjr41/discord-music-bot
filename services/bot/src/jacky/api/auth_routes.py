@@ -25,6 +25,7 @@ log = logging.getLogger("jacky.control.auth")
 STATE_TTL_S = 600.0
 START_LIMIT = 10
 START_WINDOW_S = 60.0
+PENDING_CAP = 200  # global backstop against pending-state memory growth
 
 # Dark background + coral accent to match the Stream Deck plugin's look.
 _PAGE = """<!doctype html>
@@ -65,9 +66,16 @@ def register_auth_routes(
             del pending[s]
 
     async def auth_start(request: web.Request) -> web.Response:
-        if not limiter.allow(request.remote or "unknown"):
+        # CF-Connecting-IP is trustworthy only because ingress is tunnel-only
+        # (cloudflared): clients cannot reach this port directly to spoof it.
+        # Behind the tunnel request.remote is the tunnel container's address,
+        # so without the header the per-IP limit would effectively be global.
+        ip = request.headers.get("CF-Connecting-IP") or request.remote or "unknown"
+        if not limiter.allow(ip):
             return web.json_response({"error": "rate-limited"}, status=429)
         sweep()
+        if len(pending) >= PENDING_CAP:
+            return web.json_response({"error": "busy"}, status=429)
         state = secrets.token_urlsafe(32)
         pending[state] = {"createdAt": time.monotonic()}
         return web.json_response(

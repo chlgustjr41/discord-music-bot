@@ -84,6 +84,7 @@ class JackyBot(commands.Bot):
         self.node: LavalinkNode | None = None
         self.node_provider: SingleNodeProvider | None = None
         self.service: PlayerService | None = None
+        self.token_store = None  # set in setup_hook when OAuth is configured
         self._health_runner = None
 
     async def setup_hook(self) -> None:
@@ -121,12 +122,47 @@ class JackyBot(commands.Bot):
         self.summon_watcher = SummonWatcher(self, self.repo, self.service)
         self.summon_watcher.start()
         health_app = build_app(self, self.service)
-        if False:  # replaced by OAuth wiring in Task 6
-            from jacky.api.control import register_control_routes
+        self.token_store = None
+        if self.settings.discord_client_id and self.settings.discord_client_secret:
+            from jacky.api.auth_routes import register_auth_routes
+            from jacky.api.control import (
+                _MEMBER_LOOKUP_ERRORS,
+                register_control_routes,
+            )
+            from jacky.api.oauth import DiscordOAuth
+            from jacky.api.ratelimit import SlidingWindow
+            from jacky.api.tokens import TokenStore
 
+            oauth = DiscordOAuth(
+                self.http_session,
+                self.settings.discord_client_id,
+                self.settings.discord_client_secret,
+                f"{self.settings.public_control_url}/control/auth/callback",
+            )
+            self.token_store = TokenStore(self.repo)
+
+            async def member_gate(user_id: str) -> bool:
+                # Activated-guild membership: cache first, REST fallback.
+                # Runs once per sign-in, so per-guild REST calls are fine.
+                for guild in self.guilds:
+                    if not await self.repo.is_activated(str(guild.id)):
+                        continue
+                    if guild.get_member(int(user_id)):
+                        return True
+                    try:
+                        await guild.fetch_member(int(user_id))
+                        return True
+                    except _MEMBER_LOOKUP_ERRORS:
+                        continue
+                return False
+
+            register_auth_routes(
+                health_app, oauth=oauth, token_store=self.token_store,
+                member_gate=member_gate,
+            )
             register_control_routes(
                 health_app, bot=self, service=self.service,
-                token=self.settings.control_api_token,
+                token_store=self.token_store, limiter=SlidingWindow(),
             )
         self._health_runner = await start_health_server(
             self, self.service, self.settings.health_port, app=health_app
