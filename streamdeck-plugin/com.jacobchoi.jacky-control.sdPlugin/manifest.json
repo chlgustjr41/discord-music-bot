@@ -6,6 +6,7 @@
   "Author": "Jacob Choi",
   "Version": "0.1.0.0",
   "Category": "Jacky Music",
+  "CategoryIcon": "imgs/plugin-icon",
   "Icon": "imgs/plugin-icon",
   "CodePath": "bin/plugin.js",
   "SDKVersion": 2,
