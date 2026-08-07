@@ -17,9 +17,15 @@ import hashlib
 import logging
 from typing import Any
 
+import discord
 from aiohttp import web
 
 log = logging.getLogger("jacky.control")
+
+# Errors that mean "member lookup came back negative", not "the API broke".
+# Module-level so tests can monkeypatch it with the conftest FakeNotFound
+# (constructing a real discord.NotFound requires a fake aiohttp response).
+_MEMBER_LOOKUP_ERRORS: tuple = (discord.NotFound, discord.HTTPException)
 
 
 def register_control_routes(
@@ -151,6 +157,57 @@ def register_control_routes(
             })
         return web.json_response(out)
 
+    async def summon(request: web.Request, user_id: str) -> web.Response:
+        """Toggle: join the requested voice channel, or leave it if the bot
+        is already there (queue preserved, current track requeued)."""
+        body = await body_of(request)
+        try:
+            guild_id = int(str(body["guildId"]))
+            channel_id = int(str(body["channelId"]))
+        except (KeyError, TypeError, ValueError):
+            return web.json_response({"error": "bad-request"}, status=400)
+
+        guild = bot.get_guild(guild_id)
+        if guild is None:
+            # Same error as non-membership: don't leak which guilds exist.
+            return web.json_response({"error": "not-a-member"}, status=403)
+
+        # Membership gate: cache first, REST fallback (summon must work even
+        # when the user isn't in voice yet, so the cache can legitimately miss).
+        member = guild.get_member(member_id_of(user_id))
+        if member is None:
+            try:
+                member = await guild.fetch_member(member_id_of(user_id))
+            except _MEMBER_LOOKUP_ERRORS:
+                member = None
+        if member is None:
+            return web.json_response({"error": "not-a-member"}, status=403)
+
+        if not await service.repo.is_activated(str(guild.id)):
+            return web.json_response({"error": "not-activated"}, status=403)
+
+        voice = guild.voice_client
+        if voice is not None:
+            if getattr(getattr(voice, "channel", None), "id", None) == channel_id:
+                await service.teardown_session(guild.id, requeue_current=True)
+                return web.json_response({"action": "left"})
+            return web.json_response({"error": "active-elsewhere"}, status=409)
+
+        channel = guild.get_channel(channel_id)
+        if channel is None or not hasattr(channel, "connect"):
+            return web.json_response({"error": "bad-channel"}, status=400)
+        try:
+            from jacky.audio.voice import LavalinkVoiceClient
+
+            await channel.connect(cls=LavalinkVoiceClient)
+            code = await service.begin_session(guild, channel)
+        except Exception:  # noqa: BLE001 — any join failure surfaces as 502
+            log.exception(
+                "summon join failed (guild %s, channel %s)", guild_id, channel_id
+            )
+            return web.json_response({"error": "join-failed"}, status=502)
+        return web.json_response({"action": "joined", "sessionCode": code})
+
     app.add_routes([
         web.get("/control/now-playing", guarded(now_playing)),
         web.post("/control/play-pause", guarded(play_pause)),
@@ -158,5 +215,6 @@ def register_control_routes(
         web.post("/control/stop", guarded(stop)),
         web.post("/control/volume", guarded(volume)),
         web.get("/control/channels", guarded(channels)),
+        web.post("/control/summon", guarded(summon)),
     ])
     log.info("control API routes registered")

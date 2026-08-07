@@ -125,7 +125,7 @@ async def test_all_control_routes_require_auth(client):
             resp = await client.request(route.method, path)
             assert resp.status == 401, f"{route.method} {path}"
             seen_paths.add(path)
-    assert len(seen_paths) == 6  # now-playing + 4 actions + channels
+    assert len(seen_paths) == 7  # now-playing + 4 actions + channels + summon
 
 
 async def test_string_user_id_resolves_int_keyed_member(client, service, guild_id, auth):
@@ -323,3 +323,183 @@ async def test_channels_excludes_guild_where_not_member(client, service, guild_i
     resp = await client.get("/control/channels", headers=auth)
     body = await resp.json()
     assert [g["guildId"] for g in body] == [str(guild_id)]
+
+
+async def test_channels_empty_when_no_qualifying_guilds(client, service, guild_id, auth):
+    """Member of the guild but it's deactivated -> 200 with an empty list,
+    not an error (the PI renders 'no servers')."""
+    guild = service.bot.get_guild(guild_id)
+    guild.add_voice_channel(99, name="General")
+    guild.members_by_id[USER_ID] = FakeMember(id=USER_ID)
+    service.repo.activated_overrides[str(guild_id)] = False
+
+    resp = await client.get("/control/channels", headers=auth)
+    assert resp.status == 200
+    assert (await resp.json()) == []
+
+
+# ── summon ───────────────────────────────────────────────────────────────
+
+def summon_body(guild_id, channel_id):
+    return {"guildId": str(guild_id), "channelId": str(channel_id)}
+
+
+async def test_summon_joins_and_opens_session(client, service, guild_id, sid, auth):
+    guild = service.bot.get_guild(guild_id)
+    guild.voice_client = None  # not connected anywhere
+    guild.add_voice_channel(99, name="Music")
+    guild.members_by_id[USER_ID] = FakeMember(id=USER_ID)
+
+    resp = await client.post(
+        "/control/summon", json=summon_body(guild_id, 99), headers=auth
+    )
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["action"] == "joined" and body["sessionCode"]
+    assert guild.voice_client is not None  # channel.connect ran
+    state = await service.repo.get_state(sid)
+    assert state["voiceChannelId"] == "99"
+    assert state["sessionCode"] == body["sessionCode"]
+
+
+async def test_summon_same_channel_leaves_and_requeues_current(
+    client, service, guild_id, sid, auth
+):
+    from tests.conftest import FakeVoice
+
+    guild = service.bot.get_guild(guild_id)
+    channel = guild.add_voice_channel(99, name="Music")
+    guild.voice_client = FakeVoice(channel=channel)
+    guild.members_by_id[USER_ID] = FakeMember(id=USER_ID)
+    await service.repo.update_state(sid, {
+        "currentTrack": {"title": "Now", "startedAt": 123},
+        "queue": [{"title": "Next"}],
+    })
+
+    resp = await client.post(
+        "/control/summon", json=summon_body(guild_id, 99), headers=auth
+    )
+    assert resp.status == 200
+    assert (await resp.json()) == {"action": "left"}
+    state = await service.repo.get_state(sid)
+    # Current track requeued at the head, existing queue preserved.
+    assert [t["title"] for t in state["queue"]] == ["Now", "Next"]
+    assert "startedAt" not in state["queue"][0]
+    assert state["currentTrack"] is None
+    assert guild.voice_client.disconnected
+
+
+async def test_summon_409_when_active_in_another_channel(
+    client, service, guild_id, auth
+):
+    from tests.conftest import FakeVoice
+
+    guild = service.bot.get_guild(guild_id)
+    elsewhere = guild.add_voice_channel(50, name="Other")
+    guild.add_voice_channel(99, name="Music")
+    guild.voice_client = FakeVoice(channel=elsewhere)
+    guild.members_by_id[USER_ID] = FakeMember(id=USER_ID)
+
+    resp = await client.post(
+        "/control/summon", json=summon_body(guild_id, 99), headers=auth
+    )
+    assert resp.status == 409
+    assert (await resp.json()) == {"error": "active-elsewhere"}
+
+
+async def test_summon_403_for_non_member(client, service, guild_id, auth, monkeypatch):
+    """Absent from the member cache AND fetch_member raises -> 403."""
+    # Import conftest by the SAME module name pytest loaded it under
+    # (top-level "conftest", no tests/__init__.py): exception identity must
+    # match the raise site in FakeGuild.fetch_member, and importing it as
+    # tests.conftest would yield a second, distinct FakeNotFound class.
+    import conftest
+    from jacky.api import control
+
+    monkeypatch.setattr(
+        control, "_MEMBER_LOOKUP_ERRORS", (conftest.FakeNotFound,)
+    )
+    guild = service.bot.get_guild(guild_id)
+    guild.voice_client = None
+    guild.add_voice_channel(99)  # guild exists; user just isn't in it
+
+    resp = await client.post(
+        "/control/summon", json=summon_body(guild_id, 99), headers=auth
+    )
+    assert resp.status == 403
+    assert (await resp.json()) == {"error": "not-a-member"}
+
+
+async def test_summon_unknown_guild_is_403_not_a_member(client, auth):
+    """Unknown guild id gets the same error as non-membership so the
+    endpoint doesn't leak which guilds exist."""
+    resp = await client.post(
+        "/control/summon", json=summon_body(999999, 99), headers=auth
+    )
+    assert resp.status == 403
+    assert (await resp.json()) == {"error": "not-a-member"}
+
+
+async def test_summon_403_when_guild_not_activated(client, service, guild_id, auth):
+    service.repo.activated_overrides[str(guild_id)] = False
+    guild = service.bot.get_guild(guild_id)
+    guild.voice_client = None
+    guild.add_voice_channel(99)
+    guild.members_by_id[USER_ID] = FakeMember(id=USER_ID)
+
+    resp = await client.post(
+        "/control/summon", json=summon_body(guild_id, 99), headers=auth
+    )
+    assert resp.status == 403
+    assert (await resp.json()) == {"error": "not-activated"}
+
+
+async def test_summon_400_for_unknown_or_unconnectable_channel(
+    client, service, guild_id, auth
+):
+    from types import SimpleNamespace
+
+    guild = service.bot.get_guild(guild_id)
+    guild.voice_client = None
+    guild.members_by_id[USER_ID] = FakeMember(id=USER_ID)
+    # A text-like channel: present in the cache but has no connect().
+    guild.channels[77] = SimpleNamespace(id=77, name="general-text")
+
+    for channel_id in (12345, 77):  # nonexistent / not connectable
+        resp = await client.post(
+            "/control/summon", json=summon_body(guild_id, channel_id), headers=auth
+        )
+        assert resp.status == 400, channel_id
+        assert (await resp.json()) == {"error": "bad-channel"}
+
+
+async def test_summon_400_for_missing_or_non_numeric_fields(client, auth):
+    bad_bodies = [
+        {},
+        {"guildId": "123"},
+        {"channelId": "99"},
+        {"guildId": "abc", "channelId": "99"},
+        {"guildId": "123", "channelId": "abc"},
+    ]
+    for body in bad_bodies:
+        resp = await client.post("/control/summon", json=body, headers=auth)
+        assert resp.status == 400, body
+        assert (await resp.json()) == {"error": "bad-request"}
+
+
+async def test_summon_502_when_connect_fails(client, service, guild_id, auth):
+    guild = service.bot.get_guild(guild_id)
+    guild.voice_client = None
+    channel = guild.add_voice_channel(99)
+    guild.members_by_id[USER_ID] = FakeMember(id=USER_ID)
+
+    async def boom(*, cls=None):
+        raise RuntimeError("missing voice permission (fake)")
+
+    channel.connect = boom  # instance attr shadows the dataclass method
+
+    resp = await client.post(
+        "/control/summon", json=summon_body(guild_id, 99), headers=auth
+    )
+    assert resp.status == 502
+    assert (await resp.json()) == {"error": "join-failed"}
