@@ -31,13 +31,17 @@ def test_from_env_missing_required_raises(monkeypatch: pytest.MonkeyPatch) -> No
         Settings.from_env()
 
 
-def test_control_api_token_defaults_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_discord_oauth_settings_default_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     for var, val in REQUIRED.items():
         monkeypatch.setenv(var, val)
-    monkeypatch.delenv("CONTROL_API_TOKEN", raising=False)
+    monkeypatch.delenv("DISCORD_CLIENT_ID", raising=False)
+    monkeypatch.delenv("DISCORD_CLIENT_SECRET", raising=False)
     s = Settings.from_env()
-    assert s.control_api_token == ""
+    assert s.discord_client_id == ""
+    assert s.discord_client_secret == ""
 
-    monkeypatch.setenv("CONTROL_API_TOKEN", "secret123")
+    monkeypatch.setenv("DISCORD_CLIENT_ID", "123456789012345678")
+    monkeypatch.setenv("DISCORD_CLIENT_SECRET", "secret123")
     s = Settings.from_env()
-    assert s.control_api_token == "secret123"
+    assert s.discord_client_id == "123456789012345678"
+    assert s.discord_client_secret == "secret123"

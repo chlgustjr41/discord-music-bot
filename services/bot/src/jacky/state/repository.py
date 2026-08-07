@@ -290,3 +290,37 @@ class ServerRepository:
 
     async def log_music(self, server_id: str, track: dict) -> None:
         await self._run(self._log_music, server_id, track)
+
+    # ── control tokens ──────────────────────────────────────────────────
+
+    def _save_control_token(self, token_hash: str, data: dict) -> None:
+        self.db.collection("controlTokens").document(token_hash).set(data)
+
+    async def save_control_token(self, token_hash: str, data: dict) -> None:
+        await self._run(self._save_control_token, token_hash, data)
+
+    def _get_control_token(self, token_hash: str) -> dict | None:
+        doc = self.db.collection("controlTokens").document(token_hash).get()
+        return doc.to_dict() if doc.exists else None
+
+    async def get_control_token(self, token_hash: str) -> dict | None:
+        return await self._run(self._get_control_token, token_hash)
+
+    def _delete_control_tokens_for_user(self, user_id: str) -> int:
+        docs = list(
+            self.db.collection("controlTokens").where("userId", "==", user_id).stream()
+        )
+        for doc in docs:
+            doc.reference.delete()
+        return len(docs)
+
+    async def delete_control_tokens_for_user(self, user_id: str) -> int:
+        return await self._run(self._delete_control_tokens_for_user, user_id)
+
+    def _touch_control_token(self, token_hash: str, iso_now: str) -> None:
+        self.db.collection("controlTokens").document(token_hash).set(
+            {"lastUsed": iso_now}, merge=True
+        )
+
+    async def touch_control_token(self, token_hash: str, iso_now: str) -> None:
+        await self._run(self._touch_control_token, token_hash, iso_now)

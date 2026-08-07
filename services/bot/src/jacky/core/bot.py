@@ -121,7 +121,7 @@ class JackyBot(commands.Bot):
         self.summon_watcher = SummonWatcher(self, self.repo, self.service)
         self.summon_watcher.start()
         health_app = build_app(self, self.service)
-        if self.settings.control_api_token:
+        if False:  # replaced by OAuth wiring in Task 6
             from jacky.api.control import register_control_routes
 
             register_control_routes(
