@@ -1297,6 +1297,46 @@ describe("SessionPoller", () => {
     poller.unsubscribe(cb);
   });
 
+  it("does not stack chains when resubscribed while a poll is in flight", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const poll = vi.fn(async () => {
+      await gate;
+      return { active: false } as const;
+    });
+    const poller = new SessionPoller(poll, 5000, 30000);
+    const a = collect();
+    const b = collect();
+    poller.subscribe(a.cb);          // starts chain; poll 1 in flight, blocked
+    poller.unsubscribe(a.cb);        // timer is null; nothing to clear
+    poller.subscribe(b.cb);          // must NOT start a second chain
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(poll).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(poll).toHaveBeenCalledTimes(2);  // one chain, one poll per interval
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(poll).toHaveBeenCalledTimes(3);
+    poller.unsubscribe(b.cb);
+  });
+
+  it("keeps polling when a subscriber throws", async () => {
+    const poll = vi.fn(async () => {
+      throw new ControlApiError(500);
+    });
+    const poller = new SessionPoller(poll, 5000, 30000);
+    const bad = vi.fn(() => { throw new Error("boom"); });
+    const good = collect();
+    poller.subscribe(bad);
+    poller.subscribe(good.cb);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(good.states[0]).toEqual({ kind: "offline" });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(poll).toHaveBeenCalledTimes(2);  // loop survived the throw
+    poller.unsubscribe(bad);
+    poller.unsubscribe(good.cb);
+  });
+
   it("maps 401 to unauthorized and status 0 to unconfigured", async () => {
     const poller401 = new SessionPoller(async () => {
       throw new ControlApiError(401);
@@ -1339,6 +1379,12 @@ const BACKOFF_AFTER_FAILURES = 3;
 export class SessionPoller {
   private readonly subs = new Set<(s: PollState) => void>();
   private timer: ReturnType<typeof setTimeout> | null = null;
+  /** True iff a tick chain is alive (poll in flight or timer pending).
+   *  Guards against starting a second chain when a resubscribe happens
+   *  while a poll is still in flight (timer is null at that moment). */
+  private polling = false;
+  // Deliberately persists across unsubscribe/resubscribe: the server was
+  // just failing, so the backoff state is still real.
   private failures = 0;
 
   constructor(
@@ -1349,7 +1395,10 @@ export class SessionPoller {
 
   subscribe(cb: (s: PollState) => void): void {
     this.subs.add(cb);
-    if (this.subs.size === 1) void this.tick();
+    if (this.subs.size === 1 && !this.polling) {
+      this.polling = true;
+      void this.tick();
+    }
   }
 
   unsubscribe(cb: (s: PollState) => void): void {
@@ -1357,11 +1406,20 @@ export class SessionPoller {
     if (this.subs.size === 0 && this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
+      this.polling = false;
     }
   }
 
   private emit(s: PollState): void {
-    for (const cb of this.subs) cb(s);
+    // Set iteration is safe against self-unsubscribe; per-callback try/catch
+    // keeps one bad subscriber from killing the shared poll loop.
+    for (const cb of this.subs) {
+      try {
+        cb(s);
+      } catch {
+        // subscriber errors must not break polling
+      }
+    }
   }
 
   private async tick(): Promise<void> {
@@ -1383,6 +1441,8 @@ export class SessionPoller {
     if (this.subs.size > 0) {
       const delay = this.failures >= BACKOFF_AFTER_FAILURES ? this.maxMs : this.baseMs;
       this.timer = setTimeout(() => void this.tick(), delay);
+    } else {
+      this.polling = false;
     }
   }
 }

@@ -60,6 +60,46 @@ describe("SessionPoller", () => {
     poller.unsubscribe(cb);
   });
 
+  it("does not stack chains when resubscribed while a poll is in flight", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const poll = vi.fn(async () => {
+      await gate;
+      return { active: false } as const;
+    });
+    const poller = new SessionPoller(poll, 5000, 30000);
+    const a = collect();
+    const b = collect();
+    poller.subscribe(a.cb);          // starts chain; poll 1 in flight, blocked
+    poller.unsubscribe(a.cb);        // timer is null; nothing to clear
+    poller.subscribe(b.cb);          // must NOT start a second chain
+    release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(poll).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(poll).toHaveBeenCalledTimes(2);  // one chain, one poll per interval
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(poll).toHaveBeenCalledTimes(3);
+    poller.unsubscribe(b.cb);
+  });
+
+  it("keeps polling when a subscriber throws", async () => {
+    const poll = vi.fn(async () => {
+      throw new ControlApiError(500);
+    });
+    const poller = new SessionPoller(poll, 5000, 30000);
+    const bad = vi.fn(() => { throw new Error("boom"); });
+    const good = collect();
+    poller.subscribe(bad);
+    poller.subscribe(good.cb);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(good.states[0]).toEqual({ kind: "offline" });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(poll).toHaveBeenCalledTimes(2);  // loop survived the throw
+    poller.unsubscribe(bad);
+    poller.unsubscribe(good.cb);
+  });
+
   it("maps 401 to unauthorized and status 0 to unconfigured", async () => {
     const poller401 = new SessionPoller(async () => {
       throw new ControlApiError(401);
