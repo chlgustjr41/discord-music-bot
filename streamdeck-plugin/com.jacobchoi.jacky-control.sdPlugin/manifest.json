@@ -69,7 +69,7 @@
       "Tooltip": "Shows the current track",
       "PropertyInspectorPath": "ui/settings.html",
       "Controllers": ["Keypad"],
-      "States": [{ "Image": "imgs/now-playing", "TitleAlignment": "middle" }]
+      "States": [{ "Image": "imgs/now-playing", "TitleAlignment": "bottom" }]
     },
     {
       "UUID": "com.jacobchoi.jacky-control.summon",
