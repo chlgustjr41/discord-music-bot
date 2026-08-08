@@ -8,6 +8,7 @@ import {
   type WillDisappearEvent,
 } from "@elgato/streamdeck";
 import { marquee } from "../format";
+import { letterboxSvg } from "../image";
 import { handlePiEvent } from "../pi-bridge";
 import type { PollState } from "../poller";
 import { poller } from "../runtime";
@@ -23,24 +24,30 @@ export class NowPlaying extends SingletonAction {
   // undefined = "unknown, re-apply on next tick"; null = "this track has no
   // artwork". Conflating them lets a stale cover survive a track that has none.
   private lastThumbUrl: string | null | undefined = undefined;
+  private scrollTimer: ReturnType<typeof setInterval> | null = null;
+  private titleSuffix = "";
 
   private readonly onPoll = (s: PollState): void => {
-    let text: string;
-    if (s.kind === "unconfigured") text = "Setup\nneeded";
-    else if (s.kind === "unauthorized") text = "Auth\nerror";
-    else if (s.kind === "offline") text = "Offline";
-    else if (!s.data.active) text = "No\nsession";
-    else if (!s.data.title) text = `${s.data.guildName}\n(idle)`;
+    // Every branch that shows static text must kill a running scroll timer
+    // first, or the timer keeps repainting a marquee frame over the message.
+    const setStatic = (text: string): void => {
+      this.stopScrolling();
+      this.lastTitle = null;
+      for (const a of this.actions) a.setTitle(text).catch(() => {});
+    };
+    if (s.kind === "unconfigured") setStatic("Setup\nneeded");
+    else if (s.kind === "unauthorized") setStatic("Auth\nerror");
+    else if (s.kind === "offline") setStatic("Offline");
+    else if (!s.data.active) setStatic("No\nsession");
+    else if (!s.data.title) setStatic(`${s.data.guildName}\n(idle)`);
     else {
       if (s.data.title !== this.lastTitle) {
         this.offset = 0;
         this.lastTitle = s.data.title;
       }
-      text = marquee(s.data.title, this.offset, TITLE_WIDTH);
-      if (s.data.paused) text += "\n⏸";
-      this.offset += 2;
+      this.titleSuffix = s.data.paused ? "\n⏸" : "";
+      this.startScrolling(s.data.title); // the scroll timer renders the title
     }
-    for (const a of this.actions) a.setTitle(text).catch(() => {});
 
     const thumb = s.kind === "data" && s.data.active ? s.data.thumbnail : null;
     if (thumb !== this.lastThumbUrl) {
@@ -50,7 +57,7 @@ export class NowPlaying extends SingletonAction {
         void loadThumbnail(thumb).then((uri) => {
           // A slow fetch may land after another track change — drop it.
           if (uri && this.lastThumbUrl === thumb) {
-            for (const a of this.actions) void a.setImage(uri).catch(() => {});
+            for (const a of this.actions) void a.setImage(letterboxSvg(uri)).catch(() => {});
           }
         });
       } else {
@@ -60,6 +67,34 @@ export class NowPlaying extends SingletonAction {
       }
     }
   };
+
+  private renderTitle(): void {
+    if (this.lastTitle === null) return;
+    const text = marquee(this.lastTitle, this.offset, TITLE_WIDTH) + this.titleSuffix;
+    for (const a of this.actions) a.setTitle(text).catch(() => {});
+  }
+
+  private startScrolling(title: string): void {
+    this.renderTitle();
+    // Scroll on a 400 ms clock, not the 5 s poll — otherwise a long title
+    // crawls one step per poll and never reads as scrolling.
+    if (title.length <= TITLE_WIDTH) {
+      this.stopScrolling();
+      return;
+    }
+    if (this.scrollTimer) return;
+    this.scrollTimer = setInterval(() => {
+      this.offset += 1;
+      this.renderTitle();
+    }, 400);
+  }
+
+  private stopScrolling(): void {
+    if (this.scrollTimer) {
+      clearInterval(this.scrollTimer);
+      this.scrollTimer = null;
+    }
+  }
 
   override onSendToPlugin(ev: SendToPluginEvent<JsonValue, JsonObject>): Promise<void> {
     return handlePiEvent(ev.payload);
@@ -81,6 +116,8 @@ export class NowPlaying extends SingletonAction {
   override onWillDisappear(_ev: WillDisappearEvent): void {
     if (--this.visible === 0) {
       poller.unsubscribe(this.onPoll);
+      this.stopScrolling();
+      this.lastTitle = null;
       this.lastThumbUrl = undefined;
     }
   }
