@@ -17,7 +17,9 @@ class Settings:
     guardian_status_url: str
     idle_timeout_seconds: int
     empty_channel_timeout_seconds: int
-    control_api_token: str
+    discord_client_id: str
+    discord_client_secret: str
+    public_control_url: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -37,7 +39,11 @@ class Settings:
             empty_channel_timeout_seconds=int(
                 os.environ.get("EMPTY_CHANNEL_TIMEOUT_SECONDS", "120")
             ),
-            control_api_token=os.environ.get("CONTROL_API_TOKEN", ""),
+            discord_client_id=os.environ.get("DISCORD_CLIENT_ID", ""),
+            discord_client_secret=os.environ.get("DISCORD_CLIENT_SECRET", ""),
+            public_control_url=os.environ.get(
+                "PUBLIC_CONTROL_URL", "https://control.jacky-music-bot.com"
+            ).rstrip("/"),
         )
 
     @property

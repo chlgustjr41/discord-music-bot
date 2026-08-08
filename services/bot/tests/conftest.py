@@ -7,6 +7,10 @@ import pytest
 from jacky.audio.models import LoadResult
 
 
+class FakeNotFound(Exception):
+    """Mirrors discord.NotFound semantics for FakeGuild.fetch_member."""
+
+
 class FakeRepo:
     def __init__(self) -> None:
         self.states: dict[str, dict] = {}
@@ -14,6 +18,10 @@ class FakeRepo:
         self.command_log: list = []
         self.history: list = []
         self.session_codes: dict[str, str] = {}
+        self.control_tokens: dict[str, dict] = {}
+        # Per-guild activation override; falls back to the `activated` class
+        # attribute (all-or-nothing) when a guild id has no entry.
+        self.activated_overrides: dict[str, bool] = {}
 
     async def init_state(self, sid):
         self.states.setdefault(sid, {
@@ -89,7 +97,24 @@ class FakeRepo:
     activated = True
 
     async def is_activated(self, sid):
-        return self.activated
+        return self.activated_overrides.get(sid, self.activated)
+
+    async def save_control_token(self, token_hash, data):
+        self.control_tokens[token_hash] = data
+
+    async def get_control_token(self, token_hash):
+        return self.control_tokens.get(token_hash)
+
+    async def delete_control_tokens_for_user(self, user_id):
+        matches = [
+            h for h, d in self.control_tokens.items() if d.get("userId") == user_id
+        ]
+        for h in matches:
+            del self.control_tokens[h]
+        return len(matches)
+
+    async def touch_control_token(self, token_hash, iso_now):
+        self.control_tokens.setdefault(token_hash, {})["lastUsed"] = iso_now
 
 
 def make_track(title="Song", url="https://youtu.be/abc123", encoded="ENC1",
@@ -189,6 +214,7 @@ class FakeGuild:
     icon: object = None
     channels: dict = field(default_factory=dict)
     members_by_id: dict = field(default_factory=dict)
+    voice_channels: list = field(default_factory=list)
 
     def get_channel(self, channel_id):
         return self.channels.get(channel_id)
@@ -196,9 +222,16 @@ class FakeGuild:
     def get_member(self, user_id):
         return self.members_by_id.get(user_id)
 
+    async def fetch_member(self, user_id):
+        member = self.members_by_id.get(user_id)
+        if member is None:
+            raise FakeNotFound(f"member {user_id} not found")
+        return member
+
     def add_voice_channel(self, channel_id, name="General"):
         channel = FakeVoiceChannel(id=channel_id, name=name, guild=self)
         self.channels[channel_id] = channel
+        self.voice_channels.append(channel)
         return channel
 
 

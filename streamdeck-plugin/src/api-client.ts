@@ -1,5 +1,3 @@
-import type { GlobalSettings } from "./settings";
-
 export type NowPlaying =
   | { active: false }
   | {
@@ -11,6 +9,16 @@ export type NowPlaying =
       guildName: string;
     };
 
+export type ChannelList = {
+  guildId: string;
+  guildName: string;
+  channels: { id: string; name: string }[];
+}[];
+
+export type SummonResult = { action: "joined" | "left"; sessionCode?: string };
+
+export type ClientConfig = { apiUrl: string; authToken: string };
+
 export class ControlApiError extends Error {
   constructor(readonly status: number) {
     super(`control api responded ${status}`);
@@ -20,50 +28,65 @@ export class ControlApiError extends Error {
 
 export class JackyClient {
   constructor(
-    private readonly s: Required<GlobalSettings>,
+    private readonly cfg: ClientConfig,
     private readonly fetchFn: typeof fetch = fetch,
   ) {}
 
   private url(path: string): string {
-    return this.s.apiUrl.replace(/\/+$/, "") + path;
+    return this.cfg.apiUrl.replace(/\/+$/, "") + path;
   }
 
-  private async post(path: string, extra: Record<string, unknown> = {}): Promise<void> {
+  private async post(path: string, body: Record<string, unknown> = {}): Promise<Response> {
     const res = await this.fetchFn(this.url(path), {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${this.s.apiToken}`,
+        Authorization: `Bearer ${this.cfg.authToken}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ discordUserId: this.s.discordUserId, ...extra }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) throw new ControlApiError(res.status);
+    return res;
   }
 
-  playPause(): Promise<void> {
-    return this.post("/control/play-pause");
+  private async get(path: string): Promise<Response> {
+    const res = await this.fetchFn(this.url(path), {
+      headers: { Authorization: `Bearer ${this.cfg.authToken}` },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) throw new ControlApiError(res.status);
+    return res;
   }
 
-  skip(): Promise<void> {
-    return this.post("/control/skip");
+  async playPause(): Promise<void> {
+    await this.post("/control/play-pause");
   }
 
-  stop(): Promise<void> {
-    return this.post("/control/stop");
+  async skip(): Promise<void> {
+    await this.post("/control/skip");
   }
 
-  volume(delta: number): Promise<void> {
-    return this.post("/control/volume", { delta });
+  async stop(): Promise<void> {
+    await this.post("/control/stop");
+  }
+
+  async volume(delta: number): Promise<void> {
+    await this.post("/control/volume", { delta });
   }
 
   async nowPlaying(): Promise<NowPlaying> {
-    const query = `?discordUserId=${encodeURIComponent(this.s.discordUserId)}`;
-    const res = await this.fetchFn(this.url("/control/now-playing") + query, {
-      headers: { Authorization: `Bearer ${this.s.apiToken}` },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) throw new ControlApiError(res.status);
+    const res = await this.get("/control/now-playing");
     return (await res.json()) as NowPlaying;
+  }
+
+  async channels(): Promise<ChannelList> {
+    const res = await this.get("/control/channels");
+    return (await res.json()) as ChannelList;
+  }
+
+  async summon(guildId: string, channelId: string): Promise<SummonResult> {
+    const res = await this.post("/control/summon", { guildId, channelId });
+    return (await res.json()) as SummonResult;
   }
 }

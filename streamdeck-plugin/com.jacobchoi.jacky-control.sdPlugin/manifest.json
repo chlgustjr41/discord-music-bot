@@ -4,7 +4,7 @@
   "Name": "Jacky Session Control",
   "Description": "Control your Jacky Music Discord session: play/pause, skip, stop, volume, now playing.",
   "Author": "Jacob Choi",
-  "Version": "0.1.0.0",
+  "Version": "0.2.0.0",
   "Category": "Jacky Music",
   "CategoryIcon": "imgs/plugin-icon",
   "Icon": "imgs/plugin-icon",
@@ -70,6 +70,18 @@
       "PropertyInspectorPath": "ui/settings.html",
       "Controllers": ["Keypad"],
       "States": [{ "Image": "imgs/now-playing", "TitleAlignment": "middle" }]
+    },
+    {
+      "UUID": "com.jacobchoi.jacky-control.summon",
+      "Name": "Summon",
+      "Icon": "imgs/summon",
+      "Tooltip": "Join or leave the configured voice channel",
+      "PropertyInspectorPath": "ui/settings.html",
+      "Controllers": ["Keypad"],
+      "States": [
+        { "Image": "imgs/summon", "TitleAlignment": "bottom" },
+        { "Image": "imgs/summoned", "TitleAlignment": "bottom" }
+      ]
     }
   ]
 }
