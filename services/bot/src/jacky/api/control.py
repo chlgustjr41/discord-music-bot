@@ -28,6 +28,21 @@ log = logging.getLogger("jacky.control")
 _MEMBER_LOOKUP_ERRORS: tuple = (discord.NotFound, discord.HTTPException)
 
 
+def _is_valid_document_id(name: str) -> bool:
+    """Firestore document-id rules we can violate from a request body.
+
+    "/" is a path separator (odd segment counts raise, even counts silently
+    address a DIFFERENT document); "." and ".." are path traversal; __x__ is
+    reserved. All of these reach the SDK as a 500 unless rejected here.
+    """
+    return (
+        bool(name)
+        and "/" not in name
+        and name not in (".", "..")
+        and not (name.startswith("__") and name.endswith("__"))
+    )
+
+
 def register_control_routes(
     app: web.Application, *, bot: Any, service: Any, token_store: Any, limiter: Any
 ) -> None:
@@ -234,9 +249,7 @@ def register_control_routes(
         if err:
             return err
         name = body.get("playlistName")
-        # "/" would be a Firestore path separator: odd segment counts raise
-        # (500) and even counts silently address a different document.
-        if not isinstance(name, str) or not name or "/" in name:
+        if not isinstance(name, str) or not _is_valid_document_id(name):
             return web.json_response({"error": "bad-request"}, status=400)
         if guild.voice_client is None:
             return web.json_response({"error": "no-active-session"}, status=409)

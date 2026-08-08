@@ -710,18 +710,18 @@ async def test_playlist_rejects_bad_body_and_outsiders(client, service, guild_id
     assert resp.status == 403
 
 
-async def test_playlist_rejects_a_name_with_a_path_separator(
-    client, service, guild_id, sid, auth
-):
-    """Firestore treats "/" as a path separator — reject before it reaches the
-    document lookup, where it would 500 or address a different document."""
+async def test_playlist_rejects_invalid_document_ids(client, service, guild_id, sid, auth):
+    """Firestore document-id rules: "/" is a path separator, "."/".." are
+    traversal, __x__ is reserved. Each would reach the SDK as a 500 rather
+    than a clean 400 if we let it through."""
     await arm_playlist_guild(service, guild_id)
-    resp = await client.post(
-        "/control/playlist",
-        json={"guildId": sid, "playlistName": "a/b"},
-        headers=auth,
-    )
-    assert resp.status == 400
+    for bad in ("a/b", ".", "..", "__proto__"):
+        resp = await client.post(
+            "/control/playlist",
+            json={"guildId": sid, "playlistName": bad},
+            headers=auth,
+        )
+        assert resp.status == 400, bad
 
 
 async def test_playlist_decides_before_writing_the_queue(
