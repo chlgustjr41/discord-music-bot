@@ -5,9 +5,16 @@ requirement is structured phrases with consistent behavior, and a table is
 free, instant, and testable. Song search is the ONE free-form case: anything
 matching no command becomes a search query.
 
-Note the asymmetry: matching uses a fully normalized string (punctuation
-stripped) but the ARGUMENT is sliced from the original text, so a query like
-"AC/DC" survives intact.
+Note the asymmetry: the ARGUMENT is always sliced from the original text, so a
+query like "AC/DC" survives intact.
+
+Matching is layered, not uniform:
+- exact commands match a fully normalized transcript (punctuation stripped,
+  whitespace collapsed);
+- prefixed commands match the lowercased text only, so "Play, playlist X"
+  (comma after the verb) or a doubled space falls through to search.
+  Normalizing those too would require mapping offsets back into the original
+  text, since the ARGUMENT must keep its punctuation ("AC/DC").
 """
 
 import re
@@ -70,9 +77,9 @@ def parse_intent(transcript: str) -> Intent | None:
 
     for prefix, kind in _PLAYLIST_PREFIXES:
         if lowered.startswith(prefix):
-            arg = text[len(prefix) :].strip()
-            if arg:
-                return Intent(kind, arg)
+            # No emptiness guard needed: `text` is already stripped, so
+            # nothing can start with "play playlist " and leave "" behind.
+            return Intent(kind, text[len(prefix) :].strip())
 
     for prefix in _SEARCH_PREFIXES:
         if lowered.startswith(prefix):

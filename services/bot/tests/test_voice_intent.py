@@ -139,3 +139,29 @@ async def test_transcriber_raises_on_non_200():
     t = OpenAITranscriber(_FakeHttp(_FakeResponse(500, {})), "sk", "m")
     with pytest.raises(TranscribeError):
         await t.transcribe(b"RIFFfake")
+
+
+async def test_transcriber_wraps_network_faults():
+    from jacky.api.transcribe import OpenAITranscriber, TranscribeError
+
+    class _Boom:
+        def post(self, *a, **k):
+            raise OSError("connection reset")
+
+    t = OpenAITranscriber(_Boom(), "sk", "m")
+    with pytest.raises(TranscribeError) as exc:
+        await t.transcribe(b"RIFFfake")
+    assert isinstance(exc.value.__cause__, OSError)
+
+
+async def test_transcriber_does_not_double_wrap_a_status_error():
+    """The non-200 TranscribeError must propagate as-is, not get re-wrapped
+    by the broad network handler — otherwise __cause__ would be a
+    TranscribeError and the message would nest."""
+    from jacky.api.transcribe import OpenAITranscriber, TranscribeError
+
+    t = OpenAITranscriber(_FakeHttp(_FakeResponse(500, {})), "sk", "m")
+    with pytest.raises(TranscribeError) as exc:
+        await t.transcribe(b"RIFFfake")
+    assert exc.value.__cause__ is None
+    assert "500" in str(exc.value)
