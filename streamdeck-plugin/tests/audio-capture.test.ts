@@ -113,7 +113,10 @@ describe("MicRecorder", () => {
     proc.emit("error", new Error("spawn ffmpeg ENOENT"));
     expect(rec.spawnFailed).toBe(true);
     expect(proc.kill).toHaveBeenCalled();
-    // Resolves without waiting on a "close" that will never come.
+    // Timing is the assertion: under fake timers, with no "close" emitted and
+    // no timer advanced, this only settles because stop() returns early. If it
+    // waited on the 2 s fallback the await would never resolve.
+    vi.useFakeTimers();
     expect((await rec.stop()).length).toBe(0);
   });
 

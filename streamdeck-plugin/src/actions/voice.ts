@@ -52,7 +52,11 @@ export class Voice extends SingletonAction<VoiceSettings> {
     // delivers onKeyUp first. Without this check we would spawn ffmpeg with no
     // key left to stop it, holding the mic open until the 15 s cap — breaking
     // the promise that the mic is open only while the key is held.
-    if (st.ups >= press) return;
+    // Also re-check identity: onWillDisappear may have deleted (and a later
+    // press recreated) this key's state while we awaited getSettings, which
+    // would strand the recorder we are about to spawn in an unreachable state
+    // object with nothing able to stop it.
+    if (st.ups >= press || this.keys.get(ev.action.id) !== st) return;
     // Defence in depth: never leave an earlier press's recorder running.
     const stale = st.recorder;
     st.recorder = null;
@@ -75,7 +79,10 @@ export class Voice extends SingletonAction<VoiceSettings> {
 
   override async onKeyUp(ev: KeyUpEvent<VoiceSettings>): Promise<void> {
     const st = this.stateFor(ev.action.id);
-    st.ups++;
+    // "every outstanding press is cancelled" — idempotent, so a key-up with no
+    // matching key-down (state recreated after onWillDisappear) cannot drift
+    // the counters into permanently suppressing every future press.
+    st.ups = st.downs;
     const recorder = st.recorder;
     st.recorder = null;
     // No recorder: either onKeyDown is still mid-await (the counter above has
