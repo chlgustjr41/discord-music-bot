@@ -316,3 +316,55 @@ def test_discord_oauth_authorize_url_contains_expected_params():
     assert "response_type=code" in url
     assert "redirect_uri=https%3A%2F%2Fcontrol.test%2Fcontrol%2Fauth%2Fcallback" in url
     assert "s3cret" not in url
+
+
+# ── device binding: the state-relay phish (security audit C1) ────────────
+
+
+async def test_relayed_authorize_link_cannot_mint_a_token(client, gate, repo):
+    """Attacker starts a sign-in, sends the authorize link to a real member.
+
+    The victim's browser completes Discord's consent screen, so the callback
+    would otherwise mint a token for the VICTIM and hand it to the attacker's
+    poller. Binding the callback to the address that started the flow blocks
+    the relay: no token is minted and the attacker's poll never yields one.
+    """
+    started = await client.post(
+        "/control/auth/start", headers={"CF-Connecting-IP": "198.51.100.7"}
+    )
+    state = (await started.json())["state"]
+
+    # Victim clicks the relayed link from their own network.
+    resp = await client.get(
+        f"/control/auth/callback?code=c0de&state={state}",
+        headers={"CF-Connecting-IP": "203.0.113.42"},
+    )
+    assert resp.status == 403
+    assert "started on a different device" in (await resp.text())
+    assert repo.control_tokens == {}, "no token may be minted for a relayed link"
+
+    # The attacker's poll must never yield a token either.
+    polled = await client.get(
+        f"/control/auth/poll?state={state}",
+        headers={"CF-Connecting-IP": "198.51.100.7"},
+    )
+    assert polled.status == 403
+    assert (await polled.json())["error"] == "device-mismatch"
+    assert gate.calls == [], "membership gate must not even be consulted"
+
+
+async def test_same_device_sign_in_still_succeeds(client, repo):
+    """The honest flow — plugin and browser share one public address."""
+    ip = {"CF-Connecting-IP": "198.51.100.7"}
+    started = await client.post("/control/auth/start", headers=ip)
+    state = (await started.json())["state"]
+
+    resp = await client.get(
+        f"/control/auth/callback?code=c0de&state={state}", headers=ip
+    )
+    assert resp.status == 200
+    assert len(repo.control_tokens) == 1
+
+    polled = await client.get(f"/control/auth/poll?state={state}", headers=ip)
+    assert polled.status == 200
+    assert (await polled.json())["discordUserId"] == USER_ID

@@ -61,6 +61,19 @@ In the Stream Deck app, drop any Jacky action on a key and click **Sign in with 
 
 Once signed in, their authentication persists across restarts and key changes.
 
+> **Sign-in must be started from the Stream Deck itself.** The button opens
+> the browser on the same machine, and the server requires the browser that
+> finishes sign-in to come from the same address that started it. If someone
+> sends you a "sign in to Jacky Music" link, it will be rejected
+> ("Sign-in started somewhere else") — that link would have handed *them* a
+> token carrying *your* identity. Never complete a sign-in link you didn't
+> start yourself.
+>
+> Same-address binding also means an unusual network setup (plugin and
+> browser leaving via different addresses, e.g. a VPN on one but not the
+> other) can block a legitimate sign-in. If that happens, disable the VPN or
+> proxy for the sign-in and retry.
+
 ## Behavior notes
 
 - Keys act on the guild where *you* currently sit in a voice channel with a

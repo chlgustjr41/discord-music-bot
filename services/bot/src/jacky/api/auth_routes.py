@@ -77,7 +77,9 @@ def register_auth_routes(
         if len(pending) >= PENDING_CAP:
             return web.json_response({"error": "busy"}, status=429)
         state = secrets.token_urlsafe(32)
-        pending[state] = {"createdAt": time.monotonic()}
+        # `ip` is retained to bind the browser that completes this sign-in to
+        # the device that started it — see auth_callback.
+        pending[state] = {"createdAt": time.monotonic(), "ip": ip}
         return web.json_response(
             {"state": state, "authorizeUrl": oauth.authorize_url(state)}
         )
@@ -91,6 +93,30 @@ def register_auth_routes(
             return _page(
                 410, "Sign-in link expired",
                 "Go back to the Stream Deck and start the sign-in again.",
+            )
+        # Device binding (security audit C1). The pending `state` is a bearer
+        # secret for the sign-in flow: whoever holds it claims the token that
+        # this callback mints, and the token is minted for whoever completed
+        # Discord's consent screen. Unbound, an attacker could start a
+        # sign-in, send the resulting authorize link to a real member, and
+        # poll out a token carrying THAT member's identity — defeating the
+        # membership gate entirely without ever joining a server.
+        #
+        # The plugin opens the system browser on the same machine that called
+        # /start, so requiring the same source address closes the relay while
+        # costing the honest flow nothing.
+        caller_ip = (
+            request.headers.get("CF-Connecting-IP") or request.remote or "unknown"
+        )
+        if entry.get("ip") != caller_ip:
+            entry["failed"] = "device-mismatch"
+            log.warning("auth callback from a different address than /start")
+            return _page(
+                403, "Sign-in started somewhere else",
+                "For your safety this sign-in was blocked: it was started on a "
+                "different device or network. Only ever start sign-in from the "
+                "Stream Deck you are setting up — never from a link someone "
+                "sends you.",
             )
         try:
             access_token = await oauth.exchange_code(code)

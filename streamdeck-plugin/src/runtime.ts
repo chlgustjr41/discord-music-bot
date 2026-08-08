@@ -1,6 +1,6 @@
 import streamDeck from "@elgato/streamdeck";
 import { ControlApiError, JackyClient } from "./api-client";
-import { signIn } from "./auth";
+import { signIn, SignInError } from "./auth";
 import { SessionPoller } from "./poller";
 import { effectiveApiUrl, settingsReady, type GlobalSettings } from "./settings";
 
@@ -33,6 +33,33 @@ export async function initRuntime(): Promise<void> {
 
 export type SignInFlowResult = { ok: boolean; userName?: string; error?: string };
 
+/** Turn a failed sign-in into something a person can act on. The server's
+ *  error code is more specific than the status (403 covers both "you're not
+ *  in a server Jacky serves" and "this sign-in was started elsewhere"). */
+function describeSignInFailure(err: unknown): string {
+  if (err instanceof SignInError) {
+    switch (err.code) {
+      case "not-a-member":
+        return "Your Discord account isn't in a server Jacky Music serves.";
+      case "device-mismatch":
+        return "Blocked: finish sign-in in the browser on this computer — never from a link someone sent you.";
+      case "timeout":
+        return "Sign-in timed out. Try again.";
+      case "unknown-state":
+        return "Sign-in expired. Try again.";
+      case "busy":
+      case "rate-limited":
+        return "The server is busy with sign-ins. Try again in a minute.";
+      default:
+        return `Sign-in failed (${err.status}).`;
+    }
+  }
+  if (err instanceof Error && err.name === "TimeoutError") {
+    return "Could not reach the server. Check the Server URL and your connection.";
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
 /** Run the browser OAuth sign-in and persist the minted token + identity. */
 export async function signInFlow(): Promise<SignInFlowResult> {
   try {
@@ -52,12 +79,6 @@ export async function signInFlow(): Promise<SignInFlowResult> {
     apply(merged);
     return { ok: true, userName: result.discordUserName };
   } catch (err) {
-    const error =
-      err instanceof ControlApiError
-        ? `sign-in failed (${err.status})`
-        : err instanceof Error
-          ? err.message
-          : String(err);
-    return { ok: false, error };
+    return { ok: false, error: describeSignInFailure(err) };
   }
 }

@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ControlApiError } from "../src/api-client";
-import { signIn } from "../src/auth";
+import { signIn, SignInError } from "../src/auth";
 
 function res(status: number, body: unknown = {}) {
   return {
@@ -69,10 +68,15 @@ describe("signIn", () => {
       .mockResolvedValueOnce(res(410, { error: "gone" })) as unknown as typeof fetch;
 
     const promise = signIn("https://control.example.com", vi.fn(), f);
-    const assertion = expect(promise).rejects.toMatchObject({ status: 410 });
+    // The server's own error code rides along so the PI can explain the
+    // cause (403 alone can't distinguish not-a-member from device-mismatch).
+    const assertion = expect(promise).rejects.toMatchObject({
+      status: 410,
+      code: "gone",
+    });
     await vi.advanceTimersByTimeAsync(2000);
     await assertion;
-    await expect(promise).rejects.toBeInstanceOf(ControlApiError);
+    await expect(promise).rejects.toBeInstanceOf(SignInError);
   });
 
   it("rejects with 408 after five minutes of pending polls", async () => {
