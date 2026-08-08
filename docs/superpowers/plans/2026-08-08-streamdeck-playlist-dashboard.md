@@ -426,7 +426,25 @@ async def test_playlist_rejects_bad_body_and_outsiders(client, service, guild_id
 Run: `py -m pytest tests/test_control_api.py -q -k playlist`
 Expected: the new insert tests FAIL with 404 (route absent); the Task 3 listing tests still pass.
 
-- [ ] **Step 3: Implement.** In `control.py`, add after the `playlists` handler:
+- [ ] **Step 3: Implement.** First add this module-level helper next to `_MEMBER_LOOKUP_ERRORS` (pure, and a future route may want it):
+
+```python
+def _is_valid_document_id(name: str) -> bool:
+    """Firestore document-id rules we can violate from a request body.
+
+    "/" is a path separator (odd segment counts raise, even counts silently
+    address a DIFFERENT document); "." and ".." are path traversal; __x__ is
+    reserved. All of these reach the SDK as a 500 unless rejected here.
+    """
+    return (
+        bool(name)
+        and "/" not in name
+        and name not in (".", "..")
+        and not (name.startswith("__") and name.endswith("__"))
+    )
+```
+
+Then add the handler after the `playlists` handler:
 
 ```python
     async def play_playlist(request: web.Request, user_id: str) -> web.Response:
@@ -436,7 +454,10 @@ Expected: the new insert tests FAIL with 404 (route absent); the Task 3 listing 
         if err:
             return err
         name = body.get("playlistName")
-        if not isinstance(name, str) or not name:
+        # Firestore document-id rules: "/" is a path separator (odd segment
+        # counts raise, even counts address a DIFFERENT doc), "."/".." are
+        # traversal, __x__ is reserved. Each is a 500 unless rejected here.
+        if not isinstance(name, str) or not _is_valid_document_id(name):
             return web.json_response({"error": "bad-request"}, status=400)
         if guild.voice_client is None:
             return web.json_response({"error": "no-active-session"}, status=409)
@@ -753,6 +774,11 @@ export async function loadThumbnail(
     if (!res.ok) return null;
     const type = res.headers.get("content-type") ?? "image/jpeg";
     if (!type.startsWith("image/")) return null;
+    const declared = Number(res.headers.get("content-length"));
+    // Check the declared size BEFORE buffering: arrayBuffer() would otherwise
+    // materialize the whole body and only then reject it. Servers that omit
+    // content-length still fall through to the post-read check.
+    if (Number.isFinite(declared) && declared > MAX_BYTES) return null;
     const buf = await res.arrayBuffer();
     if (buf.byteLength === 0 || buf.byteLength > MAX_BYTES) return null;
     return `data:${type.split(";")[0]};base64,${Buffer.from(buf).toString("base64")}`;
@@ -786,7 +812,9 @@ import { loadThumbnail } from "../thumbnail";
 ```
 
 ```ts
-  private lastThumbUrl: string | null = null;
+  // undefined = "unknown, re-apply next tick"; null = "track has no artwork".
+  // Conflating them lets a stale cover survive a track that has none.
+  private lastThumbUrl: string | null | undefined = undefined;
 ```
 
 - [ ] **Step 2: Render it.** Inside the existing `onPoll` handler, after the block that computes `text` and before/after the `setTitle` loop, add artwork handling:
@@ -811,10 +839,16 @@ import { loadThumbnail } from "../thumbnail";
     }
 ```
 
-- [ ] **Step 3: Reset on disappear.** In `onWillDisappear`, inside the existing `if (--this.visible === 0)` block, add:
+- [ ] **Step 3: Reset on appear and disappear.** In `onWillDisappear`, inside the existing `if (--this.visible === 0)` block, add `this.lastThumbUrl = undefined;`. In `onWillAppear`, add the same line **unconditionally** (outside the `if (++this.visible === 1)` block) — the poller does not replay its last state to new subscribers, so without it a second Now Playing key sits on the manifest icon until the track changes:
 
 ```ts
-      this.lastThumbUrl = null;
+  override onWillAppear(_ev: WillAppearEvent): void {
+    this.lastThumbUrl = undefined;
+    if (++this.visible === 1) {
+      this.offset = 0;
+      poller.subscribe(this.onPoll);
+    }
+  }
 ```
 
 - [ ] **Step 4: Move the title below the art.** In `manifest.json`, in the `com.jacobchoi.jacky-control.now-playing` action's `States[0]`, change `"TitleAlignment": "middle"` to `"TitleAlignment": "bottom"`.
