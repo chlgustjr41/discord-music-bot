@@ -125,8 +125,9 @@ async def test_all_control_routes_require_auth(client):
             resp = await client.request(route.method, path)
             assert resp.status == 401, f"{route.method} {path}"
             seen_paths.add(path)
-    # now-playing + 4 actions + channels + summon + playlists + playlist
-    assert len(seen_paths) == 9
+    # now-playing + 4 actions + channels + summon
+    # + playlists + playlist + dashboard-url
+    assert len(seen_paths) == 10
 
 
 async def test_string_user_id_resolves_int_keyed_member(client, service, guild_id, auth):
@@ -707,3 +708,36 @@ async def test_playlist_rejects_bad_body_and_outsiders(client, service, guild_id
         headers=auth,
     )
     assert resp.status == 403
+
+
+# ── dashboard url ────────────────────────────────────────────────────────
+
+async def test_dashboard_url_points_at_the_live_session(
+    client, service, guild_id, sid, auth
+):
+    put_user_in_voice(service, guild_id)
+    await service.repo.set_session_code(sid, "ABC123")
+    body = await (await client.get("/control/dashboard-url", headers=auth)).json()
+    assert body == {
+        "active": True,
+        "url": "http://web.test/dashboard/ABC123",
+        "guildName": "Guild",
+    }
+
+
+async def test_dashboard_url_falls_back_to_the_entry_page(client, auth):
+    """No session: the key still opens something useful rather than failing."""
+    body = await (await client.get("/control/dashboard-url", headers=auth)).json()
+    assert body == {"active": False, "url": "http://web.test/app"}
+
+
+async def test_dashboard_url_falls_back_when_session_code_missing(
+    client, service, guild_id, sid, auth
+):
+    """Live session whose code was invalidated mid-teardown — never build
+    '/dashboard/None'."""
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {"sessionCode": None})
+    body = await (await client.get("/control/dashboard-url", headers=auth)).json()
+    assert body["active"] is False
+    assert body["url"] == "http://web.test/app"

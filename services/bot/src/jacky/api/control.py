@@ -262,6 +262,25 @@ def register_control_routes(
             await service.play_next(guild.id)
         return web.json_response({"inserted": len(queued), "playlistName": name})
 
+    async def dashboard_url(request: web.Request, user_id: str) -> web.Response:
+        """Where to point a browser for the caller's current session.
+
+        The code is read live, never cached client-side: begin_session mints a
+        new one per session and teardown invalidates it.
+        """
+        web_base = service.settings.web_app_url.rstrip("/")
+        guild = await resolve_guild(member_id_of(user_id))
+        if guild is not None:
+            state = await service.repo.get_state(str(guild.id)) or {}
+            code = state.get("sessionCode")
+            if code:
+                return web.json_response({
+                    "active": True,
+                    "url": f"{web_base}/dashboard/{code}",
+                    "guildName": guild.name,
+                })
+        return web.json_response({"active": False, "url": f"{web_base}/app"})
+
     async def summon(request: web.Request, user_id: str) -> web.Response:
         """Toggle: join the requested voice channel, or leave it if the bot
         is already there (queue preserved, current track requeued)."""
@@ -310,6 +329,7 @@ def register_control_routes(
         web.get("/control/channels", guarded(channels)),
         web.get("/control/playlists", guarded(playlists)),
         web.post("/control/playlist", guarded(play_playlist)),
+        web.get("/control/dashboard-url", guarded(dashboard_url)),
         web.post("/control/summon", guarded(summon)),
     ])
     log.info("control API routes registered")
