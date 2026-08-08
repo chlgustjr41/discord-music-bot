@@ -93,3 +93,49 @@ def test_stop_is_not_a_voice_command():
 )
 def test_playlist_name_normalization_matches_loosely(a, b):
     assert normalize_playlist_name(a) == normalize_playlist_name(b)
+
+
+# ── transcription client ─────────────────────────────────────────────────
+
+
+class _FakeResponse:
+    def __init__(self, status, payload):
+        self.status, self._payload = status, payload
+
+    async def json(self):
+        return self._payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class _FakeHttp:
+    def __init__(self, response):
+        self._response, self.calls = response, []
+
+    def post(self, url, **kwargs):
+        self.calls.append((url, kwargs))
+        return self._response
+
+
+async def test_transcriber_posts_audio_and_returns_text():
+    from jacky.api.transcribe import OpenAITranscriber
+
+    http = _FakeHttp(_FakeResponse(200, {"text": "  play bohemian rhapsody "}))
+    t = OpenAITranscriber(http, "sk-test", "gpt-4o-mini-transcribe")
+    assert await t.transcribe(b"RIFFfake") == "play bohemian rhapsody"
+
+    url, kwargs = http.calls[0]
+    assert url.endswith("/audio/transcriptions")
+    assert kwargs["headers"]["Authorization"] == "Bearer sk-test"
+
+
+async def test_transcriber_raises_on_non_200():
+    from jacky.api.transcribe import OpenAITranscriber, TranscribeError
+
+    t = OpenAITranscriber(_FakeHttp(_FakeResponse(500, {})), "sk", "m")
+    with pytest.raises(TranscribeError):
+        await t.transcribe(b"RIFFfake")
