@@ -710,6 +710,54 @@ async def test_playlist_rejects_bad_body_and_outsiders(client, service, guild_id
     assert resp.status == 403
 
 
+async def test_playlist_rejects_a_name_with_a_path_separator(
+    client, service, guild_id, sid, auth
+):
+    """Firestore treats "/" as a path separator — reject before it reaches the
+    document lookup, where it would 500 or address a different document."""
+    await arm_playlist_guild(service, guild_id)
+    resp = await client.post(
+        "/control/playlist",
+        json={"guildId": sid, "playlistName": "a/b"},
+        headers=auth,
+    )
+    assert resp.status == 400
+
+
+async def test_playlist_decides_before_writing_the_queue(
+    client, service, guild_id, sid, auth
+):
+    """The queue write wakes the Firestore listener, which auto-starts playback
+    when it sees the queue grow while idle. Reading state after the write would
+    leave a window for it to pop the track we just inserted."""
+    await arm_playlist_guild(service, guild_id)
+    await service.repo.update_state(sid, {"queue": [], "currentTrack": None})
+
+    order: list[str] = []
+    real_update, real_get = service.repo.update_state, service.repo.get_state
+
+    async def spy_update(s, data):
+        if "queue" in data:
+            order.append("write")
+        return await real_update(s, data)
+
+    async def spy_get(s):
+        order.append("read")
+        return await real_get(s)
+
+    service.repo.update_state, service.repo.get_state = spy_update, spy_get
+    try:
+        resp = await client.post(
+            "/control/playlist",
+            json={"guildId": sid, "playlistName": "Chill"},
+            headers=auth,
+        )
+    finally:
+        service.repo.update_state, service.repo.get_state = real_update, real_get
+    assert resp.status == 200
+    assert order.index("read") < order.index("write")
+
+
 # ── dashboard url ────────────────────────────────────────────────────────
 
 async def test_dashboard_url_points_at_the_live_session(

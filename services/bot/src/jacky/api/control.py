@@ -234,7 +234,9 @@ def register_control_routes(
         if err:
             return err
         name = body.get("playlistName")
-        if not isinstance(name, str) or not name:
+        # "/" would be a Firestore path separator: odd segment counts raise
+        # (500) and even counts silently address a different document.
+        if not isinstance(name, str) or not name or "/" in name:
             return web.json_response({"error": "bad-request"}, status=400)
         if guild.voice_client is None:
             return web.json_response({"error": "no-active-session"}, status=409)
@@ -251,10 +253,16 @@ def register_control_routes(
         requested_by = getattr(member, "display_name", "") or "Stream Deck"
         queued = [{**t, "requestedBy": requested_by} for t in tracks]
         existing = await service.repo.get_queue(sid)
+        # Decide BEFORE the write: the queue write is what wakes the Firestore
+        # listener, and listener.py auto-starts playback when it sees the queue
+        # grow while idle. Any await between the write and the start call is a
+        # window for it to fire first and pop the track we just inserted.
+        was_playing = bool((await service.repo.get_state(sid) or {}).get("currentTrack"))
+        # Read-modify-write of the whole queue: a concurrent web-app append
+        # between the read above and this write is lost. Same single-user
+        # tradeoff the play_pause toggle documents.
         await service.repo.update_state(sid, {"queue": [*queued, *existing]})
-
-        state = await service.repo.get_state(sid) or {}
-        if state.get("currentTrack"):
+        if was_playing:
             # Reuse the TrackEnd path j!skip uses; play_next pops the new head.
             await service.skip(guild.id)
         else:
