@@ -57,3 +57,25 @@ def test_public_control_url_default_and_override(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("PUBLIC_CONTROL_URL", "https://ctrl.example.com/")
     s = Settings.from_env()
     assert s.public_control_url == "https://ctrl.example.com"
+
+
+def test_public_control_url_ignores_an_empty_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """docker-compose passes optional vars as ${VAR:-}, which SETS them to an
+    empty string — so a .get() default never fires. An empty base produced the
+    relative redirect_uri "/control/auth/callback", which Discord rejects, and
+    every sign-in failed. Empty must fall back to the default, like unset.
+    """
+    for key, value in REQUIRED.items():
+        monkeypatch.setenv(key, value)
+    default = "https://control.jacky-music-bot.com"
+
+    monkeypatch.delenv("PUBLIC_CONTROL_URL", raising=False)
+    assert Settings.from_env().public_control_url == default
+
+    monkeypatch.setenv("PUBLIC_CONTROL_URL", "")  # what compose actually sends
+    assert Settings.from_env().public_control_url == default
+
+    monkeypatch.setenv("PUBLIC_CONTROL_URL", "https://other.example.com/")
+    assert Settings.from_env().public_control_url == "https://other.example.com"

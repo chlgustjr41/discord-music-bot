@@ -41,8 +41,14 @@ class Settings:
             ),
             discord_client_id=os.environ.get("DISCORD_CLIENT_ID", ""),
             discord_client_secret=os.environ.get("DISCORD_CLIENT_SECRET", ""),
-            public_control_url=os.environ.get(
-                "PUBLIC_CONTROL_URL", "https://control.jacky-music-bot.com"
+            # `or` (not a .get default): compose passes optional vars through
+            # as ${VAR:-}, which SETS them to an empty string, so a .get
+            # default never fires. An empty base silently produced the
+            # relative redirect_uri "/control/auth/callback", which Discord
+            # rejects — every sign-in would fail.
+            public_control_url=(
+                os.environ.get("PUBLIC_CONTROL_URL")
+                or "https://control.jacky-music-bot.com"
             ).rstrip("/"),
         )
 
