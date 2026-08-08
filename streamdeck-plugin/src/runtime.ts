@@ -1,7 +1,7 @@
 import streamDeck from "@elgato/streamdeck";
 import { ControlApiError, JackyClient } from "./api-client";
 import { SessionPoller } from "./poller";
-import { settingsReady, type GlobalSettings } from "./settings";
+import { effectiveApiUrl, settingsReady, type GlobalSettings } from "./settings";
 
 let client: JackyClient | null = null;
 
@@ -17,7 +17,9 @@ export const poller = new SessionPoller(async () => {
 /** Load global settings and rebuild the client whenever they change. */
 export async function initRuntime(): Promise<void> {
   const apply = (s: GlobalSettings) => {
-    client = settingsReady(s) ? new JackyClient(s) : null;
+    client = settingsReady(s)
+      ? new JackyClient({ apiUrl: effectiveApiUrl(s), authToken: s.authToken })
+      : null;
     poller.kick();
   };
   streamDeck.settings.onDidReceiveGlobalSettings<GlobalSettings>((ev) =>
