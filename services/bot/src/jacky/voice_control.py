@@ -61,7 +61,11 @@ class VoiceIntentDispatcher:
         try:
             result = await self.service.resolve(query)
         except Exception as exc:  # noqa: BLE001 — surfaced on the key
-            log.warning("voice search failed for %r: %s", query, exc)
+            # Deliberately NOT logging `query`: it is the user's transcribed
+            # speech. Transcripts are persisted only to the session's command
+            # history (an explicit product decision with a known audience);
+            # container stdout has different retention and readers.
+            log.warning("voice search failed: %s", exc)
             return DispatchResult(False, "Search failed")
         if not result.tracks:
             return DispatchResult(False, f"No results for {query}")
