@@ -9,6 +9,38 @@ from tests.conftest import FakeGuild, FakeMember, FakeVoiceState
 USER_ID = 42
 
 
+@pytest.fixture(autouse=True)
+def _recognize_fake_member_lookup_errors(monkeypatch):
+    """Teach the production except-clause about the fake's not-found error.
+
+    FakeGuild.fetch_member raises conftest.FakeNotFound, which is not a
+    discord exception, so the REST-fallback `except` would let it escape as a
+    500. Every route that resolves a member by REST needs this, so it is
+    autouse rather than a line each test has to remember.
+
+    It APPENDS rather than replaces, so the real discord.NotFound /
+    discord.HTTPException stay part of what's under test.
+
+    Both module spellings are collected because `tests/` has no __init__.py:
+    pytest loads the fixtures as top-level `conftest` while test modules
+    import `tests.conftest`, producing two distinct class objects. Catching
+    only one makes the fix depend on which module built the fake.
+    """
+    import sys
+
+    from jacky.api import control
+
+    fakes = tuple(
+        mod.FakeNotFound
+        for name in ("conftest", "tests.conftest")
+        if (mod := sys.modules.get(name)) is not None
+        and hasattr(mod, "FakeNotFound")
+    )
+    monkeypatch.setattr(
+        control, "_MEMBER_LOOKUP_ERRORS", (*control._MEMBER_LOOKUP_ERRORS, *fakes)
+    )
+
+
 @pytest.fixture
 async def store(service):
     from jacky.api.tokens import TokenStore
@@ -789,3 +821,59 @@ async def test_dashboard_url_falls_back_when_session_code_missing(
     body = await (await client.get("/control/dashboard-url", headers=auth)).json()
     assert body["active"] is False
     assert body["url"] == "http://web.test/app"
+
+
+# ── PI dropdowns must work when you are NOT in voice ─────────────────────
+
+async def test_channels_lists_guilds_when_the_member_cache_misses(
+    client, service, guild_id, auth
+):
+    """Configuring a key happens while you're sitting at your desk, not in a
+    voice channel — and the bot runs without the privileged members intent, so
+    discord.py's cache holds roughly the bot plus whoever is in voice. A
+    cache-only membership check therefore hides every guild and the dropdown
+    comes back empty, which is exactly what "can't customize the key" looks
+    like. The listing endpoints must fall back to REST like summon does.
+    """
+    guild = service.bot.get_guild(guild_id)
+    guild.add_voice_channel(99, "General")
+    guild.members_by_id.clear()                       # not in voice -> cache miss
+    guild.rest_members_by_id[USER_ID] = FakeMember(id=USER_ID)
+
+    body = await (await client.get("/control/channels", headers=auth)).json()
+    assert [g["guildId"] for g in body] == [str(guild_id)]
+    assert body[0]["channels"] == [{"id": "99", "name": "General"}]
+
+
+async def test_playlists_lists_guilds_when_the_member_cache_misses(
+    client, service, guild_id, sid, auth
+):
+    """Same cache-miss gap as channels — see that test for why."""
+    guild = service.bot.get_guild(guild_id)
+    guild.members_by_id.clear()
+    guild.rest_members_by_id[USER_ID] = FakeMember(id=USER_ID)
+    await service.repo.save_playlist(sid, "Chill", [{"title": "a"}], "me")
+
+    body = await (await client.get("/control/playlists", headers=auth)).json()
+    assert [g["guildId"] for g in body] == [str(guild_id)]
+    assert body[0]["playlists"] == [{"name": "Chill", "trackCount": 1}]
+
+
+async def test_listings_still_exclude_true_outsiders(
+    client, service, guild_id, sid, auth, monkeypatch
+):
+    """The REST fallback must not turn into 'everyone sees every guild'."""
+    import conftest
+
+    from jacky.api import control
+
+    monkeypatch.setattr(
+        control, "_MEMBER_LOOKUP_ERRORS", (conftest.FakeNotFound,)
+    )
+    guild = service.bot.get_guild(guild_id)
+    guild.members_by_id.clear()
+    guild.rest_members_by_id.clear()                  # genuinely not a member
+    await service.repo.save_playlist(sid, "Chill", [{"title": "a"}], "me")
+
+    assert (await (await client.get("/control/channels", headers=auth)).json()) == []
+    assert (await (await client.get("/control/playlists", headers=auth)).json()) == []

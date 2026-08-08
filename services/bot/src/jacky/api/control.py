@@ -105,12 +105,7 @@ def register_control_routes(
             return None, None, web.json_response(
                 {"error": "not-a-member"}, status=403
             )
-        member = guild.get_member(member_id_of(user_id))
-        if member is None:
-            try:
-                member = await guild.fetch_member(member_id_of(user_id))
-            except _MEMBER_LOOKUP_ERRORS:
-                member = None
+        member = await member_of(guild, user_id)
         if member is None:
             return None, None, web.json_response(
                 {"error": "not-a-member"}, status=403
@@ -120,6 +115,24 @@ def register_control_routes(
                 {"error": "not-activated"}, status=403
             )
         return guild, member, None
+
+    async def member_of(guild, user_id: str):
+        """Resolve a guild member: cache first, REST fallback.
+
+        The REST call is not optional. The bot runs without the privileged
+        members intent (core/bot.py), so discord.py's cache holds roughly the
+        bot plus whoever is connected to voice. Anyone configuring a key from
+        their desk is a cache miss, and a cache-only check would silently
+        report them as "not a member" — which is what made the Property
+        Inspector dropdowns come back empty.
+        """
+        member = guild.get_member(member_id_of(user_id))
+        if member is not None:
+            return member
+        try:
+            return await guild.fetch_member(member_id_of(user_id))
+        except _MEMBER_LOOKUP_ERRORS:
+            return None
 
     async def body_of(request: web.Request) -> dict:
         try:
@@ -197,15 +210,14 @@ def register_control_routes(
         return web.json_response({"volume": new})
 
     async def channels(request: web.Request, user_id: str) -> web.Response:
-        # Cache-only membership check is acceptable here (spec §Decisions):
-        # a cache miss only hides a guild from the PI dropdown — it never
-        # grants access — and the PI refreshes after summon use.
-        member_id = member_id_of(user_id)
+        # Membership via member_of (cache -> REST): the PI lists these while
+        # the user is configuring a key, typically while NOT in voice, which
+        # is precisely when the member cache misses.
         out = []
         for guild in bot.guilds:
             if not await service.repo.is_activated(str(guild.id)):
                 continue
-            if not guild.get_member(member_id):
+            if not await member_of(guild, user_id):
                 continue
             out.append({
                 "guildId": str(guild.id),
@@ -221,12 +233,11 @@ def register_control_routes(
         # Same shape and filtering as `channels`, and deliberately NOT
         # session-gated: the Property Inspector lists these while the user is
         # configuring a key, long before any session exists.
-        member_id = member_id_of(user_id)
         out = []
         for guild in bot.guilds:
             if not await service.repo.is_activated(str(guild.id)):
                 continue
-            if not guild.get_member(member_id):
+            if not await member_of(guild, user_id):
                 continue
             saved = await service.repo.list_playlists(str(guild.id))
             out.append({

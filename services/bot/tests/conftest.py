@@ -231,6 +231,11 @@ class FakeGuild:
     icon: object = None
     channels: dict = field(default_factory=dict)
     members_by_id: dict = field(default_factory=dict)
+    # Members reachable only over REST, i.e. NOT in discord.py's cache. The
+    # bot runs without the privileged members intent, so the real cache holds
+    # roughly the bot plus whoever is connected to voice — everyone else has
+    # to be fetched. This dict reproduces that gap.
+    rest_members_by_id: dict = field(default_factory=dict)
     voice_channels: list = field(default_factory=list)
 
     def get_channel(self, channel_id):
@@ -240,7 +245,7 @@ class FakeGuild:
         return self.members_by_id.get(user_id)
 
     async def fetch_member(self, user_id):
-        member = self.members_by_id.get(user_id)
+        member = self.members_by_id.get(user_id) or self.rest_members_by_id.get(user_id)
         if member is None:
             raise FakeNotFound(f"member {user_id} not found")
         return member
