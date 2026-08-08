@@ -70,6 +70,42 @@ def register_control_routes(
         # as strings) but ints in discord.py's caches — convert at the edge.
         return int(user_id)
 
+    async def guild_for_member(user_id: str, raw_guild_id):
+        """(guild, member, error_response) for routes that act on a NAMED
+        guild rather than the caller's live session.
+
+        Cache first, REST fallback: these routes must work when the caller
+        isn't in voice yet, so a cache miss is legitimate. Unknown guilds
+        return the same 403 as non-membership — never leak which guilds the
+        bot is in.
+        """
+        try:
+            guild_id = int(str(raw_guild_id))
+        except (TypeError, ValueError):
+            return None, None, web.json_response(
+                {"error": "bad-request"}, status=400
+            )
+        guild = bot.get_guild(guild_id)
+        if guild is None:
+            return None, None, web.json_response(
+                {"error": "not-a-member"}, status=403
+            )
+        member = guild.get_member(member_id_of(user_id))
+        if member is None:
+            try:
+                member = await guild.fetch_member(member_id_of(user_id))
+            except _MEMBER_LOOKUP_ERRORS:
+                member = None
+        if member is None:
+            return None, None, web.json_response(
+                {"error": "not-a-member"}, status=403
+            )
+        if not await service.repo.is_activated(str(guild.id)):
+            return None, None, web.json_response(
+                {"error": "not-activated"}, status=403
+            )
+        return guild, member, None
+
     async def body_of(request: web.Request) -> dict:
         try:
             return await request.json()
@@ -170,30 +206,15 @@ def register_control_routes(
         """Toggle: join the requested voice channel, or leave it if the bot
         is already there (queue preserved, current track requeued)."""
         body = await body_of(request)
+        # Both ids are validated BEFORE the membership gate, as the inlined
+        # version did: a malformed channelId is a 400 even for an outsider.
         try:
-            guild_id = int(str(body["guildId"]))
             channel_id = int(str(body["channelId"]))
         except (KeyError, TypeError, ValueError):
             return web.json_response({"error": "bad-request"}, status=400)
-
-        guild = bot.get_guild(guild_id)
-        if guild is None:
-            # Same error as non-membership: don't leak which guilds exist.
-            return web.json_response({"error": "not-a-member"}, status=403)
-
-        # Membership gate: cache first, REST fallback (summon must work even
-        # when the user isn't in voice yet, so the cache can legitimately miss).
-        member = guild.get_member(member_id_of(user_id))
-        if member is None:
-            try:
-                member = await guild.fetch_member(member_id_of(user_id))
-            except _MEMBER_LOOKUP_ERRORS:
-                member = None
-        if member is None:
-            return web.json_response({"error": "not-a-member"}, status=403)
-
-        if not await service.repo.is_activated(str(guild.id)):
-            return web.json_response({"error": "not-activated"}, status=403)
+        guild, _member, err = await guild_for_member(user_id, body.get("guildId"))
+        if err:
+            return err
 
         voice = guild.voice_client
         if voice is not None:
@@ -212,7 +233,7 @@ def register_control_routes(
             code = await service.begin_session(guild, channel)
         except Exception:  # noqa: BLE001 — any join failure surfaces as 502
             log.exception(
-                "summon join failed (guild %s, channel %s)", guild_id, channel_id
+                "summon join failed (guild %s, channel %s)", guild.id, channel_id
             )
             return web.json_response({"error": "join-failed"}, status=502)
         return web.json_response({"action": "joined", "sessionCode": code})
