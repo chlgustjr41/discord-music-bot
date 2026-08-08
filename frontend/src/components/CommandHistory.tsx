@@ -28,6 +28,7 @@ import {
   Clock,
   Check,
   Trash2,
+  Mic,
 } from "lucide-react";
 
 interface Props {
@@ -209,9 +210,29 @@ export function CommandHistory({ serverId }: Props) {
                             {isSelected && <Check className="h-3 w-3" />}
                           </div>
                           <div className="flex-1 min-w-0">
-                            <p className="truncate text-sm font-mono">
-                              {formatCommand(cmd)}
-                            </p>
+                            {cmd.source === "voice" ? (
+                              <div className="flex min-w-0 flex-col gap-0.5 text-sm font-mono">
+                                <span className="flex items-center gap-1.5">
+                                  <Mic className="h-3 w-3 shrink-0 text-primary" />
+                                  <Badge
+                                    variant="outline"
+                                    className="px-1 py-0 text-[10px]"
+                                  >
+                                    Voice
+                                  </Badge>
+                                  <span className="truncate italic">
+                                    &quot;{cmd.transcript}&quot;
+                                  </span>
+                                </span>
+                                <span className="truncate text-xs text-muted-foreground">
+                                  → {formatCommand(cmd)}
+                                </span>
+                              </div>
+                            ) : (
+                              <p className="truncate text-sm font-mono">
+                                {formatCommand(cmd)}
+                              </p>
+                            )}
                             <p className="text-xs text-muted-foreground">
                               {cmd.user}
                               {cmd.callCount > 1 && ` · ${cmd.callCount}x`}

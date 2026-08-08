@@ -71,6 +71,8 @@ export interface CommandHistoryEntry {
   userId: string;
   timestamp: unknown; // Firestore Timestamp
   callCount: number;
+  source?: string; // "voice" | "discord" (absent = discord)
+  transcript?: string; // recognized speech, voice entries only
 }
 
 export interface MusicHistoryEntry {
