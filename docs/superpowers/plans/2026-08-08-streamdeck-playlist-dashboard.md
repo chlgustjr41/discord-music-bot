@@ -114,11 +114,13 @@ Expected: FAIL — `KeyError: 'thumbnail'`.
             "thumbnail": (current.get("thumbnail") or None) if current else None,
 ```
 
-- [ ] **Step 5: Verify**
+- [ ] **Step 5: Update the one existing test that asserts the whole response.** `test_now_playing_reports_current_track` compares the full response dict by equality, so a new field breaks it. Add `"thumbnail": None` to its expected dict — the field addition is an intentional contract change, not a regression.
+
+- [ ] **Step 6: Verify**
 
 Run: `py -m pytest -q` (expect 126) and `uvx ruff@0.15.20 check src tests`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add services/bot/tests/conftest.py services/bot/src/jacky/api/control.py services/bot/tests/test_control_api.py
@@ -175,13 +177,18 @@ Pure refactor — `summon` currently inlines a 15-line membership + activation g
 
 ```python
         body = await body_of(request)
-        guild, _member, err = await guild_for_member(user_id, body.get("guildId"))
-        if err:
-            return err
+        # channelId is parsed BEFORE the membership gate on purpose: the
+        # original inlined version validated both ids up front, so a malformed
+        # channelId is a 400 regardless of membership. Running the gate first
+        # would turn that case into a 403 and break
+        # test_summon_400_for_missing_or_non_numeric_fields.
         try:
             channel_id = int(str(body["channelId"]))
         except (KeyError, TypeError, ValueError):
             return web.json_response({"error": "bad-request"}, status=400)
+        guild, _member, err = await guild_for_member(user_id, body.get("guildId"))
+        if err:
+            return err
 ```
 
 Leave the rest of `summon` (the voice_client toggle, join, 502 handling) untouched. Note `guild_id` is no longer a local — the `log.exception` call near the bottom references it; change that line to use `guild.id`:
