@@ -14,6 +14,8 @@
 
 **Baselines at plan time:** bot 124 tests passing; plugin 23 tests passing; plugin manifest at Version `0.2.0.0`.
 
+**Every new `/control/*` route must bump the auth sweep.** `test_all_control_routes_require_auth` asserts an exact count of guarded paths — it is the tripwire that catches a route added without the `guarded()` wrapper, so it is deliberately brittle. Raise its expected count by one per route added (7 → 8 → 9 → 10 across Tasks 3–5) and keep its tally comment current. The per-task totals below already assume this.
+
 ---
 
 ## File Structure
