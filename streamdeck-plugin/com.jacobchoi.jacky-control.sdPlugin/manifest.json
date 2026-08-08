@@ -2,9 +2,9 @@
   "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
   "UUID": "com.jacobchoi.jacky-control",
   "Name": "Jacky Session Control",
-  "Description": "Control your Jacky Music Discord session: play/pause, skip, stop, volume, now playing.",
+  "Description": "Control your Jacky Music Discord session: play/pause, skip, stop, volume, now playing with artwork, summon, playlists, and a dashboard shortcut.",
   "Author": "Jacob Choi",
-  "Version": "0.2.0.0",
+  "Version": "0.3.0.0",
   "Category": "Jacky Music",
   "CategoryIcon": "imgs/plugin-icon",
   "Icon": "imgs/plugin-icon",
@@ -69,7 +69,7 @@
       "Tooltip": "Shows the current track",
       "PropertyInspectorPath": "ui/settings.html",
       "Controllers": ["Keypad"],
-      "States": [{ "Image": "imgs/now-playing", "TitleAlignment": "middle" }]
+      "States": [{ "Image": "imgs/now-playing", "TitleAlignment": "bottom" }]
     },
     {
       "UUID": "com.jacobchoi.jacky-control.summon",
@@ -82,6 +82,24 @@
         { "Image": "imgs/summon", "TitleAlignment": "bottom" },
         { "Image": "imgs/summoned", "TitleAlignment": "bottom" }
       ]
+    },
+    {
+      "UUID": "com.jacobchoi.jacky-control.playlist",
+      "Name": "Play Playlist",
+      "Icon": "imgs/playlist",
+      "Tooltip": "Insert a saved playlist and play it next",
+      "PropertyInspectorPath": "ui/settings.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/playlist", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "com.jacobchoi.jacky-control.dashboard",
+      "Name": "Open Dashboard",
+      "Icon": "imgs/dashboard",
+      "Tooltip": "Open this session's web dashboard",
+      "PropertyInspectorPath": "ui/settings.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/dashboard", "TitleAlignment": "bottom" }]
     }
   ]
 }

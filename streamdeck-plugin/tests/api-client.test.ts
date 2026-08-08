@@ -107,4 +107,35 @@ describe("JackyClient", () => {
       ControlApiError,
     );
   });
+
+  it("GETs the playlist list", async () => {
+    const data = [
+      { guildId: "1", guildName: "G", playlists: [{ name: "Chill", trackCount: 2 }] },
+    ];
+    const f = fetchStub(200, data);
+    const result = await new JackyClient(CONFIG, f).playlists();
+    const [url, init] = (f as any).mock.calls[0];
+    expect(url).toBe("https://control.example.com/control/playlists");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+    expect(result).toEqual(data);
+  });
+
+  it("POSTs a playlist play request and returns the count", async () => {
+    const f = fetchStub(200, { inserted: 2, playlistName: "Chill" });
+    const result = await new JackyClient(CONFIG, f).playPlaylist("1", "Chill");
+    const [url, init] = (f as any).mock.calls[0];
+    expect(url).toBe("https://control.example.com/control/playlist");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ guildId: "1", playlistName: "Chill" });
+    expect(result.inserted).toBe(2);
+  });
+
+  it("GETs the dashboard url", async () => {
+    const f = fetchStub(200, { active: true, url: "https://web/dashboard/ABC123" });
+    const result = await new JackyClient(CONFIG, f).dashboardUrl();
+    expect((f as any).mock.calls[0][0]).toBe(
+      "https://control.example.com/control/dashboard-url",
+    );
+    expect(result).toEqual({ active: true, url: "https://web/dashboard/ABC123" });
+  });
 });

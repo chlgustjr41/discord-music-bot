@@ -7,6 +7,7 @@ export type NowPlaying =
       paused: boolean;
       volume: number;
       guildName: string;
+      thumbnail: string | null;
     };
 
 export type ChannelList = {
@@ -14,6 +15,13 @@ export type ChannelList = {
   guildName: string;
   channels: { id: string; name: string }[];
 }[];
+
+export type PlaylistList = {
+  guildId: string;
+  guildName: string;
+  playlists: { name: string; trackCount: number }[];
+}[];
+export type DashboardUrl = { active: boolean; url: string; guildName?: string };
 
 export type SummonResult = { action: "joined" | "left"; sessionCode?: string };
 
@@ -83,6 +91,24 @@ export class JackyClient {
   async channels(): Promise<ChannelList> {
     const res = await this.get("/control/channels");
     return (await res.json()) as ChannelList;
+  }
+
+  async playlists(): Promise<PlaylistList> {
+    const res = await this.get("/control/playlists");
+    return (await res.json()) as PlaylistList;
+  }
+
+  async playPlaylist(
+    guildId: string,
+    playlistName: string,
+  ): Promise<{ inserted: number; playlistName: string }> {
+    const res = await this.post("/control/playlist", { guildId, playlistName });
+    return (await res.json()) as { inserted: number; playlistName: string };
+  }
+
+  async dashboardUrl(): Promise<DashboardUrl> {
+    const res = await this.get("/control/dashboard-url");
+    return (await res.json()) as DashboardUrl;
   }
 
   async summon(guildId: string, channelId: string): Promise<SummonResult> {

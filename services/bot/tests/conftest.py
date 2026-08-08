@@ -22,6 +22,22 @@ class FakeRepo:
         # Per-guild activation override; falls back to the `activated` class
         # attribute (all-or-nothing) when a guild id has no entry.
         self.activated_overrides: dict[str, bool] = {}
+        # serverId -> playlist name -> doc
+        self.playlists: dict[str, dict[str, dict]] = {}
+
+    async def save_playlist(self, sid, name, tracks, created_by):
+        self.playlists.setdefault(sid, {})[name] = {
+            "name": name, "tracks": list(tracks), "createdBy": created_by,
+        }
+
+    async def load_playlist(self, sid, name):
+        return self.playlists.get(sid, {}).get(name)
+
+    async def list_playlists(self, sid):
+        return list(self.playlists.get(sid, {}).values())
+
+    async def delete_playlist(self, sid, name):
+        self.playlists.get(sid, {}).pop(name, None)
 
     async def init_state(self, sid):
         self.states.setdefault(sid, {
@@ -191,6 +207,7 @@ class FakeVoiceState:
 class FakeMember:
     id: int
     voice: FakeVoiceState | None = None
+    display_name: str = "Tester"   # matches the token minted in the test fixture
 
 
 @dataclass

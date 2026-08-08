@@ -78,13 +78,26 @@ Once signed in, their authentication persists across restarts and key changes.
 
 - Keys act on the guild where *you* currently sit in a voice channel with a
   live bot session; nowhere → "No session" / brief ⚠ flash on presses.
-- Now Playing polls every 5 s, backing off to 30 s while unreachable.
+  (Summon and Play Playlist are the exceptions — they act on the server
+  configured on that specific key.)
+- Now Playing polls every 5 s, backing off to 30 s while unreachable. It also
+  shows the current track's artwork, clearing back to the default icon when
+  the track has none or the session ends.
+- **Play Playlist** key: configured per key with a server + saved playlist
+  (create them with `j!playlist save`). Pressing it inserts that playlist at
+  the front of the queue and jumps to it; whatever was already queued stays
+  behind it. Needs a live session in that server — ⚠ otherwise.
+- **Open Dashboard** key: opens this session's dashboard in your browser. With
+  no live session it opens the site's entry page and flashes ⚠. The session
+  code is read fresh on every press, so it always points at the current
+  session.
 - Token revocation: run `j!unlink` in any activated server to revoke all your Stream Deck sign-ins (one command, all devices). Sign in again anytime. Env changes (`make up`) still apply for new deployments.
 
 ## Known limitations / follow-ups
 
 - Summon key icon state (joined/left) comes from press responses only — can go stale if presses fail silently or the session changes mid-flight.
-- **Sign-in device-phishing caveat:** if someone convinces you to click *their* authorize link (not one you initiated in your Stream Deck), they can capture a token for your identity. Discord's consent screen names the app; only authorize links you initiated yourself.
+- **Sign-in device-phishing — mitigated, not eliminated.** A relayed authorize link would otherwise hand the sender a token carrying *your* identity. The callback now requires the browser finishing sign-in to come from the same address that started it, so a link sent from elsewhere is rejected ("Sign-in started somewhere else"). The residual gap is an attacker on your own network/NAT; the rule still stands — only complete sign-ins you started from your own Stream Deck.
+- Play Playlist key: the playlist dropdown lists what exists when the Property Inspector opens. If you change the server dropdown, re-pick the playlist — the previous server's selection stays stored until you do, and pressing the key would flash ⚠ (404). Same behavior as the Summon key's channel dropdown.
 - Pending sign-in cap: ~200 concurrent sessions (in-memory, per-bot). Hitting the cap will reject new `POST /control/auth/start` calls until older ones time out (10 min) or complete.
 - `@elgato/streamdeck` 1.x is npm-deprecated in favor of 2.x (Marketplace-only
   concern; personal install unaffected). Revisit if Marketplace publishing or

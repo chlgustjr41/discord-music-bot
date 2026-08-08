@@ -11,6 +11,7 @@ import { marquee } from "../format";
 import { handlePiEvent } from "../pi-bridge";
 import type { PollState } from "../poller";
 import { poller } from "../runtime";
+import { loadThumbnail } from "../thumbnail";
 
 const TITLE_WIDTH = 9;
 
@@ -19,6 +20,9 @@ export class NowPlaying extends SingletonAction {
   private visible = 0;
   private offset = 0;
   private lastTitle: string | null = null;
+  // undefined = "unknown, re-apply on next tick"; null = "this track has no
+  // artwork". Conflating them lets a stale cover survive a track that has none.
+  private lastThumbUrl: string | null | undefined = undefined;
 
   private readonly onPoll = (s: PollState): void => {
     let text: string;
@@ -37,6 +41,24 @@ export class NowPlaying extends SingletonAction {
       this.offset += 2;
     }
     for (const a of this.actions) a.setTitle(text).catch(() => {});
+
+    const thumb = s.kind === "data" && s.data.active ? s.data.thumbnail : null;
+    if (thumb !== this.lastThumbUrl) {
+      this.lastThumbUrl = thumb;
+      // Only refetch when the track actually changes, never per poll tick.
+      if (thumb) {
+        void loadThumbnail(thumb).then((uri) => {
+          // A slow fetch may land after another track change — drop it.
+          if (uri && this.lastThumbUrl === thumb) {
+            for (const a of this.actions) void a.setImage(uri).catch(() => {});
+          }
+        });
+      } else {
+        // No artwork / no session: back to the manifest icon so a stale
+        // cover never outlives its track.
+        for (const a of this.actions) void a.setImage().catch(() => {});
+      }
+    }
   };
 
   override onSendToPlugin(ev: SendToPluginEvent<JsonValue, JsonObject>): Promise<void> {
@@ -44,6 +66,12 @@ export class NowPlaying extends SingletonAction {
   }
 
   override onWillAppear(_ev: WillAppearEvent): void {
+    // Unconditional, and back to "unknown" rather than "no artwork": a key
+    // appearing alongside an existing one must still get artwork on the next
+    // tick. The poller doesn't replay its last state, so without this the new
+    // key sits on the manifest icon until the track changes (titles self-heal
+    // because they're re-set every tick).
+    this.lastThumbUrl = undefined;
     if (++this.visible === 1) {
       this.offset = 0;
       poller.subscribe(this.onPoll);
@@ -51,6 +79,9 @@ export class NowPlaying extends SingletonAction {
   }
 
   override onWillDisappear(_ev: WillDisappearEvent): void {
-    if (--this.visible === 0) poller.unsubscribe(this.onPoll);
+    if (--this.visible === 0) {
+      poller.unsubscribe(this.onPoll);
+      this.lastThumbUrl = undefined;
+    }
   }
 }

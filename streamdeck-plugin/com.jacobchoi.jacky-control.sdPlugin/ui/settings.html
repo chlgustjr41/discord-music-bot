@@ -35,6 +35,17 @@
     <div id="summon-error" class="hidden" style="display: none; padding-left: 4px; font-size: 9pt"></div>
   </div>
 
+  <!-- Playlist key only: which saved playlist this key loads. -->
+  <div id="playlist-settings" style="display: none">
+    <sdpi-item label="Server">
+      <sdpi-select id="pl-guild-select" setting="guildId" placeholder="Select a server"></sdpi-select>
+    </sdpi-item>
+    <sdpi-item label="Playlist">
+      <sdpi-select id="pl-select" setting="playlistName" placeholder="Select a playlist"></sdpi-select>
+    </sdpi-item>
+    <div id="playlist-error" style="display: none; padding-left: 4px; font-size: 9pt; color: #e94560"></div>
+  </div>
+
   <script>
     // sdpi-components v3/v4 exposes window.SDPIComponents.streamDeckClient:
     //  - send(event, payload): raw websocket send with action/context filled in;
@@ -50,9 +61,15 @@
     const guildSelect = document.getElementById("guild-select");
     const channelSelect = document.getElementById("channel-select");
     const summonError = document.getElementById("summon-error");
+    const playlistDiv = document.getElementById("playlist-settings");
+    const plGuildSelect = document.getElementById("pl-guild-select");
+    const plSelect = document.getElementById("pl-select");
+    const playlistError = document.getElementById("playlist-error");
 
     let channelData = []; // [{guildId, guildName, channels: [{id, name}]}]
     let isSummon = false;
+    let playlistData = []; // [{guildId, guildName, playlists: [{name, trackCount}]}]
+    let isPlaylist = false;
 
     const sendToPlugin = (payload) => client.send("sendToPlugin", payload);
 
@@ -79,6 +96,19 @@
 
     guildSelect.addEventListener("valuechange", refreshChannelOptions);
 
+    function refreshPlaylistOptions() {
+      const g = playlistData.find((x) => x.guildId === plGuildSelect.value);
+      setOptions(
+        plSelect,
+        (g ? g.playlists : []).map((p) => ({
+          value: p.name,
+          label: `${p.name} (${p.trackCount})`,
+        })),
+      );
+    }
+
+    plGuildSelect.addEventListener("valuechange", refreshPlaylistOptions);
+
     client.sendToPropertyInspector.subscribe((message) => {
       const p = message.payload;
       if (!p || !p.event) return;
@@ -90,6 +120,7 @@
             ? "Sign-in failed: " + p.error
             : "Not signed in";
         if (p.ok && isSummon) sendToPlugin({ event: "get-channels" });
+        if (p.ok && isPlaylist) sendToPlugin({ event: "get-playlists" });
       } else if (p.event === "channels") {
         summonError.style.display = "none";
         channelData = p.data || [];
@@ -101,6 +132,17 @@
       } else if (p.event === "channels-error") {
         summonError.textContent = "Could not load channels: " + (p.error || "unknown error");
         summonError.style.display = "block";
+      } else if (p.event === "playlists") {
+        playlistError.style.display = "none";
+        playlistData = p.data || [];
+        setOptions(
+          plGuildSelect,
+          playlistData.map((g) => ({ value: g.guildId, label: g.guildName })),
+        );
+        refreshPlaylistOptions();
+      } else if (p.event === "playlists-error") {
+        playlistError.textContent = "Could not load playlists: " + (p.error || "unknown error");
+        playlistError.style.display = "block";
       }
     });
 
@@ -116,6 +158,11 @@
       if (isSummon) {
         summonDiv.style.display = "";
         sendToPlugin({ event: "get-channels" });
+      }
+      isPlaylist = actionInfo.action.endsWith(".playlist");
+      if (isPlaylist) {
+        playlistDiv.style.display = "";
+        sendToPlugin({ event: "get-playlists" });
       }
       sendToPlugin({ event: "get-status" });
     })();

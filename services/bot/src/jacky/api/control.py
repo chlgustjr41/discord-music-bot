@@ -28,6 +28,21 @@ log = logging.getLogger("jacky.control")
 _MEMBER_LOOKUP_ERRORS: tuple = (discord.NotFound, discord.HTTPException)
 
 
+def _is_valid_document_id(name: str) -> bool:
+    """Firestore document-id rules we can violate from a request body.
+
+    "/" is a path separator (odd segment counts raise, even counts silently
+    address a DIFFERENT document); "." and ".." are path traversal; __x__ is
+    reserved. All of these reach the SDK as a 500 unless rejected here.
+    """
+    return (
+        bool(name)
+        and "/" not in name
+        and name not in (".", "..")
+        and not (name.startswith("__") and name.endswith("__"))
+    )
+
+
 def register_control_routes(
     app: web.Application, *, bot: Any, service: Any, token_store: Any, limiter: Any
 ) -> None:
@@ -70,6 +85,42 @@ def register_control_routes(
         # as strings) but ints in discord.py's caches — convert at the edge.
         return int(user_id)
 
+    async def guild_for_member(user_id: str, raw_guild_id):
+        """(guild, member, error_response) for routes that act on a NAMED
+        guild rather than the caller's live session.
+
+        Cache first, REST fallback: these routes must work when the caller
+        isn't in voice yet, so a cache miss is legitimate. Unknown guilds
+        return the same 403 as non-membership — never leak which guilds the
+        bot is in.
+        """
+        try:
+            guild_id = int(str(raw_guild_id))
+        except (TypeError, ValueError):
+            return None, None, web.json_response(
+                {"error": "bad-request"}, status=400
+            )
+        guild = bot.get_guild(guild_id)
+        if guild is None:
+            return None, None, web.json_response(
+                {"error": "not-a-member"}, status=403
+            )
+        member = guild.get_member(member_id_of(user_id))
+        if member is None:
+            try:
+                member = await guild.fetch_member(member_id_of(user_id))
+            except _MEMBER_LOOKUP_ERRORS:
+                member = None
+        if member is None:
+            return None, None, web.json_response(
+                {"error": "not-a-member"}, status=403
+            )
+        if not await service.repo.is_activated(str(guild.id)):
+            return None, None, web.json_response(
+                {"error": "not-activated"}, status=403
+            )
+        return guild, member, None
+
     async def body_of(request: web.Request) -> dict:
         try:
             return await request.json()
@@ -92,6 +143,7 @@ def register_control_routes(
             "active": True,
             "title": current.get("title") if current else None,
             "author": current.get("artist", "") if current else "",
+            "thumbnail": (current.get("thumbnail") or None) if current else None,
             "paused": bool(state.get("isPaused", False)),
             "volume": volume_of(state),
             "guildName": guild.name,
@@ -165,34 +217,107 @@ def register_control_routes(
             })
         return web.json_response(out)
 
+    async def playlists(request: web.Request, user_id: str) -> web.Response:
+        # Same shape and filtering as `channels`, and deliberately NOT
+        # session-gated: the Property Inspector lists these while the user is
+        # configuring a key, long before any session exists.
+        member_id = member_id_of(user_id)
+        out = []
+        for guild in bot.guilds:
+            if not await service.repo.is_activated(str(guild.id)):
+                continue
+            if not guild.get_member(member_id):
+                continue
+            saved = await service.repo.list_playlists(str(guild.id))
+            out.append({
+                "guildId": str(guild.id),
+                "guildName": guild.name,
+                "playlists": sorted(
+                    (
+                        {"name": p["name"], "trackCount": len(p.get("tracks") or [])}
+                        for p in saved
+                    ),
+                    key=lambda p: p["name"].lower(),
+                ),
+            })
+        return web.json_response(out)
+
+    async def play_playlist(request: web.Request, user_id: str) -> web.Response:
+        """Insert a saved playlist at the head of the queue and jump to it."""
+        body = await body_of(request)
+        guild, member, err = await guild_for_member(user_id, body.get("guildId"))
+        if err:
+            return err
+        name = body.get("playlistName")
+        if not isinstance(name, str) or not _is_valid_document_id(name):
+            return web.json_response({"error": "bad-request"}, status=400)
+        if guild.voice_client is None:
+            return web.json_response({"error": "no-active-session"}, status=409)
+
+        sid = str(guild.id)
+        doc = await service.repo.load_playlist(sid, name)
+        tracks = (doc or {}).get("tracks") or []
+        if not tracks:
+            return web.json_response({"error": "no-such-playlist"}, status=404)
+
+        # Attribution matches commands/library.py so the leaderboard treats a
+        # deck press like a j! load. display_name comes from the member we
+        # already resolved for the membership gate.
+        requested_by = getattr(member, "display_name", "") or "Stream Deck"
+        queued = [{**t, "requestedBy": requested_by} for t in tracks]
+        existing = await service.repo.get_queue(sid)
+        # Decide BEFORE the write: the queue write is what wakes the Firestore
+        # listener, and listener.py auto-starts playback when it sees the queue
+        # grow while idle. Any await between the write and the start call is a
+        # window for it to fire first and pop the track we just inserted.
+        was_playing = bool((await service.repo.get_state(sid) or {}).get("currentTrack"))
+        # Read-modify-write of the whole queue: a concurrent web-app append
+        # between the read above and this write is lost. Same single-user
+        # tradeoff the play_pause toggle documents.
+        await service.repo.update_state(sid, {"queue": [*queued, *existing]})
+        if was_playing:
+            # Reuse the TrackEnd path j!skip uses; play_next pops the new head.
+            await service.skip(guild.id)
+        else:
+            # A skip with nothing playing is a no-op, so start explicitly.
+            await service.play_next(guild.id)
+        return web.json_response({"inserted": len(queued), "playlistName": name})
+
+    async def dashboard_url(request: web.Request, user_id: str) -> web.Response:
+        """Where to point a browser for the caller's current session.
+
+        The code is read live, never cached client-side: begin_session mints a
+        new one per session and teardown invalidates it.
+        """
+        web_base = service.settings.web_app_url.rstrip("/")
+        guild = await resolve_guild(member_id_of(user_id))
+        if guild is not None:
+            state = await service.repo.get_state(str(guild.id)) or {}
+            code = state.get("sessionCode")
+            if code:
+                return web.json_response({
+                    "active": True,
+                    "url": f"{web_base}/dashboard/{code}",
+                    "guildName": guild.name,
+                })
+        return web.json_response({"active": False, "url": f"{web_base}/app"})
+
     async def summon(request: web.Request, user_id: str) -> web.Response:
         """Toggle: join the requested voice channel, or leave it if the bot
         is already there (queue preserved, current track requeued)."""
         body = await body_of(request)
+        # channelId is parsed BEFORE the membership gate on purpose: the
+        # original inlined version validated both ids up front, so a malformed
+        # channelId is a 400 regardless of membership. Running the gate first
+        # would turn that case into a 403 and break
+        # test_summon_400_for_missing_or_non_numeric_fields.
         try:
-            guild_id = int(str(body["guildId"]))
             channel_id = int(str(body["channelId"]))
         except (KeyError, TypeError, ValueError):
             return web.json_response({"error": "bad-request"}, status=400)
-
-        guild = bot.get_guild(guild_id)
-        if guild is None:
-            # Same error as non-membership: don't leak which guilds exist.
-            return web.json_response({"error": "not-a-member"}, status=403)
-
-        # Membership gate: cache first, REST fallback (summon must work even
-        # when the user isn't in voice yet, so the cache can legitimately miss).
-        member = guild.get_member(member_id_of(user_id))
-        if member is None:
-            try:
-                member = await guild.fetch_member(member_id_of(user_id))
-            except _MEMBER_LOOKUP_ERRORS:
-                member = None
-        if member is None:
-            return web.json_response({"error": "not-a-member"}, status=403)
-
-        if not await service.repo.is_activated(str(guild.id)):
-            return web.json_response({"error": "not-activated"}, status=403)
+        guild, _member, err = await guild_for_member(user_id, body.get("guildId"))
+        if err:
+            return err
 
         voice = guild.voice_client
         if voice is not None:
@@ -211,7 +336,7 @@ def register_control_routes(
             code = await service.begin_session(guild, channel)
         except Exception:  # noqa: BLE001 — any join failure surfaces as 502
             log.exception(
-                "summon join failed (guild %s, channel %s)", guild_id, channel_id
+                "summon join failed (guild %s, channel %s)", guild.id, channel_id
             )
             return web.json_response({"error": "join-failed"}, status=502)
         return web.json_response({"action": "joined", "sessionCode": code})
@@ -223,6 +348,9 @@ def register_control_routes(
         web.post("/control/stop", guarded(stop)),
         web.post("/control/volume", guarded(volume)),
         web.get("/control/channels", guarded(channels)),
+        web.get("/control/playlists", guarded(playlists)),
+        web.post("/control/playlist", guarded(play_playlist)),
+        web.get("/control/dashboard-url", guarded(dashboard_url)),
         web.post("/control/summon", guarded(summon)),
     ])
     log.info("control API routes registered")

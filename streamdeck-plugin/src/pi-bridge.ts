@@ -40,6 +40,21 @@ export async function handlePiEvent(rawPayload: JsonValue): Promise<void> {
       }
       break;
     }
+    case "get-playlists": {
+      const client = getClient();
+      if (!client) {
+        await reply({ event: "playlists-error", error: "not signed in" });
+        break;
+      }
+      try {
+        const data = await client.playlists();
+        await reply({ event: "playlists", data });
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        await reply({ event: "playlists-error", error });
+      }
+      break;
+    }
     case "get-status": {
       const s = await streamDeck.settings.getGlobalSettings<GlobalSettings>();
       await reply({

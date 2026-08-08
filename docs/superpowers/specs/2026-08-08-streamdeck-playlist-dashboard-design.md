@@ -36,13 +36,16 @@ All guarded (bearer → `token_store.resolve` → rate limit), handlers `(reques
 **Insert-and-play, precisely:**
 
 ```
+if not _is_valid_document_id(name): 400   # "/" ".." "__x__" would reach Firestore
 tracks = (await repo.load_playlist(sid, name) or {}).get("tracks") or []
 if not tracks: 404 {"error": "no-such-playlist"}
 queued = [{**t, "requestedBy": <display name>} for t in tracks]   # matches library.py
-await repo.update_state(sid, {"queue": [*queued, *await repo.get_queue(sid)]})
-state = await repo.get_state(sid)
-if state.get("currentTrack"): await service.skip(guild.id)
-else:                        await service.play_next(guild.id)
+existing = await repo.get_queue(sid)
+# Decide BEFORE the write — see "Known interaction" below.
+was_playing = bool((await repo.get_state(sid) or {}).get("currentTrack"))
+await repo.update_state(sid, {"queue": [*queued, *existing]})
+if was_playing: await service.skip(guild.id)
+else:           await service.play_next(guild.id)
 ```
 
 `requestedBy` mirrors `commands/library.py` so leaderboard attribution stays
@@ -52,7 +55,16 @@ matches how `j!` commands attribute (`ctx.author.display_name`). It is not the
 token's stored `userName`: `guarded` hands the handler only a `user_id`, and
 re-reading the token document for a display string would be a wasted round trip.
 
-**Known interaction (tested, not left to chance):** `state/listener.py` also auto-starts playback when it sees the queue grow while idle. The idle branch calling `play_next` directly is safe because `play_next` sets `currentTrack` before the snapshot lands, and `PlayerService._advancing` guards concurrent advance chains — but the idle case gets an explicit test so a refactor cannot silently reintroduce a double-pop.
+**Known interaction (tested, not left to chance):** `state/listener.py` also
+auto-starts playback when it sees the queue grow while idle — and the queue
+write is precisely what wakes it. So the playing/idle decision is read
+**before** the write, leaving zero awaits between the write and the
+`skip`/`play_next` call. Any await in that gap is a window for the listener to
+fire first and pop the track we just inserted (losing it, or double-advancing).
+`test_playlist_decides_before_writing_the_queue` pins the ordering — it was
+verified to fail when the read is moved back after the write, so a refactor
+cannot silently reintroduce the race. `PlayerService._advancing` is a second
+line of defence, not the primary one.
 
 ### 2. Bot — thumbnail on now-playing
 
