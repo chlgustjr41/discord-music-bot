@@ -5,15 +5,19 @@ export type SignInResult = { token: string; discordUserId: string; discordUserNa
 const POLL_MS = 2000;
 const TIMEOUT_MS = 5 * 60 * 1000;
 
-/** Start OAuth: returns the URL to open plus a promise resolving when the
- *  user completes sign-in in the browser (or rejecting on 410/timeout). */
+/** Start OAuth: opens the authorize URL via `openUrl`, then polls until the
+ *  user completes sign-in in the browser. Resolves with the minted token and
+ *  identity, or rejects with a ControlApiError (410 expired, 408 timeout). */
 export async function signIn(
   apiUrl: string,
   openUrl: (url: string) => void,
   fetchFn: typeof fetch = fetch,
 ): Promise<SignInResult> {
   const base = apiUrl.replace(/\/+$/, "");
-  const startRes = await fetchFn(`${base}/control/auth/start`, { method: "POST" });
+  const startRes = await fetchFn(`${base}/control/auth/start`, {
+    method: "POST",
+    signal: AbortSignal.timeout(10_000),
+  });
   if (!startRes.ok) throw new ControlApiError(startRes.status);
   const { state, authorizeUrl } = (await startRes.json()) as {
     state: string; authorizeUrl: string;
@@ -24,6 +28,7 @@ export async function signIn(
     await new Promise((r) => setTimeout(r, POLL_MS));
     const res = await fetchFn(
       `${base}/control/auth/poll?state=${encodeURIComponent(state)}`,
+      { signal: AbortSignal.timeout(10_000) },
     );
     if (res.status === 202) {
       if (Date.now() > deadline) throw new ControlApiError(408);

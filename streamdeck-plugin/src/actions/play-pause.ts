@@ -1,10 +1,14 @@
 import {
   action,
   SingletonAction,
+  type JsonObject,
+  type JsonValue,
   type KeyDownEvent,
+  type SendToPluginEvent,
   type WillAppearEvent,
   type WillDisappearEvent,
 } from "@elgato/streamdeck";
+import { handlePiEvent } from "../pi-bridge";
 import { getClient, poller } from "../runtime";
 import type { PollState } from "../poller";
 
@@ -26,6 +30,10 @@ export class PlayPause extends SingletonAction {
 
   override onWillDisappear(_ev: WillDisappearEvent): void {
     if (--this.visible === 0) poller.unsubscribe(this.onPoll);
+  }
+
+  override onSendToPlugin(ev: SendToPluginEvent<JsonValue, JsonObject>): Promise<void> {
+    return handlePiEvent(ev.payload);
   }
 
   override async onKeyDown(ev: KeyDownEvent): Promise<void> {

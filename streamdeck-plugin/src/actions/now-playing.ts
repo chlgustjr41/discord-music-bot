@@ -1,10 +1,14 @@
 import {
   action,
   SingletonAction,
+  type JsonObject,
+  type JsonValue,
+  type SendToPluginEvent,
   type WillAppearEvent,
   type WillDisappearEvent,
 } from "@elgato/streamdeck";
 import { marquee } from "../format";
+import { handlePiEvent } from "../pi-bridge";
 import type { PollState } from "../poller";
 import { poller } from "../runtime";
 
@@ -34,6 +38,10 @@ export class NowPlaying extends SingletonAction {
     }
     for (const a of this.actions) a.setTitle(text).catch(() => {});
   };
+
+  override onSendToPlugin(ev: SendToPluginEvent<JsonValue, JsonObject>): Promise<void> {
+    return handlePiEvent(ev.payload);
+  }
 
   override onWillAppear(_ev: WillAppearEvent): void {
     if (++this.visible === 1) {

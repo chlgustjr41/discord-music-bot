@@ -3,17 +3,122 @@
 <head>
   <meta charset="utf-8" />
   <script src="sdpi-components.js"></script>
+  <style>
+    #auth-status {
+      color: #d8d8d8;
+      font-family: inherit;
+      font-size: 9pt;
+      margin: 4px 0 2px 0;
+      padding-left: 4px;
+    }
+    #summon-error { color: #e94560; }
+  </style>
 </head>
 <body>
-  <!-- All three are GLOBAL settings: enter once on any key, shared by all. -->
-  <sdpi-item label="API URL">
-    <sdpi-textfield global setting="apiUrl" placeholder="https://control.example.com"></sdpi-textfield>
+  <!-- Global: one sign-in shared by every key. -->
+  <div id="auth-status">Checking sign-in…</div>
+  <sdpi-item label="Account">
+    <sdpi-button id="sign-in">Sign in with Discord</sdpi-button>
   </sdpi-item>
-  <sdpi-item label="API token">
-    <sdpi-password global setting="apiToken"></sdpi-password>
+  <sdpi-item label="Server URL">
+    <sdpi-textfield global setting="apiUrl" placeholder="https://control.jacky-music-bot.com"></sdpi-textfield>
   </sdpi-item>
-  <sdpi-item label="Discord user ID">
-    <sdpi-textfield global setting="discordUserId" placeholder="123456789012345678"></sdpi-textfield>
-  </sdpi-item>
+
+  <!-- Summon key only: which voice channel this key joins/leaves. -->
+  <div id="summon-settings" style="display: none">
+    <sdpi-item label="Server">
+      <sdpi-select id="guild-select" setting="guildId" placeholder="Select a server"></sdpi-select>
+    </sdpi-item>
+    <sdpi-item label="Voice channel">
+      <sdpi-select id="channel-select" setting="channelId" placeholder="Select a channel"></sdpi-select>
+    </sdpi-item>
+    <div id="summon-error" class="hidden" style="display: none; padding-left: 4px; font-size: 9pt"></div>
+  </div>
+
+  <script>
+    // sdpi-components v3/v4 exposes window.SDPIComponents.streamDeckClient:
+    //  - send(event, payload): raw websocket send with action/context filled in;
+    //    PI -> plugin messages therefore go via send("sendToPlugin", payload).
+    //  - sendToPropertyInspector: event emitter; subscribers receive the full
+    //    websocket message, our data is in message.payload.
+    //  - getConnectionInfo(): resolves { actionInfo, info } (actionInfo.action
+    //    is this key's action UUID).
+    const client = SDPIComponents.streamDeckClient;
+    const statusEl = document.getElementById("auth-status");
+    const signInBtn = document.getElementById("sign-in");
+    const summonDiv = document.getElementById("summon-settings");
+    const guildSelect = document.getElementById("guild-select");
+    const channelSelect = document.getElementById("channel-select");
+    const summonError = document.getElementById("summon-error");
+
+    let channelData = []; // [{guildId, guildName, channels: [{id, name}]}]
+    let isSummon = false;
+
+    const sendToPlugin = (payload) => client.send("sendToPlugin", payload);
+
+    function setOptions(select, items) {
+      // sdpi-select watches its light-DOM <option> children via a
+      // MutationObserver, so replacing them re-renders the control and
+      // re-applies the persisted setting value.
+      select.querySelectorAll("option").forEach((o) => o.remove());
+      for (const { value, label } of items) {
+        const opt = document.createElement("option");
+        opt.value = value;
+        opt.textContent = label;
+        select.appendChild(opt);
+      }
+    }
+
+    function refreshChannelOptions() {
+      const guild = channelData.find((g) => g.guildId === guildSelect.value);
+      setOptions(
+        channelSelect,
+        (guild ? guild.channels : []).map((c) => ({ value: c.id, label: c.name })),
+      );
+    }
+
+    guildSelect.addEventListener("valuechange", refreshChannelOptions);
+
+    client.sendToPropertyInspector.subscribe((message) => {
+      const p = message.payload;
+      if (!p || !p.event) return;
+      if (p.event === "auth-status") {
+        signInBtn.disabled = false;
+        statusEl.textContent = p.ok
+          ? "Signed in as " + (p.userName || "Discord user")
+          : p.error
+            ? "Sign-in failed: " + p.error
+            : "Not signed in";
+        if (p.ok && isSummon) sendToPlugin({ event: "get-channels" });
+      } else if (p.event === "channels") {
+        summonError.style.display = "none";
+        channelData = p.data || [];
+        setOptions(
+          guildSelect,
+          channelData.map((g) => ({ value: g.guildId, label: g.guildName })),
+        );
+        refreshChannelOptions();
+      } else if (p.event === "channels-error") {
+        summonError.textContent = "Could not load channels: " + (p.error || "unknown error");
+        summonError.style.display = "block";
+      }
+    });
+
+    signInBtn.addEventListener("click", () => {
+      signInBtn.disabled = true;
+      statusEl.textContent = "Waiting for sign-in in your browser…";
+      sendToPlugin({ event: "sign-in" });
+    });
+
+    (async () => {
+      const { actionInfo } = await client.getConnectionInfo();
+      isSummon = actionInfo.action.endsWith(".summon");
+      if (isSummon) {
+        summonDiv.style.display = "";
+        sendToPlugin({ event: "get-channels" });
+      }
+      sendToPlugin({ event: "get-status" });
+    })();
+  </script>
 </body>
 </html>

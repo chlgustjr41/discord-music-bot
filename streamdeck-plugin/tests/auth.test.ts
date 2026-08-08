@@ -51,7 +51,11 @@ describe("signIn", () => {
     );
     const calls = (f as any).mock.calls;
     expect(calls[0][0]).toBe("https://control.example.com/control/auth/start");
-    expect(calls[0][1]).toEqual({ method: "POST" });
+    expect(calls[0][1].method).toBe("POST");
+    // Both auth fetches carry a 10s abort timeout so a hung tunnel can't
+    // stall the sign-in past its own deadline check (which only runs on 202).
+    expect(calls[0][1].signal).toBeInstanceOf(AbortSignal);
+    expect(calls[1][1].signal).toBeInstanceOf(AbortSignal);
     expect(calls[1][0]).toBe(
       "https://control.example.com/control/auth/poll?state=st4te",
     );
