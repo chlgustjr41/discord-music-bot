@@ -125,8 +125,8 @@ async def test_all_control_routes_require_auth(client):
             resp = await client.request(route.method, path)
             assert resp.status == 401, f"{route.method} {path}"
             seen_paths.add(path)
-    # now-playing + 4 actions + channels + summon + playlists
-    assert len(seen_paths) == 8
+    # now-playing + 4 actions + channels + summon + playlists + playlist
+    assert len(seen_paths) == 9
 
 
 async def test_string_user_id_resolves_int_keyed_member(client, service, guild_id, auth):
@@ -597,3 +597,113 @@ async def test_playlists_returns_empty_list_when_none_saved(
     service.bot.get_guild(guild_id).members_by_id[USER_ID] = FakeMember(id=USER_ID)
     body = await (await client.get("/control/playlists", headers=auth)).json()
     assert body == [{"guildId": str(guild_id), "guildName": "Guild", "playlists": []}]
+
+
+# ── playlist insert-and-play ─────────────────────────────────────────────
+
+async def arm_playlist_guild(service, guild_id, name="Chill", tracks=None):
+    """Member present, in voice, with a live session — the state a playlist
+    press requires."""
+    put_user_in_voice(service, guild_id)
+    await service.repo.save_playlist(
+        str(guild_id),
+        name,
+        [{"title": "P1"}, {"title": "P2"}] if tracks is None else tracks,
+        "me",
+    )
+
+
+async def test_playlist_inserts_at_front_and_skips_when_playing(
+    client, service, guild_id, sid, auth
+):
+    await arm_playlist_guild(service, guild_id)
+    await service.repo.update_state(sid, {
+        "queue": [{"title": "Old"}], "currentTrack": {"title": "Now"},
+    })
+
+    resp = await client.post(
+        "/control/playlist",
+        json={"guildId": sid, "playlistName": "Chill"},
+        headers=auth,
+    )
+    assert resp.status == 200
+    assert (await resp.json()) == {"inserted": 2, "playlistName": "Chill"}
+
+    queue = (await service.repo.get_state(sid))["queue"]
+    assert [t["title"] for t in queue] == ["P1", "P2", "Old"]
+    assert queue[0]["requestedBy"] == "Tester"
+    # Something was playing, so it advances via the proven TrackEnd path.
+    assert service.node.updates[-1] == (guild_id, {"track": {"encoded": None}})
+
+
+async def test_playlist_starts_playback_when_idle(client, service, guild_id, sid, auth):
+    """Nothing playing: a skip would be a no-op, so play_next runs instead."""
+    from jacky.audio.models import LoadResult, to_identifier
+    from tests.conftest import make_track
+
+    await arm_playlist_guild(service, guild_id)
+    await service.repo.update_state(sid, {"queue": [], "currentTrack": None})
+    # FakeNode resolves every search to one canned track, and play_next merges
+    # the RESOLVED title over the queued one. Without a P1-specific result the
+    # assertion below would read the canned title and say nothing about which
+    # entry was popped.
+    service.node.load_results[to_identifier("P1")] = LoadResult(
+        kind="track", tracks=[make_track(title="P1")]
+    )
+
+    resp = await client.post(
+        "/control/playlist",
+        json={"guildId": sid, "playlistName": "Chill"},
+        headers=auth,
+    )
+    assert resp.status == 200
+    state = await service.repo.get_state(sid)
+    assert state["currentTrack"]["title"] == "P1"
+    assert [t["title"] for t in state["queue"]] == ["P2"]
+
+
+async def test_playlist_unknown_name_is_404(client, service, guild_id, sid, auth):
+    await arm_playlist_guild(service, guild_id)
+    resp = await client.post(
+        "/control/playlist",
+        json={"guildId": sid, "playlistName": "Nope"},
+        headers=auth,
+    )
+    assert resp.status == 404
+    assert (await resp.json())["error"] == "no-such-playlist"
+
+
+async def test_playlist_empty_playlist_is_404(client, service, guild_id, sid, auth):
+    await arm_playlist_guild(service, guild_id, name="Empty", tracks=[])
+    resp = await client.post(
+        "/control/playlist",
+        json={"guildId": sid, "playlistName": "Empty"},
+        headers=auth,
+    )
+    assert resp.status == 404
+
+
+async def test_playlist_requires_a_live_session(client, service, guild_id, sid, auth):
+    """Member of the guild, playlist exists, but the bot isn't connected."""
+    service.bot.get_guild(guild_id).members_by_id[USER_ID] = FakeMember(id=USER_ID)
+    service.bot.get_guild(guild_id).voice_client = None
+    await service.repo.save_playlist(sid, "Chill", [{"title": "P1"}], "me")
+    resp = await client.post(
+        "/control/playlist",
+        json={"guildId": sid, "playlistName": "Chill"},
+        headers=auth,
+    )
+    assert resp.status == 409
+    assert (await resp.json())["error"] == "no-active-session"
+
+
+async def test_playlist_rejects_bad_body_and_outsiders(client, service, guild_id, auth):
+    resp = await client.post("/control/playlist", json={}, headers=auth)
+    assert resp.status == 400
+
+    resp = await client.post(
+        "/control/playlist",
+        json={"guildId": "999999", "playlistName": "Chill"},
+        headers=auth,
+    )
+    assert resp.status == 403

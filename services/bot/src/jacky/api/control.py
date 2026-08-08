@@ -227,6 +227,41 @@ def register_control_routes(
             })
         return web.json_response(out)
 
+    async def play_playlist(request: web.Request, user_id: str) -> web.Response:
+        """Insert a saved playlist at the head of the queue and jump to it."""
+        body = await body_of(request)
+        guild, member, err = await guild_for_member(user_id, body.get("guildId"))
+        if err:
+            return err
+        name = body.get("playlistName")
+        if not isinstance(name, str) or not name:
+            return web.json_response({"error": "bad-request"}, status=400)
+        if guild.voice_client is None:
+            return web.json_response({"error": "no-active-session"}, status=409)
+
+        sid = str(guild.id)
+        doc = await service.repo.load_playlist(sid, name)
+        tracks = (doc or {}).get("tracks") or []
+        if not tracks:
+            return web.json_response({"error": "no-such-playlist"}, status=404)
+
+        # Attribution matches commands/library.py so the leaderboard treats a
+        # deck press like a j! load. display_name comes from the member we
+        # already resolved for the membership gate.
+        requested_by = getattr(member, "display_name", "") or "Stream Deck"
+        queued = [{**t, "requestedBy": requested_by} for t in tracks]
+        existing = await service.repo.get_queue(sid)
+        await service.repo.update_state(sid, {"queue": [*queued, *existing]})
+
+        state = await service.repo.get_state(sid) or {}
+        if state.get("currentTrack"):
+            # Reuse the TrackEnd path j!skip uses; play_next pops the new head.
+            await service.skip(guild.id)
+        else:
+            # A skip with nothing playing is a no-op, so start explicitly.
+            await service.play_next(guild.id)
+        return web.json_response({"inserted": len(queued), "playlistName": name})
+
     async def summon(request: web.Request, user_id: str) -> web.Response:
         """Toggle: join the requested voice channel, or leave it if the bot
         is already there (queue preserved, current track requeued)."""
@@ -274,6 +309,7 @@ def register_control_routes(
         web.post("/control/volume", guarded(volume)),
         web.get("/control/channels", guarded(channels)),
         web.get("/control/playlists", guarded(playlists)),
+        web.post("/control/playlist", guarded(play_playlist)),
         web.post("/control/summon", guarded(summon)),
     ])
     log.info("control API routes registered")
