@@ -296,7 +296,11 @@ def parse_intent(transcript: str) -> Intent | None:
     for prefix in _SEARCH_PREFIXES:
         if lowered.startswith(prefix):
             arg = text[len(prefix):].strip()
-            if arg:
+            # "<verb> playlist" with no name is an INCOMPLETE playlist command,
+            # not a search for the literal word "playlist": fall through to the
+            # whole-transcript case so the user hears "No results" for what
+            # they actually said.
+            if arg and arg.lower() != "playlist":
                 return Intent("search", arg)
 
     # The one free-form case.
