@@ -4,7 +4,7 @@
   "Name": "Jacky Session Control",
   "Description": "Control your Jacky Music Discord session: play/pause, skip, stop, volume, now playing.",
   "Author": "Jacob Choi",
-  "Version": "0.2.0.0",
+  "Version": "0.3.0.0",
   "Category": "Jacky Music",
   "CategoryIcon": "imgs/plugin-icon",
   "Icon": "imgs/plugin-icon",
@@ -82,6 +82,24 @@
         { "Image": "imgs/summon", "TitleAlignment": "bottom" },
         { "Image": "imgs/summoned", "TitleAlignment": "bottom" }
       ]
+    },
+    {
+      "UUID": "com.jacobchoi.jacky-control.playlist",
+      "Name": "Play Playlist",
+      "Icon": "imgs/playlist",
+      "Tooltip": "Insert a saved playlist and play it next",
+      "PropertyInspectorPath": "ui/settings.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/playlist", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "com.jacobchoi.jacky-control.dashboard",
+      "Name": "Open Dashboard",
+      "Icon": "imgs/dashboard",
+      "Tooltip": "Open this session's web dashboard",
+      "PropertyInspectorPath": "ui/settings.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/dashboard", "TitleAlignment": "bottom" }]
     }
   ]
 }
