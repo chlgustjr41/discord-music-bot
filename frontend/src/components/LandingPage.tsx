@@ -455,6 +455,11 @@ const LANDING_STYLES = `
        stay visible (this used to be :not(:last-child), which broke once the
        account menu became the last child). */
     .lp-nav-links a.lp-nav-link { display: none; }
+    /* Three items no longer fit a phone-width nav: tighten the gap and drop
+       the sign-in label, leaving an icon-only button. */
+    .lp-nav-links { gap: 10px; }
+    .jm-account-label { display: none; }
+    .jm-account-signin { padding: 8px 10px !important; }
     .lp-hero-eq { display: none !important; }
   }
 `;

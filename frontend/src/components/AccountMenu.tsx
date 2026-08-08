@@ -46,6 +46,8 @@ export function AccountMenu() {
       <button
         type="button"
         onClick={() => void signInWithGoogle()}
+        aria-label="Sign in"
+        className="jm-account-signin"
         style={{
           display: "inline-flex",
           alignItems: "center",
@@ -61,8 +63,9 @@ export function AccountMenu() {
           whiteSpace: "nowrap",
         }}
       >
-        <LogIn style={{ width: 14, height: 14 }} />
-        Sign in
+        <LogIn style={{ width: 14, height: 14, flexShrink: 0 }} />
+        {/* Collapses to an icon on narrow navs (see LANDING_STYLES). */}
+        <span className="jm-account-label">Sign in</span>
       </button>
     );
   }
