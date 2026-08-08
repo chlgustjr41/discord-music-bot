@@ -125,7 +125,8 @@ async def test_all_control_routes_require_auth(client):
             resp = await client.request(route.method, path)
             assert resp.status == 401, f"{route.method} {path}"
             seen_paths.add(path)
-    assert len(seen_paths) == 7  # now-playing + 4 actions + channels + summon
+    # now-playing + 4 actions + channels + summon + playlists
+    assert len(seen_paths) == 8
 
 
 async def test_string_user_id_resolves_int_keyed_member(client, service, guild_id, auth):
@@ -553,3 +554,46 @@ async def test_now_playing_thumbnail_is_null_when_absent(
     await service.repo.update_state(sid, {"currentTrack": {"title": "Song"}})
     body = await (await client.get("/control/now-playing", headers=auth)).json()
     assert body["thumbnail"] is None
+
+
+# ── playlists listing ────────────────────────────────────────────────────
+
+async def test_playlists_lists_activated_guilds_with_counts(
+    client, service, guild_id, sid, auth
+):
+    guild = service.bot.get_guild(guild_id)
+    guild.members_by_id[USER_ID] = FakeMember(id=USER_ID)
+    await service.repo.save_playlist(sid, "Chill", [{"title": "a"}, {"title": "b"}], "me")
+    await service.repo.save_playlist(sid, "Hype", [{"title": "c"}], "me")
+
+    body = await (await client.get("/control/playlists", headers=auth)).json()
+    assert body == [{
+        "guildId": sid,
+        "guildName": "Guild",
+        "playlists": [
+            {"name": "Chill", "trackCount": 2},
+            {"name": "Hype", "trackCount": 1},
+        ],
+    }]
+
+
+async def test_playlists_excludes_deactivated_and_non_member_guilds(
+    client, service, guild_id, sid, auth
+):
+    guild = service.bot.get_guild(guild_id)
+    guild.members_by_id[USER_ID] = FakeMember(id=USER_ID)
+    await service.repo.save_playlist(sid, "Chill", [{"title": "a"}], "me")
+    service.repo.activated_overrides[sid] = False
+    assert (await (await client.get("/control/playlists", headers=auth)).json()) == []
+
+    service.repo.activated_overrides[sid] = True
+    del guild.members_by_id[USER_ID]
+    assert (await (await client.get("/control/playlists", headers=auth)).json()) == []
+
+
+async def test_playlists_returns_empty_list_when_none_saved(
+    client, service, guild_id, auth
+):
+    service.bot.get_guild(guild_id).members_by_id[USER_ID] = FakeMember(id=USER_ID)
+    body = await (await client.get("/control/playlists", headers=auth)).json()
+    assert body == [{"guildId": str(guild_id), "guildName": "Guild", "playlists": []}]

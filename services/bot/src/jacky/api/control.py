@@ -202,12 +202,40 @@ def register_control_routes(
             })
         return web.json_response(out)
 
+    async def playlists(request: web.Request, user_id: str) -> web.Response:
+        # Same shape and filtering as `channels`, and deliberately NOT
+        # session-gated: the Property Inspector lists these while the user is
+        # configuring a key, long before any session exists.
+        member_id = member_id_of(user_id)
+        out = []
+        for guild in bot.guilds:
+            if not await service.repo.is_activated(str(guild.id)):
+                continue
+            if not guild.get_member(member_id):
+                continue
+            saved = await service.repo.list_playlists(str(guild.id))
+            out.append({
+                "guildId": str(guild.id),
+                "guildName": guild.name,
+                "playlists": sorted(
+                    (
+                        {"name": p["name"], "trackCount": len(p.get("tracks") or [])}
+                        for p in saved
+                    ),
+                    key=lambda p: p["name"].lower(),
+                ),
+            })
+        return web.json_response(out)
+
     async def summon(request: web.Request, user_id: str) -> web.Response:
         """Toggle: join the requested voice channel, or leave it if the bot
         is already there (queue preserved, current track requeued)."""
         body = await body_of(request)
-        # Both ids are validated BEFORE the membership gate, as the inlined
-        # version did: a malformed channelId is a 400 even for an outsider.
+        # channelId is parsed BEFORE the membership gate on purpose: the
+        # original inlined version validated both ids up front, so a malformed
+        # channelId is a 400 regardless of membership. Running the gate first
+        # would turn that case into a 403 and break
+        # test_summon_400_for_missing_or_non_numeric_fields.
         try:
             channel_id = int(str(body["channelId"]))
         except (KeyError, TypeError, ValueError):
@@ -245,6 +273,7 @@ def register_control_routes(
         web.post("/control/stop", guarded(stop)),
         web.post("/control/volume", guarded(volume)),
         web.get("/control/channels", guarded(channels)),
+        web.get("/control/playlists", guarded(playlists)),
         web.post("/control/summon", guarded(summon)),
     ])
     log.info("control API routes registered")
