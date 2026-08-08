@@ -246,18 +246,28 @@ class ServerRepository:
     # ── command / music logs ────────────────────────────────────────────
 
     def _log_command(
-        self, server_id: str, command: str, args: str, user: str, user_id: str
+        self, server_id: str, command: str, args: str, user: str, user_id: str,
+        source: str, transcript: str,
     ) -> None:
         coll = self.db.collection("servers").document(server_id).collection("commandHistory")
-        existing = list(
-            coll.where("command", "==", command).where("args", "==", args).limit(1).stream()
-        )
+        # Source is filtered in Python, not with a third `where`: a Firestore
+        # equality filter never matches documents MISSING the field, and every
+        # row written before this feature has no `source`. Without this split,
+        # a voice "play X" would merge into the Discord "play X" row and
+        # relabel it.
+        existing = [
+            d for d in coll.where("command", "==", command)
+                           .where("args", "==", args).limit(10).stream()
+            if (d.to_dict().get("source") or "discord") == source
+        ]
         if existing:
             existing[0].reference.update({
                 "user": user,
                 "userId": user_id,
                 "timestamp": firestore.SERVER_TIMESTAMP,
                 "callCount": firestore.Increment(1),
+                "source": source,
+                "transcript": transcript,
             })
         else:
             coll.add({
@@ -267,12 +277,18 @@ class ServerRepository:
                 "userId": user_id,
                 "timestamp": firestore.SERVER_TIMESTAMP,
                 "callCount": 1,
+                "source": source,
+                "transcript": transcript,
             })
 
     async def log_command(
-        self, server_id: str, command: str, args: str, user: str, user_id: str
+        self, server_id: str, command: str, args: str, user: str, user_id: str,
+        *, source: str = "discord", transcript: str = "",
     ) -> None:
-        await self._run(self._log_command, server_id, command, args, user, user_id)
+        await self._run(
+            self._log_command, server_id, command, args, user, user_id,
+            source, transcript,
+        )
 
     def _log_music(self, server_id: str, track: dict) -> None:
         url = track.get("url", "")
