@@ -36,6 +36,31 @@ describe("loadThumbnail", () => {
     expect(await loadThumbnail("https://i/page.html", f)).toBeNull();
   });
 
+  it("rejects an oversized payload before buffering it", async () => {
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(8));
+    const f = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: {
+        get: (h: string) =>
+          h === "content-type" ? "image/jpeg" : String(3 * 1024 * 1024),
+      },
+      arrayBuffer,
+    })) as unknown as typeof fetch;
+    expect(await loadThumbnail("https://i/huge.jpg", f)).toBeNull();
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty body", async () => {
+    const f = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      headers: { get: (h: string) => (h === "content-type" ? "image/jpeg" : null) },
+      arrayBuffer: async () => new ArrayBuffer(0),
+    })) as unknown as typeof fetch;
+    expect(await loadThumbnail("https://i/empty.jpg", f)).toBeNull();
+  });
+
   it("returns null when the request throws", async () => {
     const f = vi.fn(async () => {
       throw new Error("offline");

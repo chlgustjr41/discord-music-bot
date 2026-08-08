@@ -18,6 +18,11 @@ export async function loadThumbnail(
     if (!res.ok) return null;
     const type = res.headers.get("content-type") ?? "image/jpeg";
     if (!type.startsWith("image/")) return null;
+    const declared = Number(res.headers.get("content-length"));
+    // Check the declared size BEFORE buffering: arrayBuffer() would otherwise
+    // materialize the whole body in memory and only then reject it. Servers
+    // that omit content-length still fall through to the post-read check.
+    if (Number.isFinite(declared) && declared > MAX_BYTES) return null;
     const buf = await res.arrayBuffer();
     if (buf.byteLength === 0 || buf.byteLength > MAX_BYTES) return null;
     return `data:${type.split(";")[0]};base64,${Buffer.from(buf).toString("base64")}`;
