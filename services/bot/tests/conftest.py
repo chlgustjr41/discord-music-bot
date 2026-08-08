@@ -101,8 +101,10 @@ class FakeRepo:
     async def log_music(self, sid, track):
         self.music_log.append((sid, track))
 
-    async def log_command(self, sid, command, args, user, user_id):
-        self.command_log.append((sid, command, args, user))
+    async def log_command(
+        self, sid, command, args, user, user_id, *, source="discord", transcript=""
+    ):
+        self.command_log.append((sid, command, args, user, source, transcript))
 
     async def set_search_results(self, sid, results, playlist_name=None):
         await self.update_state(sid, {

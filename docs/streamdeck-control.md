@@ -80,6 +80,30 @@ Once signed in, their authentication persists across restarts and key changes.
   live bot session; nowhere → "No session" / brief ⚠ flash on presses.
   (Summon and Play Playlist are the exceptions — they act on the server
   configured on that specific key.)
+- **Voice Command** key: hold it, speak, release. Wait for "Listening…" before
+  speaking — opening the microphone takes about a second, so anything said
+  before that is lost. Recognized phrases:
+
+  | Say | Result |
+  |---|---|
+  | `skip` / `next` | Skip the track |
+  | `pause` / `resume` | Pause or resume |
+  | `louder` / `quieter` | Volume ±10 |
+  | `play playlist <name>` | Load that playlist and jump to it |
+  | `add playlist <name>` | Append that playlist to the queue |
+  | `play <song>` — or just say the song | Search and queue it |
+
+  Anything unrecognized is treated as a song search; that is the only
+  free-form case. `stop` is deliberately **not** a voice command — one
+  misrecognition would end the session and clear the queue, so use the Stop
+  key. Recording caps at 15 seconds. The microphone is chosen per key in its
+  settings and is open only while the key is held.
+- Voice commands appear in the dashboard's Command History with a Voice badge,
+  showing both what was heard and the action it ran. **Transcripts are stored
+  in Firestore** and readable by anyone with the session dashboard; the audio
+  itself is never written to disk on either the plugin or the server.
+- Voice needs `OPENAI_API_KEY` on the bot. Without it the key reports
+  "Voice off" (the route answers 503) — everything else keeps working.
 - Now Playing polls every 5 s, backing off to 30 s while unreachable. It also
   shows the current track's artwork, clearing back to the default icon when
   the track has none or the session ends.
@@ -94,6 +118,13 @@ Once signed in, their authentication persists across restarts and key changes.
 - Token revocation: run `j!unlink` in any activated server to revoke all your Stream Deck sign-ins (one command, all devices). Sign in again anytime. Env changes (`make up`) still apply for new deployments.
 
 ## Known limitations / follow-ups
+
+- The bundled ffmpeg is pinned by SHA-256 and fetched at pack time
+  (`npm run fetch-ffmpeg`), so the `.streamDeckPlugin` is ~30-40 MB and works
+  with nothing installed. It is a **Windows** build — the manifest targets
+  Windows only. Re-pin deliberately when upgrading; a mismatched hash fails
+  the build rather than shipping an unverified binary.
+
 
 - Summon key icon state (joined/left) comes from press responses only — can go stale if presses fail silently or the session changes mid-flight.
 - **Sign-in device-phishing — mitigated, not eliminated.** A relayed authorize link would otherwise hand the sender a token carrying *your* identity. The callback now requires the browser finishing sign-in to come from the same address that started it, so a link sent from elsewhere is rejected ("Sign-in started somewhere else"). The residual gap is an attacker on your own network/NAT; the rule still stands — only complete sign-ins you started from your own Stream Deck.

@@ -1,4 +1,5 @@
 node_modules/
 com.jacobchoi.jacky-control.sdPlugin/bin/plugin.js
+com.jacobchoi.jacky-control.sdPlugin/bin/ffmpeg.exe
 *.streamDeckPlugin
 coverage/

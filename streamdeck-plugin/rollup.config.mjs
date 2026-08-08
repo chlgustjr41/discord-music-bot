@@ -8,6 +8,9 @@ export default {
     file: "com.jacobchoi.jacky-control.sdPlugin/bin/plugin.js",
     format: "es",
     sourcemap: false,
+    // The manifest's CodePath is a single file, so the lazy import of
+    // ./audio-devices must be inlined rather than emitted as a chunk.
+    inlineDynamicImports: true,
   },
   plugins: [
     typescript({ noEmit: false, declaration: false }),

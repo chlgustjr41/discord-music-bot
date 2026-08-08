@@ -79,3 +79,25 @@ def test_public_control_url_ignores_an_empty_env_var(
 
     monkeypatch.setenv("PUBLIC_CONTROL_URL", "https://other.example.com/")
     assert Settings.from_env().public_control_url == "https://other.example.com"
+
+
+def test_openai_settings_default_and_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Empty must behave like unset: compose passes optional vars as ${VAR:-},
+    which SETS them to an empty string, so a .get() default never fires."""
+    for key, value in REQUIRED.items():
+        monkeypatch.setenv(key, value)
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_STT_MODEL", raising=False)
+    s = Settings.from_env()
+    assert s.openai_api_key == ""
+    assert s.openai_stt_model == "gpt-4o-mini-transcribe"
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("OPENAI_STT_MODEL", "")
+    s = Settings.from_env()
+    assert s.openai_api_key == "sk-test"
+    assert s.openai_stt_model == "gpt-4o-mini-transcribe"
+
+    monkeypatch.setenv("OPENAI_STT_MODEL", "whisper-1")
+    assert Settings.from_env().openai_stt_model == "whisper-1"

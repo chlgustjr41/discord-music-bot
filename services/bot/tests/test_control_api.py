@@ -60,22 +60,55 @@ def auth(token):
     return {"Authorization": f"Bearer {token}"}
 
 
-def build_client(service, store, limiter=None) -> TestClient:
+class FakeTranscriber:
+    def __init__(self):
+        self.text, self.error, self.calls = "skip", None, []
+
+    async def transcribe(self, wav: bytes) -> str:
+        self.calls.append(wav)
+        if self.error:
+            raise self.error
+        return self.text
+
+
+@pytest.fixture
+def transcriber():
+    return FakeTranscriber()
+
+
+# Distinguishes "caller didn't care, build the real thing" from an explicit
+# None, which is the production-with-no-API-key configuration (503).
+_BUILD_DEFAULT = object()
+
+
+def build_client(
+    service, store, limiter=None,
+    transcriber=_BUILD_DEFAULT, voice_dispatcher=_BUILD_DEFAULT,
+) -> TestClient:
     from jacky.api.control import register_control_routes
     from jacky.api.ratelimit import SlidingWindow
     from jacky.core.health import build_app
+    from jacky.voice_control import VoiceIntentDispatcher
 
     app = build_app(service.bot, service)
     register_control_routes(
         app, bot=service.bot, service=service, token_store=store,
         limiter=limiter or SlidingWindow(limit=1000, window_s=60),
+        transcriber=(
+            FakeTranscriber() if transcriber is _BUILD_DEFAULT else transcriber
+        ),
+        voice_dispatcher=(
+            VoiceIntentDispatcher(service, service.repo)
+            if voice_dispatcher is _BUILD_DEFAULT
+            else voice_dispatcher
+        ),
     )
     return TestClient(TestServer(app))
 
 
 @pytest.fixture
-async def client(service, store):
-    tc = build_client(service, store)
+async def client(service, store, transcriber):
+    tc = build_client(service, store, transcriber=transcriber)
     await tc.start_server()
     yield tc
     await tc.close()
@@ -158,8 +191,8 @@ async def test_all_control_routes_require_auth(client):
             assert resp.status == 401, f"{route.method} {path}"
             seen_paths.add(path)
     # now-playing + 4 actions + channels + summon
-    # + playlists + playlist + dashboard-url
-    assert len(seen_paths) == 10
+    # + playlists + playlist + dashboard-url + voice
+    assert len(seen_paths) == 11
 
 
 async def test_string_user_id_resolves_int_keyed_member(client, service, guild_id, auth):
@@ -877,3 +910,140 @@ async def test_listings_still_exclude_true_outsiders(
 
     assert (await (await client.get("/control/channels", headers=auth)).json()) == []
     assert (await (await client.get("/control/playlists", headers=auth)).json()) == []
+
+
+# ── voice command route ──────────────────────────────────────────────────
+
+WAV = b"RIFF" + b"\x00" * 200
+
+
+async def test_voice_requires_a_live_session_before_transcribing(
+    client, service, auth, transcriber
+):
+    """409 must come BEFORE transcription — never pay for a doomed request."""
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 409
+    assert transcriber.calls == []
+
+
+async def test_voice_runs_the_recognized_command(
+    client, service, guild_id, sid, auth, transcriber
+):
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "skip"
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    body = await resp.json()
+    assert resp.status == 200
+    assert body["transcript"] == "skip"
+    assert body["intent"] == "skip"
+    assert body["ok"] is True
+    assert service.node.updates[-1] == (guild_id, {"track": {"encoded": None}})
+
+
+async def test_voice_logs_to_command_history_with_transcript(
+    client, service, guild_id, sid, auth, transcriber
+):
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "play a song"
+    await client.post("/control/voice", data=WAV, headers=auth)
+    entry = service.repo.command_log[-1]
+    assert entry[1] == "play"            # executed action, so retrigger works
+    assert entry[2] == "a song"
+    assert entry[4] == "voice"
+    assert entry[5] == "play a song"     # the recognized speech
+
+
+async def test_voice_rejects_oversized_bodies(client, service, guild_id, auth):
+    put_user_in_voice(service, guild_id)
+    resp = await client.post("/control/voice", data=b"\x00" * 700_000, headers=auth)
+    assert resp.status == 413
+
+
+async def test_voice_empty_transcript_is_422(
+    client, service, guild_id, auth, transcriber
+):
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "   "
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 422
+    assert (await resp.json())["error"] == "no-speech"
+
+
+async def test_voice_transcription_failure_is_502(
+    client, service, guild_id, auth, transcriber
+):
+    from jacky.api.transcribe import TranscribeError
+
+    put_user_in_voice(service, guild_id)
+    transcriber.error = TranscribeError("boom")
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 502
+    assert (await resp.json())["error"] == "stt-failed"
+
+
+async def test_voice_dispatch_failure_is_502_not_500(
+    service, store, guild_id, auth, transcriber
+):
+    """The dispatcher touches Firestore on the volume and playlist paths. A
+    transient failure there must surface as a handled 502, not an unhandled
+    500 the spec's error table has no entry for."""
+    class BoomDispatcher:
+        async def dispatch(self, guild_id, intent):
+            raise RuntimeError("firestore is having a day")
+
+    tc = build_client(
+        service, store, transcriber=transcriber, voice_dispatcher=BoomDispatcher()
+    )
+    await tc.start_server()
+    try:
+        put_user_in_voice(service, guild_id)
+        resp = await tc.post("/control/voice", data=WAV, headers=auth)
+        assert resp.status == 502
+        assert (await resp.json())["error"] == "dispatch-failed"
+    finally:
+        await tc.close()
+
+
+async def test_voice_is_503_when_transcription_is_not_configured(
+    service, store, guild_id, auth
+):
+    """Production with no OPENAI_API_KEY: the route is still registered (so the
+    auth sweep covers it) but reports itself unavailable."""
+    tc = build_client(service, store, transcriber=None, voice_dispatcher=None)
+    await tc.start_server()
+    try:
+        put_user_in_voice(service, guild_id)
+        resp = await tc.post("/control/voice", data=WAV, headers=auth)
+        assert resp.status == 503
+        assert (await resp.json())["error"] == "voice-disabled"
+    finally:
+        await tc.close()
+
+
+async def test_voice_empty_body_never_reaches_the_transcriber(
+    client, service, guild_id, auth, transcriber
+):
+    """A zero-byte upload cannot contain speech — reject it before paying for
+    an OpenAI call."""
+    put_user_in_voice(service, guild_id)
+    resp = await client.post("/control/voice", data=b"", headers=auth)
+    assert resp.status == 422
+    assert (await resp.json())["error"] == "no-speech"
+    assert transcriber.calls == []
+
+
+async def test_voice_volume_logs_the_resulting_level(
+    client, service, guild_id, sid, auth, transcriber
+):
+    """Both directions logging command="volume", args="" would dedupe into one
+    row AND retrigger nothing (listener.py: `elif command == "volume" and
+    args`). Logging the resulting level fixes both."""
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {"volume": 50})
+    transcriber.text = "louder"
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 200
+    entry = service.repo.command_log[-1]
+    assert entry[1] == "volume"
+    assert entry[2] == "60"
+    assert entry[5] == "louder"

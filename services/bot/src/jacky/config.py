@@ -20,6 +20,8 @@ class Settings:
     discord_client_id: str
     discord_client_secret: str
     public_control_url: str
+    openai_api_key: str
+    openai_stt_model: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -50,6 +52,12 @@ class Settings:
                 os.environ.get("PUBLIC_CONTROL_URL")
                 or "https://control.jacky-music-bot.com"
             ).rstrip("/"),
+            openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
+            # `or` (not a .get default): compose passes ${VAR:-} as an empty
+            # string, so a .get default would never fire.
+            openai_stt_model=(
+                os.environ.get("OPENAI_STT_MODEL") or "gpt-4o-mini-transcribe"
+            ),
         )
 
     @property

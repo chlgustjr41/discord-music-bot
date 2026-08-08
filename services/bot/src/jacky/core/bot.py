@@ -160,9 +160,22 @@ class JackyBot(commands.Bot):
                 health_app, oauth=oauth, token_store=self.token_store,
                 member_gate=member_gate,
             )
+            transcriber = None
+            voice_dispatcher = None
+            if self.settings.openai_api_key:
+                from jacky.api.transcribe import OpenAITranscriber
+                from jacky.voice_control import VoiceIntentDispatcher
+
+                transcriber = OpenAITranscriber(
+                    self.http_session,
+                    self.settings.openai_api_key,
+                    self.settings.openai_stt_model,
+                )
+                voice_dispatcher = VoiceIntentDispatcher(self.service, self.repo)
             register_control_routes(
                 health_app, bot=self, service=self.service,
                 token_store=self.token_store, limiter=SlidingWindow(),
+                transcriber=transcriber, voice_dispatcher=voice_dispatcher,
             )
         self._health_runner = await start_health_server(
             self, self.service, self.settings.health_port, app=health_app
