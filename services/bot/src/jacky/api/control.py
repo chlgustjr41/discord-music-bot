@@ -357,6 +357,14 @@ def register_control_routes(
         try:
             result = await voice_dispatcher.dispatch(guild.id, intent)
         except Exception:  # noqa: BLE001 — a failed command must not 500
+            # INVARIANT: nothing raised out of dispatch may carry the
+            # transcript. log.exception emits a traceback, so an exception
+            # message holding the spoken text would reach container stdout —
+            # which has different retention and readers than the command
+            # history transcripts are deliberately persisted to. True today:
+            # _search catches its own resolve() failure, and the playlist
+            # paths raise only from Firestore calls that never receive the
+            # spoken text. Keep it that way when adding intents.
             log.exception("voice dispatch failed for intent %s", intent.kind)
             return web.json_response({"error": "dispatch-failed"}, status=502)
         # Logged as the EXECUTED action so the dashboard's retrigger works,
