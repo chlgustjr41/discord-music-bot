@@ -22,6 +22,10 @@ VOLUME_STEP = 10
 class DispatchResult:
     ok: bool
     detail: str = ""
+    # Overrides intent.arg when logging to command history, so a volume row
+    # records the resulting level ("60") rather than an empty arg — which
+    # both keeps up/down as distinct rows and makes retrigger work.
+    log_arg: str | None = None
 
 
 class VoiceIntentDispatcher:
@@ -46,7 +50,7 @@ class VoiceIntentDispatcher:
             current = 80 if current is None else int(current)
             step = VOLUME_STEP if kind == "volume_up" else -VOLUME_STEP
             new = await self.service.set_volume(guild_id, current + step)
-            return DispatchResult(True, f"Volume {new}")
+            return DispatchResult(True, f"Volume {new}", log_arg=str(new))
         if kind in ("playlist_play", "playlist_add") and intent.arg:
             return await self._playlist(guild_id, sid, intent)
         if kind == "search" and intent.arg:

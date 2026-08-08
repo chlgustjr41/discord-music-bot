@@ -76,7 +76,15 @@ def transcriber():
     return FakeTranscriber()
 
 
-def build_client(service, store, limiter=None, transcriber=None) -> TestClient:
+# Distinguishes "caller didn't care, build the real thing" from an explicit
+# None, which is the production-with-no-API-key configuration (503).
+_BUILD_DEFAULT = object()
+
+
+def build_client(
+    service, store, limiter=None,
+    transcriber=_BUILD_DEFAULT, voice_dispatcher=_BUILD_DEFAULT,
+) -> TestClient:
     from jacky.api.control import register_control_routes
     from jacky.api.ratelimit import SlidingWindow
     from jacky.core.health import build_app
@@ -86,8 +94,14 @@ def build_client(service, store, limiter=None, transcriber=None) -> TestClient:
     register_control_routes(
         app, bot=service.bot, service=service, token_store=store,
         limiter=limiter or SlidingWindow(limit=1000, window_s=60),
-        transcriber=transcriber or FakeTranscriber(),
-        voice_dispatcher=VoiceIntentDispatcher(service, service.repo),
+        transcriber=(
+            FakeTranscriber() if transcriber is _BUILD_DEFAULT else transcriber
+        ),
+        voice_dispatcher=(
+            VoiceIntentDispatcher(service, service.repo)
+            if voice_dispatcher is _BUILD_DEFAULT
+            else voice_dispatcher
+        ),
     )
     return TestClient(TestServer(app))
 
@@ -965,3 +979,71 @@ async def test_voice_transcription_failure_is_502(
     resp = await client.post("/control/voice", data=WAV, headers=auth)
     assert resp.status == 502
     assert (await resp.json())["error"] == "stt-failed"
+
+
+async def test_voice_dispatch_failure_is_502_not_500(
+    service, store, guild_id, auth, transcriber
+):
+    """The dispatcher touches Firestore on the volume and playlist paths. A
+    transient failure there must surface as a handled 502, not an unhandled
+    500 the spec's error table has no entry for."""
+    class BoomDispatcher:
+        async def dispatch(self, guild_id, intent):
+            raise RuntimeError("firestore is having a day")
+
+    tc = build_client(
+        service, store, transcriber=transcriber, voice_dispatcher=BoomDispatcher()
+    )
+    await tc.start_server()
+    try:
+        put_user_in_voice(service, guild_id)
+        resp = await tc.post("/control/voice", data=WAV, headers=auth)
+        assert resp.status == 502
+        assert (await resp.json())["error"] == "dispatch-failed"
+    finally:
+        await tc.close()
+
+
+async def test_voice_is_503_when_transcription_is_not_configured(
+    service, store, guild_id, auth
+):
+    """Production with no OPENAI_API_KEY: the route is still registered (so the
+    auth sweep covers it) but reports itself unavailable."""
+    tc = build_client(service, store, transcriber=None, voice_dispatcher=None)
+    await tc.start_server()
+    try:
+        put_user_in_voice(service, guild_id)
+        resp = await tc.post("/control/voice", data=WAV, headers=auth)
+        assert resp.status == 503
+        assert (await resp.json())["error"] == "voice-disabled"
+    finally:
+        await tc.close()
+
+
+async def test_voice_empty_body_never_reaches_the_transcriber(
+    client, service, guild_id, auth, transcriber
+):
+    """A zero-byte upload cannot contain speech — reject it before paying for
+    an OpenAI call."""
+    put_user_in_voice(service, guild_id)
+    resp = await client.post("/control/voice", data=b"", headers=auth)
+    assert resp.status == 422
+    assert (await resp.json())["error"] == "no-speech"
+    assert transcriber.calls == []
+
+
+async def test_voice_volume_logs_the_resulting_level(
+    client, service, guild_id, sid, auth, transcriber
+):
+    """Both directions logging command="volume", args="" would dedupe into one
+    row AND retrigger nothing (listener.py: `elif command == "volume" and
+    args`). Logging the resulting level fixes both."""
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {"volume": 50})
+    transcriber.text = "louder"
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 200
+    entry = service.repo.command_log[-1]
+    assert entry[1] == "volume"
+    assert entry[2] == "60"
+    assert entry[5] == "louder"

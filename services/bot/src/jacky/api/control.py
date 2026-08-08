@@ -340,6 +340,9 @@ def register_control_routes(
         audio = await request.read()
         if len(audio) > VOICE_MAX_BYTES:
             return web.json_response({"error": "too-large"}, status=413)
+        # A zero-byte upload cannot contain speech; don't pay OpenAI to say so.
+        if not audio:
+            return web.json_response({"error": "no-speech"}, status=422)
 
         try:
             transcript = await transcriber.transcribe(audio)
@@ -351,13 +354,21 @@ def register_control_routes(
         if intent is None:
             return web.json_response({"error": "no-speech"}, status=422)
 
-        result = await voice_dispatcher.dispatch(guild.id, intent)
+        try:
+            result = await voice_dispatcher.dispatch(guild.id, intent)
+        except Exception:  # noqa: BLE001 — a failed command must not 500
+            log.exception("voice dispatch failed for intent %s", intent.kind)
+            return web.json_response({"error": "dispatch-failed"}, status=502)
         # Logged as the EXECUTED action so the dashboard's retrigger works,
         # with the transcript alongside it. Transcript persistence is an
         # explicit product decision (spec §Decisions).
+        # log_arg wins where the executed value differs from what was said —
+        # a volume row logs the resulting level, so up/down stay distinct rows
+        # and listener.py's `command == "volume" and args` retrigger fires.
+        log_args = result.log_arg if result.log_arg is not None else intent.arg
         await service.repo.log_command(
             str(guild.id), _LOG_COMMAND_FOR.get(intent.kind, intent.kind),
-            intent.arg, "Voice", user_id,
+            log_args, "Voice", user_id,
             source="voice", transcript=transcript,
         )
         return web.json_response({
