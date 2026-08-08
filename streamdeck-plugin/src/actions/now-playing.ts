@@ -64,6 +64,11 @@ export class NowPlaying extends SingletonAction {
   }
 
   override onWillAppear(_ev: WillAppearEvent): void {
+    // Unconditional: a key appearing alongside an existing one must still get
+    // artwork on the next tick. The poller doesn't replay its last state, so
+    // without this the new key sits on the manifest icon until the track
+    // changes (titles self-heal because they're re-set every tick).
+    this.lastThumbUrl = null;
     if (++this.visible === 1) {
       this.offset = 0;
       poller.subscribe(this.onPoll);
