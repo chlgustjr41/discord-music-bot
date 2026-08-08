@@ -1,4 +1,5 @@
 import { useNavigate } from "react-router-dom";
+import { AccountMenu } from "./AccountMenu";
 import {
   Globe,
   List,
@@ -450,7 +451,10 @@ const LANDING_STYLES = `
   }
 
   @media (max-width: 700px) {
-    .lp-nav-links a:not(:last-child) { display: none; }
+    /* Hide the section jump-links only; the Invite CTA and the account menu
+       stay visible (this used to be :not(:last-child), which broke once the
+       account menu became the last child). */
+    .lp-nav-links a.lp-nav-link { display: none; }
     .lp-hero-eq { display: none !important; }
   }
 `;
@@ -510,6 +514,7 @@ export function LandingPage() {
                 <Bot style={{ width: 14, height: 14 }} />
                 Invite Bot
               </a>
+              <AccountMenu />
             </div>
           </div>
         </nav>

@@ -6,8 +6,12 @@ import { Dashboard } from "./components/Dashboard";
 import { ActivateServer } from "./components/ActivateServer";
 import { MyServers } from "./components/MyServers";
 import { SetupGuide } from "./components/SetupGuide";
+import { useIdleSignOut } from "./lib/idleSignOut";
 
 function App() {
+  // App-wide watchdog: signs out an unattended browser regardless of route.
+  useIdleSignOut();
+
   return (
     <BrowserRouter>
       <Toaster
