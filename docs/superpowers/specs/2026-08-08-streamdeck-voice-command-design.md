@@ -108,7 +108,9 @@ Voice commands are logged through the existing `commandHistory` subcollection so
 
 ### 8. Config & deploy
 
-`OPENAI_API_KEY` (already in `deploy/.env`) and optional `OPENAI_STT_MODEL` (default `gpt-4o-mini-transcribe`), passed through in `docker-compose.yml`. The route registers only when the key is present — the same graceful-disable pattern as the OAuth gate.
+`OPENAI_API_KEY` (already in `deploy/.env`) and optional `OPENAI_STT_MODEL` (default `gpt-4o-mini-transcribe`), passed through in `docker-compose.yml`.
+
+The route is **always registered**; the transcriber and dispatcher are built only when the key is present, and the handler answers **503 `voice-disabled`** when they are absent. This differs deliberately from the OAuth gate's register-only-if-configured pattern: a missing key is a configuration state the key should report ("voice unavailable"), not a 404 that looks like a broken plugin — and unconditional registration keeps the auth sweep's route count honest in production as well as in tests.
 
 ## Error handling
 
@@ -119,6 +121,7 @@ Voice commands are logged through the existing `commandHistory` subcollection so
 | Hold too short / no audio | "Hold longer" + ⚠ |
 | No live session | 409 → ⚠ |
 | Body too large | 413 → ⚠ |
+| Voice not configured on the server | 503 → "Voice off" |
 | Transcription failure | 502 → "STT failed" |
 | Empty transcript | 422 → "Didn't catch that" |
 | Unknown playlist | 200 `ok:false` → "No playlist called X" |
