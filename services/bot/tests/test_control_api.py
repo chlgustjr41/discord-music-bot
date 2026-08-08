@@ -503,3 +503,27 @@ async def test_summon_502_when_connect_fails(client, service, guild_id, auth):
     )
     assert resp.status == 502
     assert (await resp.json()) == {"error": "join-failed"}
+
+
+# ── deactivation cuts off control (security audit H1) ────────────────────
+
+async def test_deactivated_guild_has_no_controllable_session(
+    client, service, guild_id, sid, auth
+):
+    """Turning a server off must cut EVERY control path, not just j! commands.
+
+    The token was minted while the server was active and nothing re-checks it
+    on later requests, so without an activation check in resolve_guild a live
+    session stays remotely controllable after the owner switches the bot off.
+    """
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {"currentTrack": {"title": "Song"}})
+    service.repo.activated_overrides[str(guild_id)] = False
+
+    resp = await client.get("/control/now-playing", headers=auth)
+    assert (await resp.json()) == {"active": False}
+
+    for path in ("/control/play-pause", "/control/skip",
+                 "/control/stop", "/control/volume"):
+        resp = await client.post(path, json={"delta": 5}, headers=auth)
+        assert resp.status == 409, path

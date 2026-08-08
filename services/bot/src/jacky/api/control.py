@@ -46,15 +46,23 @@ def register_control_routes(
             return await handler(request, user_id)
         return wrapper
 
-    def resolve_guild(user_id: int):
+    async def resolve_guild(user_id: int):
         # Relies on discord.py's member cache, which is populated for
         # voice-connected members via the voice_states intent (core/bot.py).
         # A user not in voice is simply absent -> resolves to no session.
         for guild in bot.guilds:
             member = guild.get_member(user_id)
             voice = getattr(member, "voice", None)
-            if member and voice and voice.channel and guild.voice_client:
-                return guild
+            if not (member and voice and voice.channel and guild.voice_client):
+                continue
+            # Deactivation must cut off EVERY control path, not just j!
+            # commands (commands/activation.py). Without this an already-live
+            # session stays remotely controllable after the owner switches the
+            # server off — the token was minted before, and nothing else here
+            # re-checks. Keep scanning: the caller may be live elsewhere.
+            if not await service.repo.is_activated(str(guild.id)):
+                continue
+            return guild
         return None
 
     def member_id_of(user_id: str) -> int:
@@ -75,7 +83,7 @@ def register_control_routes(
         return 80 if vol is None else int(vol)
 
     async def now_playing(request: web.Request, user_id: str) -> web.Response:
-        guild = resolve_guild(member_id_of(user_id))
+        guild = await resolve_guild(member_id_of(user_id))
         if guild is None:
             return web.json_response({"active": False})
         state = await service.repo.get_state(str(guild.id)) or {}
@@ -92,7 +100,7 @@ def register_control_routes(
     async def action_target(request: web.Request, user_id: str):
         """(guild, body, error_response) triple for POST action routes."""
         body = await body_of(request)
-        guild = resolve_guild(member_id_of(user_id))
+        guild = await resolve_guild(member_id_of(user_id))
         if guild is None:
             return None, body, web.json_response(
                 {"error": "no-active-session"}, status=409
