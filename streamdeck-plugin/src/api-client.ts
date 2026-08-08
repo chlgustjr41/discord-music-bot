@@ -25,6 +25,13 @@ export type DashboardUrl = { active: boolean; url: string; guildName?: string };
 
 export type SummonResult = { action: "joined" | "left"; sessionCode?: string };
 
+export type VoiceResult = {
+  transcript: string;
+  intent: string;
+  ok: boolean;
+  detail: string | null;
+};
+
 export type ClientConfig = { apiUrl: string; authToken: string };
 
 export class ControlApiError extends Error {
@@ -114,5 +121,20 @@ export class JackyClient {
   async summon(guildId: string, channelId: string): Promise<SummonResult> {
     const res = await this.post("/control/summon", { guildId, channelId });
     return (await res.json()) as SummonResult;
+  }
+
+  /** 30 s, not the usual 10 s: this request includes a transcription round-trip. */
+  async voiceCommand(wav: Uint8Array): Promise<VoiceResult> {
+    const res = await this.fetchFn(this.url("/control/voice"), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.cfg.authToken}`,
+        "Content-Type": "audio/wav",
+      },
+      body: wav,
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) throw new ControlApiError(res.status);
+    return (await res.json()) as VoiceResult;
   }
 }

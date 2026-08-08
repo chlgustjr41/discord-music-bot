@@ -55,6 +55,16 @@ export async function handlePiEvent(rawPayload: JsonValue): Promise<void> {
       }
       break;
     }
+    case "get-audio-devices": {
+      try {
+        const { listAudioDevices } = await import("./audio-devices");
+        await reply({ event: "audio-devices", data: await listAudioDevices() });
+      } catch (err) {
+        const error = err instanceof Error ? err.message : String(err);
+        await reply({ event: "audio-devices-error", error });
+      }
+      break;
+    }
     case "get-status": {
       const s = await streamDeck.settings.getGlobalSettings<GlobalSettings>();
       await reply({

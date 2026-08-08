@@ -6,6 +6,7 @@ import { Playlist } from "./actions/playlist";
 import { Skip } from "./actions/skip";
 import { Stop } from "./actions/stop";
 import { Summon } from "./actions/summon";
+import { Voice } from "./actions/voice";
 import { VolumeDown } from "./actions/volume-down";
 import { VolumeUp } from "./actions/volume-up";
 import { initRuntime } from "./runtime";
@@ -19,6 +20,7 @@ streamDeck.actions.registerAction(new NowPlaying());
 streamDeck.actions.registerAction(new Summon());
 streamDeck.actions.registerAction(new Playlist());
 streamDeck.actions.registerAction(new Dashboard());
+streamDeck.actions.registerAction(new Voice());
 
 await streamDeck.connect();
 await initRuntime();

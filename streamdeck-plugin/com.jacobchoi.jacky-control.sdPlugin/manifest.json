@@ -4,7 +4,7 @@
   "Name": "Jacky Session Control",
   "Description": "Control your Jacky Music Discord session: play/pause, skip, stop, volume, now playing with artwork, summon, playlists, and a dashboard shortcut.",
   "Author": "Jacob Choi",
-  "Version": "0.3.0.0",
+  "Version": "0.4.0.0",
   "Category": "Jacky Music",
   "CategoryIcon": "imgs/plugin-icon",
   "Icon": "imgs/plugin-icon",
@@ -100,6 +100,15 @@
       "PropertyInspectorPath": "ui/settings.html",
       "Controllers": ["Keypad"],
       "States": [{ "Image": "imgs/dashboard", "TitleAlignment": "bottom" }]
+    },
+    {
+      "UUID": "com.jacobchoi.jacky-control.voice",
+      "Name": "Voice Command",
+      "Icon": "imgs/voice",
+      "Tooltip": "Hold to speak a command",
+      "PropertyInspectorPath": "ui/settings.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/voice", "TitleAlignment": "bottom" }]
     }
   ]
 }

@@ -46,6 +46,14 @@
     <div id="playlist-error" style="display: none; padding-left: 4px; font-size: 9pt; color: #e94560"></div>
   </div>
 
+  <!-- Voice key only: which microphone to record from. -->
+  <div id="voice-settings" style="display: none">
+    <sdpi-item label="Microphone">
+      <sdpi-select id="mic-select" setting="inputDevice" placeholder="System default"></sdpi-select>
+    </sdpi-item>
+    <div id="voice-error" style="display: none; padding-left: 4px; font-size: 9pt; color: #e94560"></div>
+  </div>
+
   <script>
     // sdpi-components v3/v4 exposes window.SDPIComponents.streamDeckClient:
     //  - send(event, payload): raw websocket send with action/context filled in;
@@ -65,11 +73,15 @@
     const plGuildSelect = document.getElementById("pl-guild-select");
     const plSelect = document.getElementById("pl-select");
     const playlistError = document.getElementById("playlist-error");
+    const voiceDiv = document.getElementById("voice-settings");
+    const micSelect = document.getElementById("mic-select");
+    const voiceError = document.getElementById("voice-error");
 
     let channelData = []; // [{guildId, guildName, channels: [{id, name}]}]
     let isSummon = false;
     let playlistData = []; // [{guildId, guildName, playlists: [{name, trackCount}]}]
     let isPlaylist = false;
+    let isVoice = false;
 
     const sendToPlugin = (payload) => client.send("sendToPlugin", payload);
 
@@ -143,6 +155,12 @@
       } else if (p.event === "playlists-error") {
         playlistError.textContent = "Could not load playlists: " + (p.error || "unknown error");
         playlistError.style.display = "block";
+      } else if (p.event === "audio-devices") {
+        voiceError.style.display = "none";
+        setOptions(micSelect, (p.data || []).map((d) => ({ value: d, label: d })));
+      } else if (p.event === "audio-devices-error") {
+        voiceError.textContent = "Could not list microphones: " + (p.error || "unknown error");
+        voiceError.style.display = "block";
       }
     });
 
@@ -163,6 +181,13 @@
       if (isPlaylist) {
         playlistDiv.style.display = "";
         sendToPlugin({ event: "get-playlists" });
+      }
+      // Not gated on sign-in: the device list comes from the local ffmpeg,
+      // not the bot, so it is never re-requested on auth-status.
+      isVoice = actionInfo.action.endsWith(".voice");
+      if (isVoice) {
+        voiceDiv.style.display = "";
+        sendToPlugin({ event: "get-audio-devices" });
       }
       sendToPlugin({ event: "get-status" });
     })();
