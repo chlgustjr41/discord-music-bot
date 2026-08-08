@@ -48,7 +48,9 @@ services:
       LAVALINK_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
       FIREBASE_SERVICE_ACCOUNT_KEY: /run/secrets/firebase-service-account.json
       WEB_APP_URL: ${WEB_APP_URL:?set in .env}
-      CONTROL_API_TOKEN: ${CONTROL_API_TOKEN:-}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      PUBLIC_CONTROL_URL: ${PUBLIC_CONTROL_URL:-}
     volumes:
       - ${FIREBASE_SERVICE_ACCOUNT_FILE:?set in .env}:/run/secrets/firebase-service-account.json:ro
     expose:
