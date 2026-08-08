@@ -878,6 +878,7 @@ export class Playlist extends SingletonAction<PlaylistSettings> {
 import streamDeck, {
   action,
   SingletonAction,
+  type JsonObject,
   type JsonValue,
   type KeyDownEvent,
   type SendToPluginEvent,
@@ -887,7 +888,9 @@ import { getClient } from "../runtime";
 
 @action({ UUID: "com.jacobchoi.jacky-control.dashboard" })
 export class Dashboard extends SingletonAction {
-  override onSendToPlugin(ev: SendToPluginEvent<JsonValue, object>): Promise<void> {
+  // JsonObject, not `object`: SendToPluginEvent's second parameter is
+  // constrained to JsonObject, and `object` fails the type check (TS2344).
+  override onSendToPlugin(ev: SendToPluginEvent<JsonValue, JsonObject>): Promise<void> {
     return handlePiEvent(ev.payload);
   }
 
