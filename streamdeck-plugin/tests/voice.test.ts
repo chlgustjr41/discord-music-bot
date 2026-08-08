@@ -169,6 +169,33 @@ describe("Voice key lifecycle", () => {
     expect(a.action.setTitle).toHaveBeenCalledWith("Skipped");
   });
 
+  it("does not let a second key's press discard the first key's heard audio", async () => {
+    // The only observable symptom of a SHARED heardAudio flag: the guard is
+    // `!heardAudio || wav.length < 1000`, so a wrongly-true flag is always
+    // caught by the byte count. A wrongly-false one is not — pressing B while
+    // A is recording would reset it and report A's good recording as too
+    // short. Ordering is the whole test: A must hear audio BEFORE B is pressed.
+    const v = new Voice();
+    const a = fakeKey("key-a");
+    const b = fakeKey("key-b");
+
+    const downA = v.onKeyDown(a.down);
+    a.settle();
+    await downA;
+    procs[0].stdout.emit("data", Buffer.alloc(2000, 1));
+
+    const downB = v.onKeyDown(b.down);
+    b.settle();
+    await downB;
+
+    const upA = v.onKeyUp(a.up);
+    procs[0].emit("close");
+    await upA;
+
+    expect(a.action.setTitle).not.toHaveBeenCalledWith("Hold\nlonger");
+    expect(a.action.setTitle).toHaveBeenCalledWith("Skipped");
+  });
+
   it("says the binary is missing rather than blaming the hold length", async () => {
     const v = new Voice();
     const k = fakeKey("key-1");
