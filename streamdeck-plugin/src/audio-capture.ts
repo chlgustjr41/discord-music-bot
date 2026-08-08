@@ -19,18 +19,30 @@ export class MicRecorder {
   private proc: ChildProcessWithoutNullStreams | null = null;
   private chunks: Buffer[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
+  private failed = false;
+
+  /** True when the process never launched (ffmpeg missing, ENOENT). The key
+   *  uses this to say "No ffmpeg" instead of "Hold longer" — both otherwise
+   *  look identical from here: zero captured bytes. */
+  get spawnFailed(): boolean {
+    return this.failed;
+  }
 
   start(device: string | undefined, onFirstBytes: () => void): boolean {
     const bin = resolveFfmpeg();
     if (!bin) return false;
     this.chunks = [];
+    this.failed = false;
     let first = true;
     this.proc = spawn(bin, buildFfmpegArgs(device));
     this.proc.stdout.on("data", (c: Buffer) => {
       if (first) { first = false; onFirstBytes(); }
       this.chunks.push(c);
     });
-    this.proc.on("error", () => this.kill());
+    this.proc.on("error", () => {
+      this.failed = true;
+      this.kill();
+    });
     this.timer = setTimeout(() => this.requestStop(), MAX_RECORD_MS);
     return true;
   }
@@ -48,6 +60,11 @@ export class MicRecorder {
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     const proc = this.proc;
     if (!proc) return Buffer.alloc(0);
+    // Nothing to wait for: the process never started.
+    if (this.failed) {
+      this.proc = null;
+      return Buffer.alloc(0);
+    }
     this.requestStop();
     await new Promise<void>((resolve) => {
       const done = () => resolve();
