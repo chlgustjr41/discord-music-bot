@@ -20,12 +20,27 @@ from typing import Any
 import discord
 from aiohttp import web
 
+from jacky.api.voice_intent import parse_intent
+
 log = logging.getLogger("jacky.control")
 
 # Errors that mean "member lookup came back negative", not "the API broke".
 # Module-level so tests can monkeypatch it with the conftest FakeNotFound
 # (constructing a real discord.NotFound requires a fake aiohttp response).
 _MEMBER_LOOKUP_ERRORS: tuple = (discord.NotFound, discord.HTTPException)
+
+# 600 KB ~= 18 s of 16 kHz mono WAV, comfortably above the client's 15 s cap.
+VOICE_MAX_BYTES = 600_000
+
+# Voice intents log under the name of the j! command they executed, so history
+# rows read like the ones the dashboard already shows (and stay retriggerable).
+_LOG_COMMAND_FOR = {
+    "search": "play",
+    "playlist_play": "playlist",
+    "playlist_add": "playlist",
+    "volume_up": "volume",
+    "volume_down": "volume",
+}
 
 
 def _is_valid_document_id(name: str) -> bool:
@@ -44,7 +59,8 @@ def _is_valid_document_id(name: str) -> bool:
 
 
 def register_control_routes(
-    app: web.Application, *, bot: Any, service: Any, token_store: Any, limiter: Any
+    app: web.Application, *, bot: Any, service: Any, token_store: Any, limiter: Any,
+    transcriber: Any = None, voice_dispatcher: Any = None,
 ) -> None:
     def guarded(handler):
         async def wrapper(request: web.Request) -> web.Response:
@@ -313,6 +329,44 @@ def register_control_routes(
                 })
         return web.json_response({"active": False, "url": f"{web_base}/app"})
 
+    async def voice(request: web.Request, user_id: str) -> web.Response:
+        """Transcribe a push-to-talk clip and run the recognized command."""
+        if transcriber is None or voice_dispatcher is None:
+            return web.json_response({"error": "voice-disabled"}, status=503)
+        guild = await resolve_guild(member_id_of(user_id))
+        if guild is None:
+            # Before transcription: never pay for a request that cannot succeed.
+            return web.json_response({"error": "no-active-session"}, status=409)
+        audio = await request.read()
+        if len(audio) > VOICE_MAX_BYTES:
+            return web.json_response({"error": "too-large"}, status=413)
+
+        try:
+            transcript = await transcriber.transcribe(audio)
+        except Exception:  # noqa: BLE001 — any STT fault is one failure mode
+            log.exception("voice transcription failed")
+            return web.json_response({"error": "stt-failed"}, status=502)
+
+        intent = parse_intent(transcript)
+        if intent is None:
+            return web.json_response({"error": "no-speech"}, status=422)
+
+        result = await voice_dispatcher.dispatch(guild.id, intent)
+        # Logged as the EXECUTED action so the dashboard's retrigger works,
+        # with the transcript alongside it. Transcript persistence is an
+        # explicit product decision (spec §Decisions).
+        await service.repo.log_command(
+            str(guild.id), _LOG_COMMAND_FOR.get(intent.kind, intent.kind),
+            intent.arg, "Voice", user_id,
+            source="voice", transcript=transcript,
+        )
+        return web.json_response({
+            "transcript": transcript,
+            "intent": intent.kind,
+            "ok": result.ok,
+            "detail": result.detail,
+        })
+
     async def summon(request: web.Request, user_id: str) -> web.Response:
         """Toggle: join the requested voice channel, or leave it if the bot
         is already there (queue preserved, current track requeued)."""
@@ -363,5 +417,6 @@ def register_control_routes(
         web.post("/control/playlist", guarded(play_playlist)),
         web.get("/control/dashboard-url", guarded(dashboard_url)),
         web.post("/control/summon", guarded(summon)),
+        web.post("/control/voice", guarded(voice)),
     ])
     log.info("control API routes registered")

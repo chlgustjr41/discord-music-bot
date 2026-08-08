@@ -60,22 +60,41 @@ def auth(token):
     return {"Authorization": f"Bearer {token}"}
 
 
-def build_client(service, store, limiter=None) -> TestClient:
+class FakeTranscriber:
+    def __init__(self):
+        self.text, self.error, self.calls = "skip", None, []
+
+    async def transcribe(self, wav: bytes) -> str:
+        self.calls.append(wav)
+        if self.error:
+            raise self.error
+        return self.text
+
+
+@pytest.fixture
+def transcriber():
+    return FakeTranscriber()
+
+
+def build_client(service, store, limiter=None, transcriber=None) -> TestClient:
     from jacky.api.control import register_control_routes
     from jacky.api.ratelimit import SlidingWindow
     from jacky.core.health import build_app
+    from jacky.voice_control import VoiceIntentDispatcher
 
     app = build_app(service.bot, service)
     register_control_routes(
         app, bot=service.bot, service=service, token_store=store,
         limiter=limiter or SlidingWindow(limit=1000, window_s=60),
+        transcriber=transcriber or FakeTranscriber(),
+        voice_dispatcher=VoiceIntentDispatcher(service, service.repo),
     )
     return TestClient(TestServer(app))
 
 
 @pytest.fixture
-async def client(service, store):
-    tc = build_client(service, store)
+async def client(service, store, transcriber):
+    tc = build_client(service, store, transcriber=transcriber)
     await tc.start_server()
     yield tc
     await tc.close()
@@ -158,8 +177,8 @@ async def test_all_control_routes_require_auth(client):
             assert resp.status == 401, f"{route.method} {path}"
             seen_paths.add(path)
     # now-playing + 4 actions + channels + summon
-    # + playlists + playlist + dashboard-url
-    assert len(seen_paths) == 10
+    # + playlists + playlist + dashboard-url + voice
+    assert len(seen_paths) == 11
 
 
 async def test_string_user_id_resolves_int_keyed_member(client, service, guild_id, auth):
@@ -877,3 +896,72 @@ async def test_listings_still_exclude_true_outsiders(
 
     assert (await (await client.get("/control/channels", headers=auth)).json()) == []
     assert (await (await client.get("/control/playlists", headers=auth)).json()) == []
+
+
+# ── voice command route ──────────────────────────────────────────────────
+
+WAV = b"RIFF" + b"\x00" * 200
+
+
+async def test_voice_requires_a_live_session_before_transcribing(
+    client, service, auth, transcriber
+):
+    """409 must come BEFORE transcription — never pay for a doomed request."""
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 409
+    assert transcriber.calls == []
+
+
+async def test_voice_runs_the_recognized_command(
+    client, service, guild_id, sid, auth, transcriber
+):
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "skip"
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    body = await resp.json()
+    assert resp.status == 200
+    assert body["transcript"] == "skip"
+    assert body["intent"] == "skip"
+    assert body["ok"] is True
+    assert service.node.updates[-1] == (guild_id, {"track": {"encoded": None}})
+
+
+async def test_voice_logs_to_command_history_with_transcript(
+    client, service, guild_id, sid, auth, transcriber
+):
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "play a song"
+    await client.post("/control/voice", data=WAV, headers=auth)
+    entry = service.repo.command_log[-1]
+    assert entry[1] == "play"            # executed action, so retrigger works
+    assert entry[2] == "a song"
+    assert entry[4] == "voice"
+    assert entry[5] == "play a song"     # the recognized speech
+
+
+async def test_voice_rejects_oversized_bodies(client, service, guild_id, auth):
+    put_user_in_voice(service, guild_id)
+    resp = await client.post("/control/voice", data=b"\x00" * 700_000, headers=auth)
+    assert resp.status == 413
+
+
+async def test_voice_empty_transcript_is_422(
+    client, service, guild_id, auth, transcriber
+):
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "   "
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 422
+    assert (await resp.json())["error"] == "no-speech"
+
+
+async def test_voice_transcription_failure_is_502(
+    client, service, guild_id, auth, transcriber
+):
+    from jacky.api.transcribe import TranscribeError
+
+    put_user_in_voice(service, guild_id)
+    transcriber.error = TranscribeError("boom")
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 502
+    assert (await resp.json())["error"] == "stt-failed"
