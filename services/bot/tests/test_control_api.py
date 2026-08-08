@@ -164,6 +164,7 @@ async def test_now_playing_reports_current_track(client, service, guild_id, sid,
     assert body == {
         "active": True, "title": "Song", "author": "Artist",
         "paused": False, "volume": 70, "guildName": "Guild",
+        "thumbnail": None,
     }
 
 
@@ -527,3 +528,28 @@ async def test_deactivated_guild_has_no_controllable_session(
                  "/control/stop", "/control/volume"):
         resp = await client.post(path, json={"delta": 5}, headers=auth)
         assert resp.status == 409, path
+
+
+# ── now-playing artwork ──────────────────────────────────────────────────
+
+async def test_now_playing_includes_thumbnail(client, service, guild_id, sid, auth):
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {
+        "currentTrack": {"title": "Song", "artist": "A", "thumbnail": "https://i/t.jpg"},
+    })
+    body = await (await client.get("/control/now-playing", headers=auth)).json()
+    assert body["thumbnail"] == "https://i/t.jpg"
+
+
+async def test_now_playing_thumbnail_is_null_when_absent(
+    client, service, guild_id, sid, auth
+):
+    """Idle session and a track with no artwork both report null, so the key
+    clears its image instead of keeping the previous track's cover."""
+    put_user_in_voice(service, guild_id)
+    body = await (await client.get("/control/now-playing", headers=auth)).json()
+    assert body["thumbnail"] is None
+
+    await service.repo.update_state(sid, {"currentTrack": {"title": "Song"}})
+    body = await (await client.get("/control/now-playing", headers=auth)).json()
+    assert body["thumbnail"] is None

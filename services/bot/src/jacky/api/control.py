@@ -92,6 +92,7 @@ def register_control_routes(
             "active": True,
             "title": current.get("title") if current else None,
             "author": current.get("artist", "") if current else "",
+            "thumbnail": (current.get("thumbnail") or None) if current else None,
             "paused": bool(state.get("isPaused", False)),
             "volume": volume_of(state),
             "guildName": guild.name,
