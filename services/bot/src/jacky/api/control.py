@@ -20,7 +20,8 @@ from typing import Any
 import discord
 from aiohttp import web
 
-from jacky.api.voice_intent import parse_intent
+from jacky.api.voice_actions import MAX_ACTIONS
+from jacky.api.voice_intent import parse_fallback
 
 log = logging.getLogger("jacky.control")
 
@@ -32,14 +33,13 @@ _MEMBER_LOOKUP_ERRORS: tuple = (discord.NotFound, discord.HTTPException)
 # 600 KB ~= 18 s of 16 kHz mono WAV, comfortably above the client's 15 s cap.
 VOICE_MAX_BYTES = 600_000
 
-# Voice intents log under the name of the j! command they executed, so history
-# rows read like the ones the dashboard already shows (and stay retriggerable).
+# Maps a voice verb to the j! command name the dashboard's history renders and
+# retriggers. Verbs not listed here log under their own name.
 _LOG_COMMAND_FOR = {
-    "search": "play",
-    "playlist_play": "playlist",
-    "playlist_add": "playlist",
-    "volume_up": "volume",
-    "volume_down": "volume",
+    "play": "play",
+    "playlist": "playlist",
+    "volume": "volume",
+    "clear_queue": "clear",
 }
 
 
@@ -61,6 +61,7 @@ def _is_valid_document_id(name: str) -> bool:
 def register_control_routes(
     app: web.Application, *, bot: Any, service: Any, token_store: Any, limiter: Any,
     transcriber: Any = None, voice_dispatcher: Any = None,
+    interpreter: Any = None,
 ) -> None:
     def guarded(handler):
         async def wrapper(request: web.Request) -> web.Response:
@@ -350,40 +351,73 @@ def register_control_routes(
             log.exception("voice transcription failed")
             return web.json_response({"error": "stt-failed"}, status=502)
 
-        intent = parse_intent(transcript)
-        if intent is None:
+        try:
+            actions = await interpreter.interpret(transcript) if interpreter else []
+        except Exception as exc:  # noqa: BLE001 — degrade to the offline parser
+            # Type AND message: a fixed string made "OpenAI rejected the key,
+            # so the feature has silently degraded to the fallback forever"
+            # look identical to a transient network partition, while the key
+            # still appeared to work. Transcript-safe by construction —
+            # LlmIntentInterpreter's messages carry a status, an aiohttp
+            # transport error (host/URL, never the request body), or a fixed
+            # string; test_interpreter_errors_never_carry_the_transcript pins
+            # that for every one of its failure modes. No exc_info: a
+            # traceback is not needed here and this reaches container stdout,
+            # where the transcript must never appear (see the INVARIANT below).
+            log.warning(
+                "voice interpretation failed (%s: %s); using the fallback parser",
+                type(exc).__name__, exc,
+            )
+            actions = []
+        if not actions:
+            actions = parse_fallback(transcript)
+        # Defence in depth: LlmIntentInterpreter runs validate_actions, which
+        # already truncates, but `interpreter` is an injected Any and the cap
+        # is this route's own blast-radius bound — one dispatch and one history
+        # row per action. It must not depend on a collaborator to enforce it.
+        actions = actions[:MAX_ACTIONS]
+        if not actions:
             return web.json_response({"error": "no-speech"}, status=422)
 
         try:
-            result = await voice_dispatcher.dispatch(guild.id, intent)
+            results = await voice_dispatcher.dispatch_all(guild.id, actions)
         except Exception:  # noqa: BLE001 — a failed command must not 500
-            # INVARIANT: nothing raised out of dispatch may carry the
+            # INVARIANT: nothing raised out of dispatch_all may carry the
             # transcript. log.exception emits a traceback, so an exception
             # message holding the spoken text would reach container stdout —
             # which has different retention and readers than the command
-            # history transcripts are deliberately persisted to. True today:
-            # _search catches its own resolve() failure, and the playlist
-            # paths raise only from Firestore calls that never receive the
-            # spoken text. Keep it that way when adding intents.
-            log.exception("voice dispatch failed for intent %s", intent.kind)
+            # history transcripts are deliberately persisted to. dispatch_all
+            # already contains per-action failures and logs the verb only,
+            # so this is a last-resort guard; keep it transcript-free when
+            # adding actions.
+            log.exception("voice dispatch failed")
             return web.json_response({"error": "dispatch-failed"}, status=502)
-        # Logged as the EXECUTED action so the dashboard's retrigger works,
-        # with the transcript alongside it. Transcript persistence is an
-        # explicit product decision (spec §Decisions).
-        # log_arg wins where the executed value differs from what was said —
-        # a volume row logs the resulting level, so up/down stay distinct rows
-        # and listener.py's `command == "volume" and args` retrigger fires.
-        log_args = result.log_arg if result.log_arg is not None else intent.arg
-        await service.repo.log_command(
-            str(guild.id), _LOG_COMMAND_FOR.get(intent.kind, intent.kind),
-            log_args, "Voice", user_id,
-            source="voice", transcript=transcript,
-        )
+
+        for action, result in zip(actions, results, strict=False):
+            # Logged as the EXECUTED action so the dashboard's retrigger
+            # works, with the transcript alongside. One row per action, all
+            # sharing the utterance that produced them. log_arg wins where the
+            # executed value differs from what was said — a volume row logs
+            # the resulting level, so up/down stay distinct rows and
+            # listener.py's `command == "volume" and args` retrigger fires.
+            log_args = result.log_arg if result.log_arg is not None else (
+                action.query or action.name
+            )
+            await service.repo.log_command(
+                str(guild.id), _LOG_COMMAND_FOR.get(action.action, action.action),
+                log_args, "Voice", user_id,
+                source="voice", transcript=transcript,
+            )
+        done = sum(1 for r in results if r.ok)
         return web.json_response({
             "transcript": transcript,
-            "intent": intent.kind,
-            "ok": result.ok,
-            "detail": result.detail,
+            "actions": [
+                {"action": a.action, "ok": r.ok, "detail": r.detail}
+                for a, r in zip(actions, results, strict=False)
+            ],
+            "ok": done == len(results),
+            "detail": results[0].detail if len(results) == 1
+                      else f"{done} of {len(results)} done",
         })
 
     async def summon(request: web.Request, user_id: str) -> web.Response:

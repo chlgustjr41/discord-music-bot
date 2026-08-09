@@ -4,6 +4,8 @@ playback handlers, channel discovery."""
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
+from jacky.api.voice_actions import MAX_ACTIONS, Action
+from jacky.api.voice_llm import InterpretError
 from tests.conftest import FakeGuild, FakeMember, FakeVoiceState
 
 USER_ID = 42
@@ -76,6 +78,22 @@ def transcriber():
     return FakeTranscriber()
 
 
+class FakeInterpreter:
+    def __init__(self):
+        self.actions, self.error, self.calls = None, None, []
+
+    async def interpret(self, transcript):
+        self.calls.append(transcript)
+        if self.error:
+            raise self.error
+        return self.actions if self.actions is not None else [Action("skip")]
+
+
+@pytest.fixture
+def interpreter():
+    return FakeInterpreter()
+
+
 # Distinguishes "caller didn't care, build the real thing" from an explicit
 # None, which is the production-with-no-API-key configuration (503).
 _BUILD_DEFAULT = object()
@@ -84,6 +102,7 @@ _BUILD_DEFAULT = object()
 def build_client(
     service, store, limiter=None,
     transcriber=_BUILD_DEFAULT, voice_dispatcher=_BUILD_DEFAULT,
+    interpreter=_BUILD_DEFAULT,
 ) -> TestClient:
     from jacky.api.control import register_control_routes
     from jacky.api.ratelimit import SlidingWindow
@@ -102,13 +121,18 @@ def build_client(
             if voice_dispatcher is _BUILD_DEFAULT
             else voice_dispatcher
         ),
+        interpreter=(
+            FakeInterpreter() if interpreter is _BUILD_DEFAULT else interpreter
+        ),
     )
     return TestClient(TestServer(app))
 
 
 @pytest.fixture
-async def client(service, store, transcriber):
-    tc = build_client(service, store, transcriber=transcriber)
+async def client(service, store, transcriber, interpreter):
+    tc = build_client(
+        service, store, transcriber=transcriber, interpreter=interpreter
+    )
     await tc.start_server()
     yield tc
     await tc.close()
@@ -927,24 +951,26 @@ async def test_voice_requires_a_live_session_before_transcribing(
 
 
 async def test_voice_runs_the_recognized_command(
-    client, service, guild_id, sid, auth, transcriber
+    client, service, guild_id, sid, auth, transcriber, interpreter
 ):
     put_user_in_voice(service, guild_id)
     transcriber.text = "skip"
+    interpreter.actions = [Action("skip")]
     resp = await client.post("/control/voice", data=WAV, headers=auth)
     body = await resp.json()
     assert resp.status == 200
     assert body["transcript"] == "skip"
-    assert body["intent"] == "skip"
+    assert [a["action"] for a in body["actions"]] == ["skip"]
     assert body["ok"] is True
     assert service.node.updates[-1] == (guild_id, {"track": {"encoded": None}})
 
 
 async def test_voice_logs_to_command_history_with_transcript(
-    client, service, guild_id, sid, auth, transcriber
+    client, service, guild_id, sid, auth, transcriber, interpreter
 ):
     put_user_in_voice(service, guild_id)
     transcriber.text = "play a song"
+    interpreter.actions = [Action("play", query="a song", placement="now")]
     await client.post("/control/voice", data=WAV, headers=auth)
     entry = service.repo.command_log[-1]
     assert entry[1] == "play"            # executed action, so retrigger works
@@ -960,10 +986,11 @@ async def test_voice_rejects_oversized_bodies(client, service, guild_id, auth):
 
 
 async def test_voice_empty_transcript_is_422(
-    client, service, guild_id, auth, transcriber
+    client, service, guild_id, auth, transcriber, interpreter
 ):
     put_user_in_voice(service, guild_id)
     transcriber.text = "   "
+    interpreter.actions = []   # nothing said, so nothing to interpret
     resp = await client.post("/control/voice", data=WAV, headers=auth)
     assert resp.status == 422
     assert (await resp.json())["error"] == "no-speech"
@@ -988,7 +1015,7 @@ async def test_voice_dispatch_failure_is_502_not_500(
     transient failure there must surface as a handled 502, not an unhandled
     500 the spec's error table has no entry for."""
     class BoomDispatcher:
-        async def dispatch(self, guild_id, intent):
+        async def dispatch_all(self, guild_id, actions):
             raise RuntimeError("firestore is having a day")
 
     tc = build_client(
@@ -1033,7 +1060,7 @@ async def test_voice_empty_body_never_reaches_the_transcriber(
 
 
 async def test_voice_volume_logs_the_resulting_level(
-    client, service, guild_id, sid, auth, transcriber
+    client, service, guild_id, sid, auth, transcriber, interpreter
 ):
     """Both directions logging command="volume", args="" would dedupe into one
     row AND retrigger nothing (listener.py: `elif command == "volume" and
@@ -1041,9 +1068,138 @@ async def test_voice_volume_logs_the_resulting_level(
     put_user_in_voice(service, guild_id)
     await service.repo.update_state(sid, {"volume": 50})
     transcriber.text = "louder"
+    interpreter.actions = [Action("volume", delta=10)]
     resp = await client.post("/control/voice", data=WAV, headers=auth)
     assert resp.status == 200
     entry = service.repo.command_log[-1]
     assert entry[1] == "volume"
     assert entry[2] == "60"
     assert entry[5] == "louder"
+
+
+# ── LLM interpretation: action lists, fallback, partial results ──────────
+
+
+async def test_voice_runs_every_action_in_order(
+    client, service, guild_id, sid, auth, transcriber, interpreter
+):
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "skip then pause"
+    interpreter.actions = [Action("skip"), Action("pause")]
+    body = await (await client.post("/control/voice", data=WAV, headers=auth)).json()
+    assert body["ok"] is True
+    assert [a["action"] for a in body["actions"]] == ["skip", "pause"]
+    assert (await service.repo.get_state(sid))["isPaused"] is True
+
+
+async def test_voice_logs_one_history_row_per_action_sharing_the_transcript(
+    client, service, guild_id, auth, transcriber, interpreter
+):
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "skip then pause"
+    interpreter.actions = [Action("skip"), Action("pause")]
+    await client.post("/control/voice", data=WAV, headers=auth)
+    rows = service.repo.command_log[-2:]
+    assert [r[1] for r in rows] == ["skip", "pause"]
+    assert all(r[4] == "voice" and r[5] == "skip then pause" for r in rows)
+
+
+async def test_voice_falls_back_to_the_parser_when_the_llm_fails(
+    client, service, guild_id, sid, auth, transcriber, interpreter
+):
+    """An OpenAI outage must degrade to basic commands, not break the key."""
+    put_user_in_voice(service, guild_id)
+    interpreter.error = InterpretError("down")
+    transcriber.text = "skip"
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 200
+    assert (await resp.json())["actions"][0]["action"] == "skip"
+
+
+async def test_voice_falls_back_when_the_interpreter_raises_anything_at_all(
+    client, service, guild_id, auth, transcriber, interpreter
+):
+    """The route must not trust InterpretError to be the only thing that can
+    come out of the interpreter — an unexpected fault still degrades."""
+    put_user_in_voice(service, guild_id)
+    interpreter.error = RuntimeError("boom")
+    transcriber.text = "pause"
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 200
+    assert (await resp.json())["actions"][0]["action"] == "pause"
+
+
+async def test_voice_reports_a_partial_summary(
+    client, service, guild_id, sid, auth, transcriber, interpreter
+):
+    from jacky.audio.models import LoadResult
+
+    put_user_in_voice(service, guild_id)
+    service.node.load_results["ytsearch:nothing"] = LoadResult(kind="empty", tracks=[])
+    await service.repo.update_state(sid, {"currentTrack": {"title": "Now"}})
+    interpreter.actions = [
+        Action("play", query="nothing", placement="end"),
+        Action("pause"),
+    ]
+    body = await (await client.post("/control/voice", data=WAV, headers=auth)).json()
+    assert body["ok"] is False
+    assert "1 of 2" in body["detail"]
+
+
+async def test_voice_422_when_nothing_survives_interpretation(
+    client, service, guild_id, auth, transcriber, interpreter
+):
+    put_user_in_voice(service, guild_id)
+    interpreter.error = InterpretError("down")
+    transcriber.text = "..."      # fallback parser yields nothing
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 422
+
+
+async def test_voice_caps_the_action_list_at_the_route(
+    client, service, guild_id, auth, transcriber, interpreter
+):
+    """The cap is the route's own blast-radius bound, not a favour the
+    interpreter does it. `interpreter` is an injected Any: an implementation
+    that skipped validate_actions would otherwise get one dispatch and one
+    history row per action, unbounded."""
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "pause " * 9
+    interpreter.actions = [Action("pause")] * 9
+    before = len(service.repo.command_log)
+    body = await (await client.post("/control/voice", data=WAV, headers=auth)).json()
+    assert len(body["actions"]) == MAX_ACTIONS
+    assert len(service.repo.command_log) - before == MAX_ACTIONS
+
+
+async def test_voice_interpretation_failure_names_the_exception_type(
+    client, service, guild_id, auth, transcriber, interpreter, caplog
+):
+    """A fixed string made every interpretation failure look alike: OpenAI
+    rejecting the request (the feature silently degrading to the fallback
+    forever) was indistinguishable from a network partition, while the key
+    kept appearing to work. The type and message are transcript-safe —
+    test_interpreter_errors_never_carry_the_transcript pins that at the
+    source, for every failure mode LlmIntentInterpreter has."""
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "pause"
+    interpreter.error = InterpretError("interpretation failed: 401")
+    with caplog.at_level(0):
+        resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 200, "must still degrade to the fallback parser"
+    assert "InterpretError" in caplog.text
+    assert "401" in caplog.text
+
+
+async def test_voice_transcript_never_reaches_stdout(
+    client, service, guild_id, auth, transcriber, interpreter, caplog
+):
+    """Transcripts are persisted only to the session's command history.
+    Container stdout has different retention and different readers."""
+    put_user_in_voice(service, guild_id)
+    secret = "play my deeply private playlist name"
+    transcriber.text = secret
+    interpreter.error = InterpretError("down")
+    with caplog.at_level(0):
+        await client.post("/control/voice", data=WAV, headers=auth)
+    assert secret not in caplog.text

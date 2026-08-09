@@ -79,6 +79,15 @@ class FakeRepo:
     async def shuffle_queue(self, sid):
         return len(self.states.get(sid, {}).get("queue", []))
 
+    async def clear_queue(self, sid):
+        # Mirrors ServerRepository.clear_queue EXACTLY, currentTrack null
+        # included. The older shim cleared only the queue, so a caller that
+        # wrongly reused this teardown-shaped method looked correct under test
+        # while production nulled currentTrack and tripped listener.py's
+        # web-skip rule. A fake that quietly differs hides the bug it stands in
+        # for; keep these two writes identical.
+        self.states.setdefault(sid, {}).update({"queue": [], "currentTrack": None})
+
     async def pop_next_track(self, sid):
         queue = self.states.get(sid, {}).get("queue", [])
         return queue.pop(0) if queue else None

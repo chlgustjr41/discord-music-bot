@@ -68,7 +68,7 @@ beforeEach(() => {
   h.resolveMock.mockReset().mockReturnValue("ffmpeg");
   h.voiceCommand.mockReset().mockResolvedValue({
     transcript: "skip",
-    intent: "skip",
+    actions: [{ action: "skip", ok: true, detail: "Skipped" }],
     ok: true,
     detail: "Skipped",
   });
