@@ -119,8 +119,13 @@ export class Voice extends SingletonAction<VoiceSettings> {
       // never delays the feedback the user is waiting on. Unknown types are
       // ignored rather than dispatched generically — the directive vocabulary
       // is closed, exactly like the action vocabulary.
-      for (const directive of result.client ?? []) {
-        if (directive.type !== "open_url" || !directive.url) continue;
+      // The response is not schema-validated, so every shape here is checked
+      // rather than trusted: a non-array `client` would otherwise throw out of
+      // the loop into the catch below and report "Failed" for a command the
+      // server already carried out, prompting the user to run it again.
+      const directives = Array.isArray(result.client) ? result.client : [];
+      for (const directive of directives) {
+        if (directive?.type !== "open_url" || typeof directive.url !== "string") continue;
         const safe = openableUrl(directive.url);
         if (safe) await streamDeck.system.openUrl(safe);
       }

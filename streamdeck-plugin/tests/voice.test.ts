@@ -218,7 +218,7 @@ describe("Voice key lifecycle", () => {
 describe("Voice client directives", () => {
   /** One complete hold-and-release that reaches the server round-trip, so the
    *  directive loop actually runs. */
-  async function speak(client: { type: string; url?: string }[]) {
+  async function speak(client: unknown) {
     h.voiceCommand.mockResolvedValue({
       transcript: "open the dashboard",
       actions: [{ action: "open_dashboard", ok: true, detail: "Opening" }],
@@ -262,5 +262,38 @@ describe("Voice client directives", () => {
     const k = await speak([]);
     expect(h.openUrl).not.toHaveBeenCalled();
     expect(k.action.setTitle).toHaveBeenCalledWith("Opening");
+  });
+
+  it("reports success when `client` is not an array at all", async () => {
+    // The response is an unvalidated cast, so a non-array `client` reaches
+    // for-of and throws — landing in the outer catch, which overwrites the
+    // already-rendered detail with "Failed" and alerts. The command SUCCEEDED
+    // server-side, so a false failure just makes the user run it again.
+    const k = await speak({ type: "open_url" });
+    expect(h.openUrl).not.toHaveBeenCalled();
+    expect(k.action.setTitle).not.toHaveBeenCalledWith("Failed");
+    expect(k.action.setTitle).toHaveBeenCalledWith("Opening");
+  });
+
+  it("survives a null `client`", async () => {
+    const k = await speak(null);
+    expect(k.action.setTitle).not.toHaveBeenCalledWith("Failed");
+    expect(k.action.setTitle).toHaveBeenCalledWith("Opening");
+  });
+
+  it("does not open a directive whose url is an array", async () => {
+    // new URL(["https://x"]) stringifies the array and would otherwise pass
+    // the guard — but openUrl wants a string, not whatever this is.
+    await speak([{ type: "open_url", url: ["https://web.test/x"] }]);
+    expect(h.openUrl).not.toHaveBeenCalled();
+  });
+
+  it("skips a malformed directive without dropping the ones after it", async () => {
+    await speak([
+      null,
+      { type: "open_url", url: 42 },
+      { type: "open_url", url: "https://web.test/ok" },
+    ]);
+    expect(h.openUrl).toHaveBeenCalledWith("https://web.test/ok");
   });
 });
