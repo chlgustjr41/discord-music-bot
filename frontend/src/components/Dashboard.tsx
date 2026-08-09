@@ -38,8 +38,26 @@ function storedMode(code: string | undefined): ViewMode {
   return localStorage.getItem(MODE_KEY(code)) === "solo" ? "solo" : "shared";
 }
 
+/**
+ * The session code is this screen's IDENTITY, not merely an input to it.
+ *
+ * `mode` is per-session and lives in localStorage under a per-session key, but
+ * React Router reuses one component instance when only the param changes, so
+ * the lazy initializer runs once per mount. Without a remount, navigating from
+ * a session left on shared into one the user had set to solo would keep
+ * "shared" AND overwrite the new session's stored preference with it —
+ * publishing their name, photo, colour, and cursor into a session they had
+ * explicitly opted out of. Keying on the code makes every per-session
+ * initializer honest, which is why this is a remount rather than a
+ * re-read-on-change effect: an effect can only correct the state after a
+ * render (and after the persist effect) has already used the stale value.
+ */
 export function Dashboard() {
   const { sessionCode } = useParams<{ sessionCode: string }>();
+  return <DashboardView key={sessionCode} sessionCode={sessionCode} />;
+}
+
+function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
   const { serverId, state, error, loading, sessionExpired } = useServerState(sessionCode);
   const navigate = useNavigate();
   const logEntries = useActivityToasts(state);
