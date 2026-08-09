@@ -8,16 +8,20 @@ speech maps to `pause` instead, for that same reason.
 """
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
+from jacky.api.dashboard_link import entry_url, session_url
 from jacky.api.voice_actions import Action
 from jacky.api.voice_intent import normalize_playlist_name
 from jacky.audio.models import to_track_data
+from jacky.commands.embeds import now_playing_embed, session_embed
 
 log = logging.getLogger("jacky.voice")
 
 VOLUME_STEP = 10
+ANNOUNCE_COOLDOWN_S = 10.0
 
 
 @dataclass(frozen=True)
@@ -29,11 +33,19 @@ class DispatchResult:
     # records the resulting level ("60") rather than an empty arg — which
     # both keeps up/down as distinct rows and makes retrigger work.
     log_arg: str | None = None
+    # Set only by actions the SERVER cannot perform — currently just
+    # open_dashboard. The route collects these into the response's `client`
+    # array and the plugin executes them. None for every server-side action.
+    client: dict | None = None
 
 
 class VoiceIntentDispatcher:
     def __init__(self, service: Any, repo: Any) -> None:
         self.service, self.repo = service, repo
+        # Injectable clock: tests advance time rather than sleep. monotonic,
+        # not wall clock, so a system time change cannot wedge the cooldown.
+        self.now = time.monotonic
+        self._last_announce: dict[int, float] = {}
 
     async def dispatch_all(
         self, guild_id: int, actions: list[Action]
@@ -85,7 +97,52 @@ class VoiceIntentDispatcher:
             return await self._play(guild_id, sid, action)
         if kind == "playlist":
             return await self._playlist_action(guild_id, sid, action)
+        if kind in ("now_playing", "session_info"):
+            return await self._announce(guild_id, sid, kind)
+        if kind == "open_dashboard":
+            return await self._open_dashboard(sid)
         return DispatchResult(False, "Unknown command")
+
+    def _announce_allowed(self, guild_id: int) -> bool:
+        last = self._last_announce.get(guild_id)
+        return last is None or (self.now() - last) >= ANNOUNCE_COOLDOWN_S
+
+    async def _announce(self, guild_id: int, sid: str, kind: str) -> DispatchResult:
+        state = await self.repo.get_state(sid) or {}
+        if kind == "now_playing":
+            current = state.get("currentTrack")
+            if not current:
+                return DispatchResult(False, "Nothing is playing")
+            embed = now_playing_embed(current)
+            detail = current.get("title", "Now playing")
+        else:
+            code = state.get("sessionCode")
+            if not code:
+                return DispatchResult(False, "No session code")
+            embed = session_embed(code, self.service.settings.web_app_url)
+            detail = code
+        # Checked AFTER the content checks so a cooldown is never reported for
+        # an utterance that had nothing to post anyway.
+        if not self._announce_allowed(guild_id):
+            return DispatchResult(False, "Just posted — try again shortly")
+        if not await self.service.notifier.send(guild_id, embed=embed):
+            # The channel never received it; saying "posted" would be a lie.
+            return DispatchResult(False, "Could not post to Discord")
+        # Stamped only on SUCCESS: a failed send must not start the window, or
+        # one Discord hiccup silently blocks the next 10 s of legitimate posts.
+        self._last_announce[guild_id] = self.now()
+        return DispatchResult(True, detail, log_arg=detail)
+
+    async def _open_dashboard(self, sid: str) -> DispatchResult:
+        """No server-side effect at all: the browser lives on the client, so
+        this only hands the plugin a URL to open."""
+        web = self.service.settings.web_app_url
+        code = (await self.repo.get_state(sid) or {}).get("sessionCode")
+        url = session_url(web, code) if code else entry_url(web)
+        return DispatchResult(
+            True, "Opening dashboard",
+            client={"type": "open_url", "url": url},
+        )
 
     async def _skip(self, guild_id: int, sid: str, count: int) -> DispatchResult:
         # Pop count-1 first, then skip once. Calling skip() repeatedly would

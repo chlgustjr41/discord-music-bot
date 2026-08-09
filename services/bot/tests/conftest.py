@@ -183,9 +183,15 @@ class FakeNode:
 class FakeNotifier:
     def __init__(self) -> None:
         self.sent: list[dict] = []
+        # Lets a test force the "Discord never received it" case, which the
+        # announce actions must report as failure rather than success.
+        self.fail = False
 
     async def send(self, guild_id, **kwargs):
+        if self.fail:
+            return False
         self.sent.append({"guild_id": guild_id, **kwargs})
+        return True
 
 
 @dataclass
