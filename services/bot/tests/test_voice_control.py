@@ -1,5 +1,7 @@
 """Voice dispatch onto PlayerService, and voice command-history logging."""
 
+import copy
+
 import pytest
 
 from jacky.api.voice_actions import Action
@@ -360,7 +362,12 @@ async def test_now_playing_posts_the_track_embed(dispatcher, service, guild_id, 
     result = (await dispatcher.dispatch_all(guild_id, [Action("now_playing")]))[0]
     assert result.ok
     assert "Song" in result.detail
-    assert service.fake_notifier.sent[-1]["embed"] is not None
+    # WHICH embed, not merely that one was posted: `detail` is computed
+    # independently of the embed, so "is not None" leaves the two announce
+    # branches free to post each other's embed (or success_embed) undetected.
+    embed = service.fake_notifier.sent[-1]["embed"]
+    assert embed.title == "Now Playing"
+    assert "Song" in embed.description
 
 
 async def test_now_playing_with_nothing_playing_posts_nothing(
@@ -379,7 +386,9 @@ async def test_session_info_posts_the_code(dispatcher, service, guild_id, sid):
     result = (await dispatcher.dispatch_all(guild_id, [Action("session_info")]))[0]
     assert result.ok
     assert "CODE1234" in result.detail
-    assert service.fake_notifier.sent[-1]["embed"] is not None
+    embed = service.fake_notifier.sent[-1]["embed"]
+    assert embed.title == "🎵 Jacky Music Session Started"
+    assert "CODE1234" in embed.description
 
 
 async def test_session_info_without_a_code_posts_nothing(
@@ -420,6 +429,9 @@ async def test_open_dashboard_returns_a_directive_and_touches_nothing(
     await service.repo.update_state(sid, {"sessionCode": "CODE1234"})
     before_updates = len(service.node.updates)
     before_sent = len(service.fake_notifier.sent)
+    # deepcopy, not the reference: FakeRepo.get_state hands back the live dict
+    # it stores, so comparing it against itself would pass for any mutation.
+    before_state = copy.deepcopy(await service.repo.get_state(sid))
     result = (await dispatcher.dispatch_all(guild_id, [Action("open_dashboard")]))[0]
     assert result.ok
     assert result.client == {
@@ -427,6 +439,9 @@ async def test_open_dashboard_returns_a_directive_and_touches_nothing(
     }
     assert len(service.node.updates) == before_updates, "no playback effect"
     assert len(service.fake_notifier.sent) == before_sent, "posts nothing"
+    # "performs no server-side effect" is a named property of this verb in the
+    # spec, so pin the state itself rather than only its visible side channels.
+    assert await service.repo.get_state(sid) == before_state, "writes nothing"
 
 
 async def test_open_dashboard_without_a_session_uses_the_entry_url(
