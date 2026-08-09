@@ -29,6 +29,7 @@ import {
 } from "react";
 import { doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
 import type { User } from "firebase/auth";
+import { toast } from "sonner";
 import { db } from "../firebase";
 import { shouldPublish, type Participant, type ViewMode } from "../lib/presence";
 import {
@@ -108,6 +109,21 @@ function toInputs(raw: unknown): Record<string, InputEntry> {
   return out;
 }
 
+/**
+ * What a rejected write is called when it is shown to the user.
+ *
+ * Toasting per WRITE would be unusable: a rules rejection or a dropped
+ * connection rejects every keystroke, so a shared field would produce a toast
+ * per character. One per kind per provider lifetime says the thing that
+ * matters — this is not reaching the room — exactly once.
+ */
+type FailureKind = "sections" | "inputs";
+
+const FAILURE_MESSAGE: Record<FailureKind, string> = {
+  sections: "Panel layout isn't being shared with the session right now.",
+  inputs: "Your search text isn't being shared with the session right now.",
+};
+
 interface Props {
   sessionCode: string | undefined;
   user: User | null;
@@ -174,6 +190,23 @@ export function SharedViewProvider({
     return unsub;
   }, [key, viewRef]);
 
+  // Which failure kinds have already been announced. Same shape and same
+  // reason as `throttle` below: mutable, stable for the life of the provider,
+  // and reached from callbacks that end up in the context value.
+  const [reported] = useState(() => new Set<FailureKind>());
+
+  const reportFailure = useCallback(
+    (kind: FailureKind, err: unknown) => {
+      // Always logged, so a rejection is diagnosable from the console even
+      // after the toast has been shown (and suppressed) once.
+      console.warn(`[sharedView] ${kind} write rejected`, err);
+      if (reported.has(kind)) return;
+      reported.add(kind);
+      toast(FAILURE_MESSAGE[kind]);
+    },
+    [reported],
+  );
+
   const setSection = useCallback(
     (id: string, open: boolean) => {
       if (!publishing || !viewRef) return;
@@ -186,9 +219,11 @@ export function SharedViewProvider({
         viewRef,
         { sections: { [id]: open }, updatedAt: serverTimestamp() },
         { merge: true },
-      ).catch(() => {});
+        // A rejection is surfaced, not swallowed: a toggle that does not reach
+        // the room otherwise looks like a panel that simply did not move.
+      ).catch((err) => reportFailure("sections", err));
     },
-    [publishing, viewRef],
+    [publishing, viewRef, reportFailure],
   );
 
   // Throttle bookkeeping. A lazily-initialised state value rather than a ref:
@@ -209,9 +244,11 @@ export function SharedViewProvider({
         viewRef,
         { inputs: { [id]: entry }, updatedAt: serverTimestamp() },
         { merge: true },
-      ).catch(() => {});
+        // Likewise: a silently rejected input write leaves the typist
+        // believing the room can see their query.
+      ).catch((err) => reportFailure("inputs", err));
     },
-    [viewRef],
+    [viewRef, reportFailure],
   );
 
   const setInput = useCallback(

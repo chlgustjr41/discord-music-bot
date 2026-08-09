@@ -15,6 +15,7 @@ import { render, act } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { User } from "firebase/auth";
 import { doc, onSnapshot, serverTimestamp, setDoc } from "firebase/firestore";
+import { toast } from "sonner";
 import {
   SharedViewProvider,
   useSharedViewContext,
@@ -24,6 +25,8 @@ import { MAX_INPUT_LEN } from "../lib/sharedView";
 import type { Participant } from "../lib/presence";
 
 vi.mock("../firebase", () => ({ db: {} }));
+
+vi.mock("sonner", () => ({ toast: vi.fn() }));
 
 vi.mock("firebase/firestore", () => ({
   doc: vi.fn((...path: unknown[]) => ({ __type: "doc", path })),
@@ -70,6 +73,9 @@ function harness(user: User | null, mode: "shared" | "solo", people: Participant
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks clears CALLS, not implementations, so a rejecting setDoc
+  // from the failure tests below would leak into every later test.
+  vi.mocked(setDoc).mockResolvedValue(undefined);
   vi.useFakeTimers();
 });
 
@@ -159,6 +165,54 @@ describe("SharedViewProvider writes", () => {
 
     const data = vi.mocked(setDoc).mock.calls[1][1] as { inputs: Record<string, unknown> };
     expect(data.inputs).toEqual({ search: { value: "rad", by: "u1" } });
+  });
+});
+
+describe("SharedViewProvider write failures", () => {
+  // A rejected write used to be swallowed whole: the panel did not move, and
+  // there was no toast, no console entry and nothing to tell the user their
+  // click had not reached the room.
+  function rejectWrites() {
+    vi.mocked(setDoc).mockRejectedValue(new Error("permission-denied"));
+  }
+
+  it("tells the user when a panel toggle does not reach the room", async () => {
+    rejectWrites();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = harness(signedIn, "shared");
+
+    await act(async () => h.latest().setSection("queue", false));
+
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("says it once, not once per keystroke", async () => {
+    // A rules rejection rejects EVERY write, so a toast per write would bury
+    // the dashboard under one notification per character typed.
+    rejectWrites();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = harness(signedIn, "shared");
+    const { setInput } = h.latest();
+
+    await act(async () => setInput("search", "r", "u1"));
+    await act(async () => void vi.advanceTimersByTime(400));
+    await act(async () => setInput("search", "ra", "u1"));
+    await act(async () => void vi.advanceTimersByTime(400));
+
+    expect(vi.mocked(setDoc).mock.calls.length).toBeGreaterThan(1);
+    expect(toast).toHaveBeenCalledTimes(1);
+    // Every rejection is still logged, so the second one is diagnosable.
+    expect(warn.mock.calls.length).toBeGreaterThan(1);
+    warn.mockRestore();
+  });
+
+  it("says nothing while writes are landing", async () => {
+    const h = harness(signedIn, "shared");
+    await act(async () => h.latest().setSection("queue", false));
+
+    expect(toast).not.toHaveBeenCalled();
   });
 });
 
