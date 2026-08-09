@@ -97,6 +97,62 @@ service cloud.firestore {
         && request.resource.data.updatedAt == request.time;
     }
 
+    // Collective view state: which panels are open and what is in the shared
+    // text fields. Deliberately NOT uid-scoped — this is a shared control
+    // surface, like the queue, so any authenticated participant may write it.
+    // The shape is still constrained, and updatedAt is server-stamped for the
+    // same reason as presence: a client-set timestamp cannot be trusted.
+    //
+    // The path alternates collection/document exactly as the participants rule
+    // does — presence (collection) / {sessionCode} (document) / shared
+    // (collection) / view (document) — so it is a sibling of that rule and not
+    // captured by it: `participants` there is a literal segment and cannot
+    // match `shared`. Rules are OR'd across matches, so the catch-all deny
+    // below does not shadow this either.
+    match /presence/{sessionCode}/shared/view {
+      // Both maps are optional: every write is a nested merge, so the first
+      // one to land carries only `sections` or only `inputs`.
+      function sections() { return request.resource.data.get('sections', {}); }
+      function inputs() { return request.resource.data.get('inputs', {}); }
+
+      // Panel ids are open-ended (a new panel is one line in a component), so
+      // only the count is bounded. The values are booleans consumed through
+      // mergeSections, which drops anything that is not one.
+      function validSections() {
+        return sections().size() <= 20;
+      }
+
+      function validEntry(entry) {
+        return entry.keys().hasOnly(['value', 'by'])
+          && entry.keys().hasAll(['value', 'by'])
+          && entry.value is string
+          // Matches MAX_INPUT_LEN in lib/sharedView.ts, which slices to exactly
+          // that length — so this is <=, not <, or every full-length write from
+          // an honest client would be rejected.
+          && entry.value.size() <= 200
+          && entry.by is string
+          && entry.by.size() <= 128;
+      }
+
+      // Rules cannot iterate a map, so every shared input id is named here and
+      // validated individually. That is a deliberate trade: adding a shared
+      // field costs a rules deploy, and in exchange there is no id for which
+      // `value` is unbounded free text that every viewer's browser renders.
+      // The count cap is kept as well, as the statement of intent.
+      function validInputs() {
+        return inputs().size() <= 10
+          && inputs().keys().hasOnly(['search'])
+          && validEntry(inputs().get('search', {'value': '', 'by': ''}));
+      }
+
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+        && request.resource.data.keys().hasOnly(['sections', 'inputs', 'updatedAt'])
+        && request.resource.data.updatedAt == request.time
+        && validSections()
+        && validInputs();
+    }
+
     // Default deny
     match /{document=**} {
       allow read, write: if false;
