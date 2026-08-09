@@ -113,10 +113,12 @@ describe("CursorLayer", () => {
   });
 
   it("renders nothing for a participant who has not moved yet", () => {
+    // Not `querySelector("svg") === null`: any early return satisfies that,
+    // including one that still paints an empty fixed overlay.
     const { container } = render(
       <CursorLayer participants={[participant({ cursor: null })]} rect={rect} />,
     );
-    expect(container.querySelector("svg")).toBeNull();
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("shows the name beside a cursor that has a position", () => {
@@ -136,8 +138,11 @@ describe("CursorLayer", () => {
         rect={{ left: 100, top: 20, width: 800, height: 400 } as DOMRect}
       />,
     );
-    // 100 + 0.25*800 = 300, 20 + 0.5*400 = 220
-    expect(container.innerHTML).toContain("300");
-    expect(container.innerHTML).toContain("220");
+    // 100 + 0.25*800 = 300 across, 20 + 0.5*400 = 220 down. Asserted as the
+    // actual transform on the positioned element: "the HTML contains 300 and
+    // 220 somewhere" also passes with x and y swapped.
+    const positioned = container.querySelector<HTMLElement>(".absolute.left-0.top-0");
+    expect(positioned).not.toBeNull();
+    expect(positioned!.style.transform).toBe("translate3d(300px, 220px, 0)");
   });
 });
