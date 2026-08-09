@@ -79,6 +79,9 @@ class FakeRepo:
     async def shuffle_queue(self, sid):
         return len(self.states.get(sid, {}).get("queue", []))
 
+    async def clear_queue(self, sid):
+        self.states.setdefault(sid, {})["queue"] = []
+
     async def pop_next_track(self, sid):
         queue = self.states.get(sid, {}).get("queue", [])
         return queue.pop(0) if queue else None

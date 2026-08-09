@@ -2,7 +2,9 @@
 
 import pytest
 
+from jacky.api.voice_actions import Action
 from jacky.api.voice_intent import Intent
+from jacky.audio.models import LoadResult
 from tests.conftest import FakeRepo
 
 
@@ -144,8 +146,6 @@ async def test_search_queues_a_track(dispatcher, service, guild_id, sid):
 
 
 async def test_search_with_no_results_is_not_ok(dispatcher, service, guild_id):
-    from jacky.audio.models import LoadResult
-
     service.node.default_result = LoadResult(kind="empty", tracks=[])
     result = await dispatcher.dispatch(guild_id, Intent("search", "nothing"))
     assert result.ok is False
@@ -193,3 +193,119 @@ async def test_stop_intent_is_not_dispatchable(dispatcher, guild_id):
     """stop is excluded from voice by design."""
     result = await dispatcher.dispatch(guild_id, Intent("stop"))
     assert result.ok is False
+
+
+# ── action dispatch (LLM vocabulary) ─────────────────────────────────────
+
+
+async def test_play_now_replaces_the_current_track(dispatcher, service, guild_id, sid):
+    """'play X' interrupts. The interrupted track is dropped, not requeued —
+    the user said skip-and-play."""
+    await service.repo.update_state(sid, {"currentTrack": {"title": "Old"}})
+    result = (await dispatcher.dispatch_all(guild_id, [
+        Action("play", query="a song", placement="now")
+    ]))[0]
+    assert result.ok
+    state = await service.repo.get_state(sid)
+    assert state["currentTrack"]["title"] == "Song"
+    assert state["queue"] == []
+
+
+async def test_play_next_jumps_the_queue_without_interrupting(
+    dispatcher, service, guild_id, sid
+):
+    await service.repo.update_state(
+        sid, {"currentTrack": {"title": "Now"}, "queue": [{"title": "Old"}]}
+    )
+    before = len(service.node.updates)
+    result = (await dispatcher.dispatch_all(guild_id, [
+        Action("play", query="a song", placement="next")
+    ]))[0]
+    assert result.ok
+    queue = (await service.repo.get_state(sid))["queue"]
+    assert [t["title"] for t in queue] == ["Song", "Old"]
+    assert len(service.node.updates) == before, "must not interrupt"
+
+
+async def test_play_end_appends(dispatcher, service, guild_id, sid):
+    await service.repo.update_state(
+        sid, {"currentTrack": {"title": "Now"}, "queue": [{"title": "Old"}]}
+    )
+    await dispatcher.dispatch_all(guild_id, [
+        Action("play", query="a song", placement="end")
+    ])
+    queue = (await service.repo.get_state(sid))["queue"]
+    assert [t["title"] for t in queue] == ["Old", "Song"]
+
+
+async def test_skip_count_pops_exactly_and_skips_once(
+    dispatcher, service, guild_id, sid
+):
+    """Repeated skip() would race the TrackEnd auto-advance and drop an
+    unpredictable number; popping count-1 first makes it exact."""
+    await service.repo.update_state(sid, {
+        "currentTrack": {"title": "Now"},
+        "queue": [{"title": "A"}, {"title": "B"}, {"title": "C"}],
+    })
+    before = len(service.node.updates)
+    result = (await dispatcher.dispatch_all(guild_id, [Action("skip", count=3)]))[0]
+    assert result.ok
+    queue = (await service.repo.get_state(sid))["queue"]
+    assert [t["title"] for t in queue] == ["C"]
+    assert len(service.node.updates) == before + 1, "exactly one skip issued"
+
+
+async def test_shuffle_and_clear_queue(dispatcher, service, guild_id, sid):
+    await service.repo.update_state(sid, {"queue": [{"title": "A"}, {"title": "B"}]})
+    assert (await dispatcher.dispatch_all(guild_id, [Action("shuffle")]))[0].ok
+
+    assert (await dispatcher.dispatch_all(guild_id, [Action("clear_queue")]))[0].ok
+    assert (await service.repo.get_state(sid))["queue"] == []
+
+
+async def test_absolute_volume_and_loop(dispatcher, service, guild_id, sid):
+    result = (await dispatcher.dispatch_all(guild_id, [
+        Action("volume", level=42)
+    ]))[0]
+    assert result.ok
+    assert (await service.repo.get_state(sid))["volume"] == 42
+    assert result.log_arg == "42"
+
+    await dispatcher.dispatch_all(guild_id, [Action("loop", mode="queue")])
+    assert (await service.repo.get_state(sid))["loopMode"] == "queue"
+
+
+async def test_volume_zero_is_an_absolute_level_not_an_unset_one(
+    dispatcher, service, guild_id, sid
+):
+    """"mute" is level=0. A falsy check would read that as "no level given"
+    and take the relative branch, bumping the session to 90 instead."""
+    result = (await dispatcher.dispatch_all(guild_id, [Action("volume", level=0)]))[0]
+    assert result.ok
+    assert (await service.repo.get_state(sid))["volume"] == 0
+
+
+async def test_actions_run_in_order_and_a_failure_does_not_block_the_rest(
+    dispatcher, service, guild_id, sid
+):
+    service.node.load_results["ytsearch:nothing"] = LoadResult(kind="empty", tracks=[])
+    await service.repo.update_state(sid, {"currentTrack": {"title": "Now"}})
+    results = await dispatcher.dispatch_all(guild_id, [
+        Action("play", query="nothing", placement="end"),
+        Action("pause"),
+    ])
+    assert [r.ok for r in results] == [False, True]
+    assert (await service.repo.get_state(sid))["isPaused"] is True
+
+
+async def test_a_raising_action_is_contained(dispatcher, service, guild_id):
+    """One exploding action must not abort the batch."""
+    async def boom(*_a, **_k):
+        raise RuntimeError("firestore down")
+
+    service.repo.shuffle_queue = boom   # the dispatcher calls the repo, not the service
+    results = await dispatcher.dispatch_all(guild_id, [
+        Action("shuffle"), Action("pause"),
+    ])
+    assert results[0].ok is False
+    assert results[1].ok is True
