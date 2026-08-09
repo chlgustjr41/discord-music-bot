@@ -75,7 +75,7 @@ Currently accepts `text` or `track`. Gains `embed`, so a caller can hand it a pr
 }
 ```
 
-`client` collects the non-null `DispatchResult.client` values in action order, and is `[]` when there are none. Command history logging is unchanged: one row per action, all sharing the transcript. `_LOG_COMMAND_FOR` maps `now_playing` → `nowplaying` and `session_info` → `session` so the dashboard's retrigger reaches the matching `j!` command; `open_dashboard` logs under its own name because it has no `j!` equivalent.
+`client` collects the non-null `DispatchResult.client` values in action order, and is `[]` when there are none. Command history logging is unchanged: one row per action, all sharing the transcript. `_LOG_COMMAND_FOR` maps `now_playing` → `nowplaying` and `session_info` → `session` so the dashboard's history displays a spoken command under the same name as the typed `j!` command it corresponds to; `open_dashboard` logs under its own name because it has no `j!` equivalent. This is a display mapping only — it does not make the row's retrigger button do anything, since `_handle_retrigger` implements only `play`/`skip`/`pause`/`resume`/`loop`/`volume` (a pre-existing gap that `clear` and `playlist` rows already share).
 
 ### 5. Plugin
 

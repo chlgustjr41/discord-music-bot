@@ -34,14 +34,21 @@ _MEMBER_LOOKUP_ERRORS: tuple = (discord.NotFound, discord.HTTPException)
 # 600 KB ~= 18 s of 16 kHz mono WAV, comfortably above the client's 15 s cap.
 VOICE_MAX_BYTES = 600_000
 
-# Maps a voice verb to the j! command name the dashboard's history renders and
-# retriggers. Verbs not listed here log under their own name.
+# Maps a voice verb to the j! command name the dashboard's history DISPLAYS,
+# so a spoken command reads the same as the typed one it corresponds to.
+# Verbs not listed here log under their own name.
+#
+# This is a display/reading mapping only — it does not make the row's
+# retrigger button work. The listener's _handle_retrigger dispatches on the
+# logged command name and only implements play/skip/pause/resume/loop/volume,
+# so retriggering a "nowplaying", "session", "clear" or "playlist" row writes
+# a new history row and does nothing else.
 _LOG_COMMAND_FOR = {
     "play": "play",
     "playlist": "playlist",
     "volume": "volume",
     "clear_queue": "clear",
-    # Retrigger targets: these map onto real j! commands.
+    # These name real j! commands, so history reads naturally.
     "now_playing": "nowplaying",
     "session_info": "session",
     # open_dashboard has no j! equivalent — it logs under its own name.
