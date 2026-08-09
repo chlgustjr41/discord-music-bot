@@ -7,7 +7,13 @@ import { getIdentityName } from "../lib/identity";
 import { bumpMemberStat } from "../lib/social";
 import { searchYouTube } from "../services/api";
 import type { ViewMode } from "../lib/presence";
-import { runSearch, shouldFollowSharedSearch } from "../lib/searchMode";
+import {
+  IDLE_OWN_SEARCH,
+  nextOwnSearchState,
+  runSearch,
+  shouldAdoptSharedResults,
+  type OwnSearchState,
+} from "../lib/searchMode";
 import type { SearchResult, Track } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -48,22 +54,36 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
   const [infoPos, setInfoPos] = useState({ top: 0, right: 0 });
   const infoButtonRef = useRef<HTMLButtonElement>(null);
   const waitingForResults = useRef(false);
-  // True only while a search *this* panel started is sitting on the bot. In
-  // solo mode it is the one reason to read the shared document at all.
-  const ownBotSearch = useRef(false);
+  // WHICH query this panel handed to the bot, not merely that it handed over
+  // one. `searchQuery`/`searchResults` are single shared fields, so a flag
+  // cannot tell our answer from a shared user's answer that overwrote ours.
+  const ownSearch = useRef<OwnSearchState>(IDLE_OWN_SEARCH);
   const fallbackToasted = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSentQuery = useRef("");
 
   // Watch for bot search results coming back via Firestore
   useEffect(() => {
-    if (!waitingForResults.current) return;
+    // Track first, unconditionally: seeing our query land — and seeing it
+    // clobbered — are both observations that only this snapshot carries.
+    ownSearch.current = nextOwnSearchState(ownSearch.current, searchQuery);
+
     // Solo dashboards do not follow the session's shared search — somebody
     // else typing must not replace what you are looking at. The exception is
     // our own bot fallback (searchYouTube is not deployed yet): those results
-    // can only come back through this same shared field.
-    if (!shouldFollowSharedSearch(mode) && !ownBotSearch.current) return;
-    if (searchQuery) return; // bot still processing
+    // can only come back through this same shared field, so they are adopted
+    // only when they answer the query we watched land there.
+    if (
+      !shouldAdoptSharedResults({
+        mode,
+        waiting: waitingForResults.current,
+        ownQuery: ownSearch.current.ownQuery,
+        observedOwnQuery: ownSearch.current.observed,
+        incomingQuery: searchQuery,
+      })
+    ) {
+      return;
+    }
 
     if (searchResults && searchResults.length > 0) {
       const isPlaylist = !!searchPlaylistName;
@@ -73,14 +93,14 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
       setSelected(isPlaylist ? new Set(searchResults.map((r) => r.videoId)) : new Set());
       setLoading(false);
       waitingForResults.current = false;
-      ownBotSearch.current = false;
+      ownSearch.current = IDLE_OWN_SEARCH;
     } else {
       setResults([]);
       setPlaylistName(null);
       setLoading(false);
       setError("No results found.");
       waitingForResults.current = false;
-      ownBotSearch.current = false;
+      ownSearch.current = IDLE_OWN_SEARCH;
     }
   }, [searchResults, searchQuery, searchPlaylistName, mode]);
 
@@ -92,7 +112,7 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
         setLoading(false);
         setError("Search timed out. Make sure the bot is connected.");
         waitingForResults.current = false;
-        ownBotSearch.current = false;
+        ownSearch.current = IDLE_OWN_SEARCH;
       }
     }, 15000);
     return () => clearTimeout(timeout);
@@ -110,7 +130,7 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
     setSelected(new Set());
     setAddedMsg("");
     waitingForResults.current = false;
-    ownBotSearch.current = false;
+    ownSearch.current = IDLE_OWN_SEARCH;
 
     try {
       const outcome = await runSearch(mode, q, {
@@ -118,7 +138,7 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
         bot: async (query) => {
           // Set before the write: the bot can answer as soon as it lands.
           waitingForResults.current = true;
-          ownBotSearch.current = true;
+          ownSearch.current = { ownQuery: query, observed: false };
           await updateDoc(doc(db, "servers", serverId), {
             searchQuery: query,
             searchResults: [],
@@ -144,7 +164,7 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
       setError("Search failed.");
       setLoading(false);
       waitingForResults.current = false;
-      ownBotSearch.current = false;
+      ownSearch.current = IDLE_OWN_SEARCH;
     }
   };
 

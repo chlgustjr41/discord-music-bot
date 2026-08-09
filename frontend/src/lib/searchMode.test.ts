@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { runSearch, shouldFollowSharedSearch } from "./searchMode";
+import {
+  nextOwnSearchState,
+  runSearch,
+  shouldAdoptSharedResults,
+  shouldFollowSharedSearch,
+  type OwnSearchState,
+} from "./searchMode";
 
 describe("shouldFollowSharedSearch", () => {
   it("follows in shared mode", () => {
@@ -57,3 +63,103 @@ describe("runSearch", () => {
     expect(bot).toHaveBeenCalledWith("hello");
   });
 });
+
+describe("nextOwnSearchState", () => {
+  const idle: OwnSearchState = { ownQuery: null, observed: false };
+
+  it("records that the session is carrying our own query", () => {
+    expect(nextOwnSearchState({ ownQuery: "radiohead", observed: false }, "radiohead")).toEqual({
+      ownQuery: "radiohead",
+      observed: true,
+    });
+  });
+
+  it("drops our claim the moment somebody else's query overwrites the field", () => {
+    expect(nextOwnSearchState({ ownQuery: "radiohead", observed: true }, "nickelback")).toEqual({
+      ownQuery: null,
+      observed: false,
+    });
+  });
+
+  it("leaves the state alone when the bot has cleared the query", () => {
+    const seen: OwnSearchState = { ownQuery: "radiohead", observed: true };
+    expect(nextOwnSearchState(seen, "")).toEqual(seen);
+    expect(nextOwnSearchState(seen, null)).toEqual(seen);
+    expect(nextOwnSearchState(seen, undefined)).toEqual(seen);
+  });
+
+  it("stays idle while we have nothing in flight", () => {
+    expect(nextOwnSearchState(idle, "nickelback")).toEqual(idle);
+  });
+});
+
+describe("shouldAdoptSharedResults", () => {
+  const solo = {
+    mode: "solo" as const,
+    waiting: true,
+    ownQuery: "radiohead" as string | null,
+    observedOwnQuery: true,
+    incomingQuery: null as string | null | undefined,
+  };
+
+  it("adopts our own answer in solo mode once the bot clears the query", () => {
+    expect(shouldAdoptSharedResults(solo)).toBe(true);
+  });
+
+  it("never adopts when this panel is not waiting for anything", () => {
+    expect(shouldAdoptSharedResults({ ...solo, waiting: false })).toBe(false);
+    expect(shouldAdoptSharedResults({ ...solo, mode: "shared", waiting: false })).toBe(false);
+  });
+
+  it("does not adopt while the bot is still processing", () => {
+    expect(shouldAdoptSharedResults({ ...solo, incomingQuery: "radiohead" })).toBe(false);
+    expect(shouldAdoptSharedResults({ ...solo, mode: "shared", incomingQuery: "x" })).toBe(false);
+  });
+
+  it("follows whatever the session searched in shared mode", () => {
+    expect(
+      shouldAdoptSharedResults({
+        mode: "shared",
+        waiting: true,
+        ownQuery: null,
+        observedOwnQuery: false,
+        incomingQuery: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("refuses solo results we never watched land in the shared field", () => {
+    // The write may have failed, or a snapshot may have raced past it.
+    expect(shouldAdoptSharedResults({ ...solo, observedOwnQuery: false })).toBe(false);
+    expect(shouldAdoptSharedResults({ ...solo, ownQuery: null })).toBe(false);
+  });
+
+  it("solo Ada does not render shared Bob's results (the interleaving)", () => {
+    // Ada is solo; searchYouTube 404s, so her search falls back to the bot.
+    let ada: OwnSearchState = { ownQuery: "radiohead", observed: false };
+
+    // Snapshot 1: her own write echoes back.
+    ada = nextOwnSearchState(ada, "radiohead");
+    expect(shouldAdoptSharedResults({ mode: "solo", waiting: true, ...state(ada), incomingQuery: "radiohead" })).toBe(false);
+
+    // Snapshot 2: Bob (shared) searches "nickelback" and clobbers the field.
+    ada = nextOwnSearchState(ada, "nickelback");
+
+    // Snapshot 3: the bot answers BOB — query cleared, results present.
+    expect(
+      shouldAdoptSharedResults({ mode: "solo", waiting: true, ...state(ada), incomingQuery: null }),
+    ).toBe(false);
+  });
+
+  it("still adopts when nobody interleaves", () => {
+    let ada: OwnSearchState = { ownQuery: "radiohead", observed: false };
+    ada = nextOwnSearchState(ada, "radiohead");
+    expect(
+      shouldAdoptSharedResults({ mode: "solo", waiting: true, ...state(ada), incomingQuery: null }),
+    ).toBe(true);
+  });
+});
+
+function state(s: OwnSearchState) {
+  return { ownQuery: s.ownQuery, observedOwnQuery: s.observed };
+}

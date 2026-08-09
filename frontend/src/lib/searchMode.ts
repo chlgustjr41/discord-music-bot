@@ -32,6 +32,71 @@ export function shouldFollowSharedSearch(mode: ViewMode): boolean {
   return mode === "shared";
 }
 
+/**
+ * What this panel knows about its own in-flight bot search.
+ *
+ * `searchQuery`/`searchResults` are single shared fields on `servers/{id}`, so
+ * "results arrived" is never by itself evidence that they are OUR results.
+ * `ownQuery` is the query we asked the bot for; `observed` records that we
+ * actually watched it sitting in the shared field, which is the only moment at
+ * which the session is demonstrably working on our behalf.
+ */
+export interface OwnSearchState {
+  ownQuery: string | null;
+  observed: boolean;
+}
+
+export const IDLE_OWN_SEARCH: OwnSearchState = { ownQuery: null, observed: false };
+
+/**
+ * Fold one snapshot of the shared `searchQuery` field into that knowledge.
+ *
+ * A cleared query says nothing about whose search it answered, so it leaves
+ * the state alone. A query that is not ours means somebody else's write
+ * overwrote the field: our search is gone, and the answer that follows will be
+ * theirs — so the claim is dropped rather than merely un-observed.
+ */
+export function nextOwnSearchState(
+  prev: OwnSearchState,
+  incomingQuery: string | null | undefined,
+): OwnSearchState {
+  if (!incomingQuery) return prev;
+  if (!prev.ownQuery) return prev;
+  if (incomingQuery === prev.ownQuery) {
+    return prev.observed ? prev : { ownQuery: prev.ownQuery, observed: true };
+  }
+  return IDLE_OWN_SEARCH;
+}
+
+export interface AdoptInput {
+  mode: ViewMode;
+  waiting: boolean;
+  ownQuery: string | null;
+  observedOwnQuery: boolean;
+  incomingQuery: string | null | undefined;
+}
+
+/**
+ * May this panel render the results currently sitting on the shared document?
+ *
+ * Shared dashboards follow the session, so any answer is theirs by definition.
+ * Solo dashboards may only ever adopt the answer to a query they sent AND
+ * watched land — otherwise a solo user's fallback search silently renders
+ * whatever a shared user happened to ask for in the meantime.
+ */
+export function shouldAdoptSharedResults({
+  mode,
+  waiting,
+  ownQuery,
+  observedOwnQuery,
+  incomingQuery,
+}: AdoptInput): boolean {
+  if (!waiting) return false;
+  if (incomingQuery) return false; // bot still processing
+  if (shouldFollowSharedSearch(mode)) return true;
+  return ownQuery !== null && observedOwnQuery;
+}
+
 export async function runSearch<T>(
   mode: ViewMode,
   query: string,
