@@ -231,7 +231,9 @@ export function Dashboard() {
           {/* One wrapping cluster: at narrow widths the whole group drops to
               its own line instead of squeezing (or clipping) the controls. */}
           <div className="flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto sm:gap-2">
-          <PresenceBar participants={participants} />
+          {/* Solo hides other people as well as hiding you: no bar, no
+              cursor layer, and usePresence does not even subscribe. */}
+          {mode === "shared" && <PresenceBar participants={participants} />}
           <IdentityChip />
           <SharedViewToggle mode={mode} signedIn={!!user} onChange={setMode} />
           <PinServerButton serverId={serverId} serverName={state.serverName} />
@@ -307,7 +309,7 @@ export function Dashboard() {
       <CommandHistory serverId={serverId} />
       <ActivityLog entries={logEntries} />
       </div>
-      <CursorLayer participants={participants} rect={rect} />
+      {mode === "shared" && <CursorLayer participants={participants} rect={rect} />}
     </>
   );
 }
