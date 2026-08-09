@@ -46,15 +46,23 @@ ACTION_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["action"],
+                "required": [
+                    "action", "query", "name", "placement",
+                    "count", "level", "delta", "mode",
+                ],
                 "properties": {
                     "action": {"type": "string", "enum": list(_VERBS)},
                     "query": {"type": "string"},
                     "name": {"type": "string"},
                     "placement": {"type": "string", "enum": list(PLACEMENTS)},
                     "count": {"type": "integer"},
-                    "level": {"type": "integer"},
-                    "delta": {"type": "integer"},
+                    # Nullable so the model can express "no absolute level" /
+                    # "no relative delta" — validate_actions reads which of the
+                    # two is None to tell absolute volume from relative.
+                    # Strict mode has no optional fields, so optionality must
+                    # be a union with null.
+                    "level": {"type": ["integer", "null"]},
+                    "delta": {"type": ["integer", "null"]},
                     "mode": {"type": "string", "enum": list(LOOP_MODES)},
                 },
             },

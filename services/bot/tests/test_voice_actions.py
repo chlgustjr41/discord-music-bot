@@ -78,3 +78,30 @@ def test_schema_declares_the_closed_vocabulary():
         "volume", "shuffle", "clear_queue", "loop",
     }
     assert not any("delete" in v or "remove" in v for v in verbs)
+
+
+def test_schema_obeys_openai_strict_mode_rules():
+    """Structured Outputs with strict=true forbids optional fields: every key
+    in `properties` must be in `required`, and every object must set
+    `additionalProperties: false`. Violating either makes OpenAI reject the
+    REQUEST — so every voice command would silently fall back to the
+    deterministic parser. A faked HTTP client cannot catch this; only this
+    test can."""
+    def check(obj):
+        assert obj.get("additionalProperties") is False
+        assert set(obj["required"]) == set(obj["properties"])
+        for prop in obj["properties"].values():
+            if prop.get("type") == "object":
+                check(prop)
+
+    check(ACTION_SCHEMA)
+    check(ACTION_SCHEMA["properties"]["actions"]["items"])
+
+
+def test_volume_fields_stay_nullable_so_absolute_and_relative_differ():
+    """If level/delta were non-nullable integers the model would have to emit
+    both, and validate_actions could no longer tell 'set volume to 40' from
+    'turn it up'."""
+    props = ACTION_SCHEMA["properties"]["actions"]["items"]["properties"]
+    assert props["level"]["type"] == ["integer", "null"]
+    assert props["delta"]["type"] == ["integer", "null"]
