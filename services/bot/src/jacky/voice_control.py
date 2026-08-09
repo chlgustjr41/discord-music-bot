@@ -106,9 +106,10 @@ class VoiceIntentDispatcher:
             # None-check, not `or` — volume 0 is a real muted level, and
             # falsy-defaulting would report 80 for a muted session.
             current = 80 if current is None else int(current)
-            new = await self.service.set_volume(
-                guild_id, current + (action.delta or VOLUME_STEP)
-            )
+            # None-check again, for the same reason: delta 0 is an explicit
+            # "leave it alone", and `or VOLUME_STEP` would turn it into +10.
+            delta = VOLUME_STEP if action.delta is None else action.delta
+            new = await self.service.set_volume(guild_id, current + delta)
         return DispatchResult(True, f"Volume {new}", log_arg=str(new))
 
     async def _play(self, guild_id: int, sid: str, action: Action) -> DispatchResult:

@@ -231,6 +231,16 @@ async def test_relative_volume_steps_from_the_current_level(
     assert (await service.repo.get_state(sid))["volume"] == 50
 
 
+async def test_zero_delta_does_not_become_a_volume_step(
+    dispatcher, service, guild_id, sid
+):
+    """`or VOLUME_STEP` would turn an explicit no-op into +10 — the same
+    falsy-zero trap the current-volume read two lines above guards against."""
+    await service.repo.update_state(sid, {"volume": 55})
+    await dispatcher.dispatch_all(guild_id, [Action("volume", delta=0)])
+    assert (await service.repo.get_state(sid))["volume"] == 55
+
+
 async def test_playlist_now_jumps_to_the_front(dispatcher, service, guild_id, sid):
     await service.repo.save_playlist(
         sid, "Chill Vibes", [{"title": "P1"}, {"title": "P2"}], "me"
