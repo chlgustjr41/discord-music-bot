@@ -99,7 +99,8 @@ service cloud.firestore {
 
     // Collective view state: which panels are open and what is in the shared
     // text fields. Deliberately NOT uid-scoped — this is a shared control
-    // surface, like the queue, so any authenticated participant may write it.
+    // surface, like the queue, so any participant of THAT session may write it
+    // (see inSession below — collective is not the same as unrestricted).
     // The shape is still constrained, and updatedAt is server-stamped for the
     // same reason as presence: a client-set timestamp cannot be trusted.
     //
@@ -155,8 +156,31 @@ service cloud.firestore {
           && validEntry(inputs().get('search', {'value': '', 'by': ''}));
       }
 
+      // Not uid-scoped, but participant-scoped: you must be IN the session to
+      // drive its panels. Without this, any signed-in account that learns or
+      // guesses a session code can rewrite this document in a loop —
+      // force-collapsing every panel on every dashboard and blanking the
+      // shared search box — and the 300 ms throttle that would normally
+      // bound it lives entirely in the client. Victims have no in-app remedy:
+      // they cannot revoke a writer, so the only escape is the solo toggle.
+      // "Not uid-scoped" was the decision; "not participant-scoped" came
+      // along with it unintentionally.
+      //
+      // Costs one document read per write. The client publishes its presence
+      // document on entering shared mode, before any panel can be clicked, so
+      // an honest participant always satisfies this.
+      function inSession() {
+        return exists(
+          /databases/$(database)/documents/presence/$(sessionCode)/participants/$(request.auth.uid)
+        );
+      }
+
       allow read: if request.auth != null;
-      allow write: if request.auth != null
+      // create and update, not `write`: on a delete `request.resource.data` is
+      // null and `.keys()` errors out. That denies the delete either way, but
+      // for the wrong reason and with a misleading error.
+      allow create, update: if request.auth != null
+        && inSession()
         && request.resource.data.keys().hasOnly(['sections', 'inputs', 'updatedAt'])
         && request.resource.data.updatedAt == request.time
         && validSections()
