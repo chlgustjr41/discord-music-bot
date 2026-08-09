@@ -147,6 +147,31 @@ describe("SearchPanel shared query", () => {
     expect(screen.getByRole("textbox")).toHaveValue("");
   });
 
+  it("does not cancel your in-flight search when someone else clears the box", () => {
+    // The shared field is the TEXT. Ada backspacing to empty empties every
+    // box in the room, but it must not reach into another viewer's own
+    // request state and kill the spinner on a search they are waiting for.
+    const view = render(panel());
+    const input = screen.getByRole("textbox");
+
+    act(() => {
+      input.focus();
+      fireEvent.change(input, { target: { value: "radiohead" } });
+    });
+    act(() => void vi.advanceTimersByTime(500));
+    act(() => input.blur());
+    expect(document.querySelector(".animate-spin")).toBeTruthy();
+
+    vi.mocked(useSharedViewContext).mockReturnValue(
+      context({ inputs: { search: { value: "", by: "ada" } } }),
+    );
+    act(() => view.rerender(panel()));
+    act(() => void vi.advanceTimersByTime(500));
+
+    expect(screen.getByRole("textbox")).toHaveValue("");
+    expect(document.querySelector(".animate-spin")).toBeTruthy();
+  });
+
   it("still searches normally once this user edits the adopted text", () => {
     // The guard answers for exactly one change: adoption must not leave the
     // box permanently unable to search.

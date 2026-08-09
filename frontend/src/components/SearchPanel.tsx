@@ -189,10 +189,17 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
     const adopted = consumeAdopted();
     const trimmed = query.trim();
     if (!trimmed) {
-      setResults([]);
-      setLoading(false);
-      setError("");
-      lastSentQuery.current = "";
+      // An emptied box tears this panel's request state down — but only when
+      // THIS user emptied it. Someone else backspacing to empty must not
+      // cancel a search you are waiting on: the shared field is the text, not
+      // your spinner, and `waitingForResults` still has to describe a request
+      // that is genuinely still out there.
+      if (!adopted || !(loading || waitingForResults.current)) {
+        setResults([]);
+        setLoading(false);
+        setError("");
+        lastSentQuery.current = "";
+      }
       return;
     }
 
