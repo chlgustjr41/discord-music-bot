@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from "vitest";
 import { CursorLayer } from "./CursorLayer";
 import { PresenceBar } from "./PresenceBar";
 import { SharedViewToggle } from "./SharedViewToggle";
+import { TypistChip } from "./TypistChip";
 import type { Participant } from "../lib/presence";
 
 const rect = { left: 0, top: 0, width: 1000, height: 500 } as DOMRect;
@@ -101,6 +102,31 @@ describe("SharedViewToggle", () => {
     render(<SharedViewToggle mode="solo" signedIn onChange={onChange} />);
     screen.getByRole("button").click();
     expect(onChange).toHaveBeenCalledWith("shared");
+  });
+});
+
+describe("TypistChip", () => {
+  it("renders nothing when nobody else is typing", () => {
+    // typistLabel returns null for your own echo and for a writer who has
+    // left, so this is the case that keeps a stale name off the field.
+    const { container } = render(<TypistChip typist={null} />);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("names the typist", () => {
+    render(<TypistChip typist={{ name: "Ada", color: "rgb(1, 2, 3)" }} />);
+    expect(screen.getByText("Ada is typing")).toBeDefined();
+  });
+
+  it("uses the typist's presence colour for the dot", () => {
+    // Same colour as their avatar ring and cursor, or the chip tells you
+    // someone is typing without telling you which someone.
+    const { container } = render(
+      <TypistChip typist={{ name: "Ada", color: "rgb(1, 2, 3)" }} />,
+    );
+    const dot = container.querySelector<HTMLElement>(".rounded-full.h-1\\.5, .h-1\\.5");
+    expect(dot).not.toBeNull();
+    expect(dot!.style.backgroundColor).toBe("rgb(1, 2, 3)");
   });
 });
 

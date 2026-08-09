@@ -42,10 +42,16 @@ export function shouldAdoptInput(args: {
   return remoteValue !== localValue;
 }
 
+/**
+ * Takes only the three fields it reads, not a whole Participant: the caller
+ * (useSharedView) deliberately hands over a roster stripped of `cursor` and
+ * `updatedAt`, because those change ten times a second and would drag a
+ * re-render along with them. A full `Participant[]` still satisfies this.
+ */
 export function typistLabel(
   entry: InputEntry | undefined,
   selfUid: string | null,
-  participants: Participant[],
+  participants: readonly Pick<Participant, "uid" | "name" | "color">[],
 ): { name: string; color: string } | null {
   if (!entry?.by || entry.by === selfUid) return null;
   const who = participants.find((p) => p.uid === entry.by);
