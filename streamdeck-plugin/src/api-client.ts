@@ -27,7 +27,7 @@ export type SummonResult = { action: "joined" | "left"; sessionCode?: string };
 
 export type VoiceResult = {
   transcript: string;
-  intent: string;
+  actions: { action: string; ok: boolean; detail: string }[];
   ok: boolean;
   detail: string | null;
 };

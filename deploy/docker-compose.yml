@@ -53,6 +53,7 @@ services:
       PUBLIC_CONTROL_URL: ${PUBLIC_CONTROL_URL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_STT_MODEL: ${OPENAI_STT_MODEL:-}
+      OPENAI_INTENT_MODEL: ${OPENAI_INTENT_MODEL:-}
     volumes:
       - ${FIREBASE_SERVICE_ACCOUNT_FILE:?set in .env}:/run/secrets/firebase-service-account.json:ro
     expose:

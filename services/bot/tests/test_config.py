@@ -89,15 +89,22 @@ def test_openai_settings_default_and_override(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_STT_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_INTENT_MODEL", raising=False)
     s = Settings.from_env()
     assert s.openai_api_key == ""
     assert s.openai_stt_model == "gpt-4o-mini-transcribe"
+    assert s.openai_intent_model == "gpt-4o-mini"
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("OPENAI_STT_MODEL", "")
+    monkeypatch.setenv("OPENAI_INTENT_MODEL", "")  # what compose actually sends
     s = Settings.from_env()
     assert s.openai_api_key == "sk-test"
     assert s.openai_stt_model == "gpt-4o-mini-transcribe"
+    assert s.openai_intent_model == "gpt-4o-mini"
 
     monkeypatch.setenv("OPENAI_STT_MODEL", "whisper-1")
     assert Settings.from_env().openai_stt_model == "whisper-1"
+
+    monkeypatch.setenv("OPENAI_INTENT_MODEL", "gpt-4o")
+    assert Settings.from_env().openai_intent_model == "gpt-4o"

@@ -22,6 +22,7 @@ class Settings:
     public_control_url: str
     openai_api_key: str
     openai_stt_model: str
+    openai_intent_model: str
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -57,6 +58,9 @@ class Settings:
             # string, so a .get default would never fire.
             openai_stt_model=(
                 os.environ.get("OPENAI_STT_MODEL") or "gpt-4o-mini-transcribe"
+            ),
+            openai_intent_model=(
+                os.environ.get("OPENAI_INTENT_MODEL") or "gpt-4o-mini"
             ),
         )
 
