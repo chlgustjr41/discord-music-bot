@@ -1,4 +1,4 @@
-import { isOpenableUrl } from "./url-guard";
+import { openableUrl } from "./url-guard";
 
 export type SignInResult = { token: string; discordUserId: string; discordUserName: string };
 
@@ -54,10 +54,11 @@ export async function signIn(
   // by definition, so a hostile `apiUrl` reaches it with no token at all.
   // Fail the sign-in rather than skipping the open — polling on with no
   // browser open would leave the user staring at a spinner for five minutes.
-  if (!isOpenableUrl(authorizeUrl)) {
+  const safeAuthorizeUrl = openableUrl(authorizeUrl);
+  if (!safeAuthorizeUrl) {
     throw new SignInError(502, "unsafe-authorize-url");
   }
-  openUrl(authorizeUrl);
+  openUrl(safeAuthorizeUrl);
   const deadline = Date.now() + TIMEOUT_MS;
   for (;;) {
     await new Promise((r) => setTimeout(r, POLL_MS));

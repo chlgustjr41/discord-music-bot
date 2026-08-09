@@ -53,6 +53,18 @@ describe("Dashboard key", () => {
     expect(k.action.showAlert).toHaveBeenCalled();
   });
 
+  it("opens the exact string the guard validated, not the raw one", async () => {
+    // The guard validates the PARSED url but openUrl hands the string to the
+    // OS shell. Blessing one spelling and executing another is the parser
+    // differential the guard exists to close.
+    h.dashboardUrl.mockResolvedValue({ active: true, url: " https://web.test/x" });
+    const k = fakeKey();
+    await new Dashboard().onKeyDown(k.down);
+
+    expect(h.openUrl).toHaveBeenCalledWith("https://web.test/x");
+    expect(h.openUrl).not.toHaveBeenCalledWith(" https://web.test/x");
+  });
+
   it("refuses a javascript: url from the server", async () => {
     // apiUrl is user-overridable, so this response is not guaranteed to come
     // from the real server; a javascript: url executes rather than navigates.

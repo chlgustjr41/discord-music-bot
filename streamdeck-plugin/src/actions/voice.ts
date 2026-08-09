@@ -10,7 +10,7 @@ import streamDeck, {
 import { MicRecorder } from "../audio-capture";
 import { handlePiEvent } from "../pi-bridge";
 import { getClient } from "../runtime";
-import { isOpenableUrl } from "../url-guard";
+import { openableUrl } from "../url-guard";
 
 type VoiceSettings = { inputDevice?: string };
 
@@ -120,10 +120,9 @@ export class Voice extends SingletonAction<VoiceSettings> {
       // ignored rather than dispatched generically — the directive vocabulary
       // is closed, exactly like the action vocabulary.
       for (const directive of result.client ?? []) {
-        if (directive.type === "open_url" && directive.url
-            && isOpenableUrl(directive.url)) {
-          await streamDeck.system.openUrl(directive.url);
-        }
+        if (directive.type !== "open_url" || !directive.url) continue;
+        const safe = openableUrl(directive.url);
+        if (safe) await streamDeck.system.openUrl(safe);
       }
     } catch {
       await ev.action.setTitle("Failed");
