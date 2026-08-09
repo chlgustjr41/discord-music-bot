@@ -20,6 +20,7 @@ from typing import Any
 import discord
 from aiohttp import web
 
+from jacky.api.dashboard_link import entry_url, session_url
 from jacky.api.voice_actions import MAX_ACTIONS
 from jacky.api.voice_intent import parse_fallback
 
@@ -317,7 +318,6 @@ def register_control_routes(
         The code is read live, never cached client-side: begin_session mints a
         new one per session and teardown invalidates it.
         """
-        web_base = service.settings.web_app_url.rstrip("/")
         guild = await resolve_guild(member_id_of(user_id))
         if guild is not None:
             state = await service.repo.get_state(str(guild.id)) or {}
@@ -325,10 +325,13 @@ def register_control_routes(
             if code:
                 return web.json_response({
                     "active": True,
-                    "url": f"{web_base}/dashboard/{code}",
+                    "url": session_url(service.settings.web_app_url, code),
                     "guildName": guild.name,
                 })
-        return web.json_response({"active": False, "url": f"{web_base}/app"})
+        return web.json_response({
+            "active": False,
+            "url": entry_url(service.settings.web_app_url),
+        })
 
     async def voice(request: web.Request, user_id: str) -> web.Response:
         """Transcribe a push-to-talk clip and run the recognized command."""
