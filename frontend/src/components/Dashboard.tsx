@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { useServerState } from "../hooks/useServerState";
 import { useActivityToasts } from "../hooks/useActivityToasts.js";
 import { useAuth } from "../hooks/useAuth";
-import { usePresence } from "../hooks/usePresence";
 import type { ViewMode } from "../lib/presence";
 import { NowPlaying } from "./NowPlaying";
 import { Queue } from "./Queue";
@@ -18,8 +17,7 @@ import { StatsPanel } from "./StatsPanel";
 import { IdentityChip } from "./IdentityChip";
 import { PinServerButton } from "./PinServerButton";
 import { AccountMenu } from "./AccountMenu";
-import { PresenceBar } from "./PresenceBar";
-import { CursorLayer } from "./CursorLayer";
+import { PresenceLayer, type PublishCursor } from "./PresenceLayer";
 import { SharedViewToggle } from "./SharedViewToggle";
 import { ActivityLog } from "./ActivityLog";
 import { NodeStatus } from "./NodeStatus";
@@ -70,43 +68,11 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
     if (sessionCode) localStorage.setItem(MODE_KEY(sessionCode), mode);
   }, [sessionCode, mode]);
 
-  const { participants, publishCursor } = usePresence(sessionCode, user, mode);
-
-  // Shared coordinate space for cursors: the dashboard column, not the
-  // viewport, so a 4K screen and a laptop agree on where a pointer is.
-  const [rect, setRect] = useState<DOMRect | null>(null);
+  // Presence state deliberately does NOT live here: see PresenceLayer. This
+  // component holds `mode` and nothing else that changes at cursor rate, so a
+  // remote pointer moving cannot re-render the panels below.
   const contentRef = useRef<HTMLDivElement | null>(null);
-  // getBoundingClientRect() is viewport-relative, so it goes stale the moment
-  // the page scrolls. publishCursor reads the ref rather than the state so it
-  // normalises against the freshest measurement even between renders.
-  const rectRef = useRef<DOMRect | null>(null);
-
-  const measure = useCallback(() => {
-    const el = contentRef.current;
-    if (!el) return;
-    const next = el.getBoundingClientRect();
-    rectRef.current = next;
-    setRect(next);
-  }, []);
-
-  // A ref callback rather than a mount effect: it fires at commit, when the
-  // element genuinely exists, and does not tangle with the early returns below.
-  const attachContent = useCallback((node: HTMLDivElement | null) => {
-    contentRef.current = node;
-    if (!node) return;
-    const next = node.getBoundingClientRect();
-    rectRef.current = next;
-    setRect(next);
-  }, []);
-
-  useEffect(() => {
-    window.addEventListener("resize", measure);
-    window.addEventListener("scroll", measure, { passive: true });
-    return () => {
-      window.removeEventListener("resize", measure);
-      window.removeEventListener("scroll", measure);
-    };
-  }, [measure]);
+  const cursorRef = useRef<PublishCursor | null>(null);
 
   const botConnected = !!state?.voiceChannelId;
 
@@ -204,10 +170,8 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
         </div>
       </header>
       <div
-        ref={attachContent}
-        onPointerMove={(e) =>
-          rectRef.current && publishCursor(e.clientX, e.clientY, rectRef.current)
-        }
+        ref={contentRef}
+        onPointerMove={(e) => cursorRef.current?.(e.clientX, e.clientY)}
         className="mx-auto max-w-3xl p-4 space-y-4"
       >
         {/* Header with server info */}
@@ -251,7 +215,15 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
           <div className="flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto sm:gap-2">
           {/* Solo hides other people as well as hiding you: no bar, no
               cursor layer, and usePresence does not even subscribe. */}
-          {mode === "shared" && <PresenceBar participants={participants} />}
+          {mode === "shared" && (
+            <PresenceLayer
+              sessionCode={sessionCode}
+              user={user}
+              mode={mode}
+              containerRef={contentRef}
+              cursorRef={cursorRef}
+            />
+          )}
           <IdentityChip />
           <SharedViewToggle mode={mode} signedIn={!!user} onChange={setMode} />
           <PinServerButton serverId={serverId} serverName={state.serverName} />
@@ -327,7 +299,6 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
       <CommandHistory serverId={serverId} />
       <ActivityLog entries={logEntries} />
       </div>
-      {mode === "shared" && <CursorLayer participants={participants} rect={rect} />}
     </>
   );
 }
