@@ -1,4 +1,4 @@
-import {
+import streamDeck, {
   action,
   SingletonAction,
   type JsonValue,
@@ -10,6 +10,7 @@ import {
 import { MicRecorder } from "../audio-capture";
 import { handlePiEvent } from "../pi-bridge";
 import { getClient } from "../runtime";
+import { isOpenableUrl } from "../url-guard";
 
 type VoiceSettings = { inputDevice?: string };
 
@@ -114,6 +115,16 @@ export class Voice extends SingletonAction<VoiceSettings> {
       await ev.action.setTitle(result.detail || result.transcript);
       if (result.ok) await ev.action.showOk();
       else await ev.action.showAlert();
+      // Directives execute AFTER the key has rendered, so opening a browser
+      // never delays the feedback the user is waiting on. Unknown types are
+      // ignored rather than dispatched generically — the directive vocabulary
+      // is closed, exactly like the action vocabulary.
+      for (const directive of result.client ?? []) {
+        if (directive.type === "open_url" && directive.url
+            && isOpenableUrl(directive.url)) {
+          await streamDeck.system.openUrl(directive.url);
+        }
+      }
     } catch {
       await ev.action.setTitle("Failed");
       await ev.action.showAlert();

@@ -5,6 +5,7 @@ const h = vi.hoisted(() => ({
   spawnMock: vi.fn(),
   resolveMock: vi.fn<() => string | null>(() => "ffmpeg"),
   voiceCommand: vi.fn(),
+  openUrl: vi.fn(async (_url: string) => {}),
 }));
 
 vi.mock("node:child_process", () => ({
@@ -17,6 +18,7 @@ vi.mock("../src/runtime", () => ({
 }));
 // The real module opens a websocket to the Stream Deck host on import.
 vi.mock("@elgato/streamdeck", () => ({
+  default: { system: { openUrl: (url: string) => h.openUrl(url) } },
   action: () => (target: unknown) => target,
   SingletonAction: class {},
 }));
@@ -66,11 +68,13 @@ beforeEach(() => {
     return p;
   });
   h.resolveMock.mockReset().mockReturnValue("ffmpeg");
+  h.openUrl.mockReset().mockResolvedValue(undefined);
   h.voiceCommand.mockReset().mockResolvedValue({
     transcript: "skip",
     actions: [{ action: "skip", ok: true, detail: "Skipped" }],
     ok: true,
     detail: "Skipped",
+    client: [],
   });
 });
 
@@ -208,5 +212,55 @@ describe("Voice key lifecycle", () => {
 
     expect(k.action.setTitle).toHaveBeenCalledWith("No\nffmpeg");
     expect(k.action.setTitle).not.toHaveBeenCalledWith("Hold\nlonger");
+  });
+});
+
+describe("Voice client directives", () => {
+  /** One complete hold-and-release that reaches the server round-trip, so the
+   *  directive loop actually runs. */
+  async function speak(client: { type: string; url?: string }[]) {
+    h.voiceCommand.mockResolvedValue({
+      transcript: "open the dashboard",
+      actions: [{ action: "open_dashboard", ok: true, detail: "Opening" }],
+      ok: true,
+      detail: "Opening",
+      client,
+    });
+    const v = new Voice();
+    const k = fakeKey("key-1");
+    const down = v.onKeyDown(k.down);
+    k.settle();
+    await down;
+    procs[0].stdout.emit("data", Buffer.alloc(2000, 1));
+    const up = v.onKeyUp(k.up);
+    procs[0].emit("close");
+    await up;
+    return k;
+  }
+
+  it("opens the browser for an https open_url directive", async () => {
+    await speak([{ type: "open_url", url: "https://web.test/dashboard/CODE1" }]);
+    expect(h.openUrl).toHaveBeenCalledWith("https://web.test/dashboard/CODE1");
+  });
+
+  it("refuses a javascript: directive url", async () => {
+    // The escalation the guard exists for: this executes locally rather than
+    // navigating. Without the isOpenableUrl call this test is the only thing
+    // standing between a hostile server and the user's machine.
+    await speak([{ type: "open_url", url: "javascript:alert(1)" }]);
+    expect(h.openUrl).not.toHaveBeenCalled();
+  });
+
+  it("ignores a directive type it does not know", async () => {
+    // The directive vocabulary is closed: an unknown type is dropped, not
+    // dispatched to openUrl just because it happens to carry a url.
+    await speak([{ type: "run_command", url: "https://x.test" }]);
+    expect(h.openUrl).not.toHaveBeenCalled();
+  });
+
+  it("still renders the detail when there are no directives", async () => {
+    const k = await speak([]);
+    expect(h.openUrl).not.toHaveBeenCalled();
+    expect(k.action.setTitle).toHaveBeenCalledWith("Opening");
   });
 });

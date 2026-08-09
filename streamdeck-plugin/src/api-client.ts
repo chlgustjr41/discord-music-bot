@@ -30,6 +30,9 @@ export type VoiceResult = {
   actions: { action: string; ok: boolean; detail: string }[];
   ok: boolean;
   detail: string | null;
+  /** Directives the server cannot carry out itself — today only `open_url`,
+   *  because the browser lives on the user's machine, not on the server. */
+  client: { type: string; url?: string }[];
 };
 
 export type ClientConfig = { apiUrl: string; authToken: string };
