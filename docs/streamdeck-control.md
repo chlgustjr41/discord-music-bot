@@ -82,28 +82,51 @@ Once signed in, their authentication persists across restarts and key changes.
   configured on that specific key.)
 - **Voice Command** key: hold it, speak, release. Wait for "Listening…" before
   speaking — opening the microphone takes about a second, so anything said
-  before that is lost. Recognized phrases:
+  before that is lost. Speech is interpreted by an LLM, so phrasing is
+  flexible and several instructions in one breath work ("skip this, then add
+  two songs by Radiohead").
 
   | Say | Result |
   |---|---|
-  | `skip` / `next` | Skip the track |
-  | `pause` / `resume` | Pause or resume |
-  | `louder` / `quieter` | Volume ±10 |
-  | `play playlist <name>` | Load that playlist and jump to it |
-  | `add playlist <name>` | Append that playlist to the queue |
-  | `play <song>` — or just say the song | Search and queue it |
+  | `play <song>` — or just say the song | **Interrupts** and plays it now |
+  | `play <song> next` | Front of the queue, without interrupting |
+  | `add <song>` / `queue <song>` | Appends to the end |
+  | `play` / `add playlist <name>` | Same three placements, for a saved playlist |
+  | `skip`, `skip two` | Skip one or several |
+  | `pause`, `resume`, `stop the music` | Stop-like speech **pauses** |
+  | `louder` / `quieter`, `volume 40` | Relative or absolute |
+  | `shuffle`, `clear the queue` | Queue controls |
+  | `repeat this song` | Loop mode |
 
-  Anything unrecognized is treated as a song search; that is the only
-  free-form case. `stop` is deliberately **not** a voice command — one
-  misrecognition would end the session and clear the queue, so use the Stop
-  key. Recording caps at 15 seconds. The microphone is chosen per key in its
-  settings and is open only while the key is held.
+  Search terms are taken literally — it will not invent music you didn't
+  name; "play something chill" searches for "something chill". Up to 5
+  actions run per utterance, in order; if one fails the rest still run and
+  the key reports "2 of 3 done".
+
+  **Nothing can be deleted by voice.** The action vocabulary the model is
+  constrained to has no verb for removing a playlist, history, or a session,
+  and the server re-validates every action against that vocabulary before
+  running it — so no phrasing, accidental or adversarial, can produce a
+  destructive action. `clear` refers only to the queue. Stop-like speech
+  pauses rather than ending the session, for the same reason `stop` was
+  excluded before: one misrecognition should not be able to end a session
+  with no undo. Use the Stop key for that.
+
+  If OpenAI is unreachable the key falls back to a deterministic parser with
+  the same semantics, so an outage degrades to basic single commands instead
+  of breaking the key. Recording caps at 15 seconds. The microphone is chosen
+  per key in its settings and is open only while the key is held.
 - Voice commands appear in the dashboard's Command History with a Voice badge,
-  showing both what was heard and the action it ran. **Transcripts are stored
-  in Firestore** and readable by anyone with the session dashboard; the audio
-  itself is never written to disk on either the plugin or the server.
+  showing both what was heard and the action it ran — one row per action, all
+  carrying the same utterance. **Transcripts are stored in Firestore** and
+  readable by anyone with the session dashboard; the audio itself is never
+  written to disk on either the plugin or the server, and the transcript is
+  never written to container logs.
 - Voice needs `OPENAI_API_KEY` on the bot. Without it the key reports
-  "Voice off" (the route answers 503) — everything else keeps working.
+  "Voice off" (the route answers 503) — everything else keeps working. The
+  same key covers both transcription and interpretation; no second credential.
+  `OPENAI_INTENT_MODEL` overrides the interpretation model (default
+  `gpt-4o-mini`, roughly $0.0001 and half a second per command).
 - Now Playing polls every 5 s, backing off to 30 s while unreachable. It also
   shows the current track's artwork, clearing back to the default icon when
   the track has none or the session ends.
