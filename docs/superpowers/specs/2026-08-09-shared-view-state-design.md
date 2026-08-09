@@ -89,7 +89,7 @@ with size limits on the maps and on each input value. Deliberately **not** uid-s
 - **Same auth gate.** Anonymous and solo users neither publish nor subscribe; `shouldPublish` remains the one place that decides.
 - **Inputs are already-shared content.** A search query typed in shared mode was going to reach the shared server document a moment later anyway. Nothing newly private is exposed — but the spec is explicit that in shared mode *what you type is visible before you submit it*, and that is what the toggle is for.
 - **Bounded writes.** Input length capped at 200 characters in the rules and truncated client-side; throttled to 300 ms; sections are user-driven and rare.
-- **No new impersonation surface.** `by` is a uid resolved against the presence list for display; a forged `byName` cannot be written because the rules constrain the shape and the UI reads names from presence, not from the input document.
+- **Authorship is bound to the writer.** `by` is a uid resolved against the presence list for display, so a forged `byName` cannot be written: the rules constrain the shape and the UI reads names from presence, not from the input document. The uid itself is *also* enforced — the rules require `entry.by == request.auth.uid` — because a `by` validated only as *a string* would let anyone attach another participant's name and presence colour to text they never typed, and the impersonated user is the one person who would not see it (`shouldAdoptInput` ignores an entry authored by yourself). The document is collective, but authorship inside it is not.
 
 ## Error handling
 

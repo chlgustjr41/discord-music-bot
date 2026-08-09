@@ -131,7 +131,17 @@ service cloud.firestore {
           // an honest client would be rejected.
           && entry.value.size() <= 200
           && entry.by is string
-          && entry.by.size() <= 128;
+          && entry.by.size() <= 128
+          // `by` must be YOUR uid, not merely a uid. typistLabel resolves it
+          // straight into a display name and that person's presence colour —
+          // the one thing tying a face in the avatar bar to a cursor on
+          // screen — so an unbound `by` lets anyone put someone else's name
+          // and colour on text they never typed. The victim is the one person
+          // who would not see it: shouldAdoptInput ignores an entry whose
+          // `by` is your own uid. This document is not uid-scoped (it is
+          // collective state) but authorship within it still is; the two are
+          // separable and only the first was intended.
+          && entry.by == request.auth.uid;
       }
 
       // Rules cannot iterate a map, so every shared input id is named here and
