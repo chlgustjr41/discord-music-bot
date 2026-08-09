@@ -19,6 +19,9 @@ LOOP_MODES = ("off", "track", "queue")
 _VERBS = (
     "play", "playlist", "skip", "pause", "resume",
     "volume", "shuffle", "clear_queue", "loop",
+    # Read-and-announce, plus one client-side action. None of these removes
+    # anything — the no-deletion-verb guarantee is unchanged.
+    "now_playing", "session_info", "open_dashboard",
 )
 _NEEDS_QUERY = ("play",)
 _NEEDS_NAME = ("playlist",)
