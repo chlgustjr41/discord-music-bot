@@ -55,6 +55,18 @@ _FALLBACK_EXACT = {
     "shuffle the queue": Action("shuffle"),
     "clear the queue": Action("clear_queue"),
     "clear queue": Action("clear_queue"),
+    # Punctuation normalizes to a SPACE, not to nothing, so the key for
+    # "what's playing" is "what s playing". The apostrophe-less spelling is
+    # kept too because transcribers emit both.
+    "what s playing": Action("now_playing"),
+    "whats playing": Action("now_playing"),
+    "what is playing": Action("now_playing"),
+    "now playing": Action("now_playing"),
+    "post the session code": Action("session_info"),
+    "session code": Action("session_info"),
+    "post the session": Action("session_info"),
+    "open the dashboard": Action("open_dashboard"),
+    "open dashboard": Action("open_dashboard"),
 }
 
 _FALLBACK_PLAYLIST_PREFIXES = (
