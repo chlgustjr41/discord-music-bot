@@ -1,0 +1,197 @@
+/**
+ * Publishes this browser's presence and cursor, and subscribes to everyone
+ * else's, for one session dashboard.
+ *
+ * Every rule lives in lib/presence.ts; this file is I/O only. It writes
+ * nothing at all unless shouldPublish() says so, which is what keeps
+ * anonymous visitors invisible.
+ */
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  collection,
+  deleteDoc,
+  doc,
+  onSnapshot,
+  serverTimestamp,
+  setDoc,
+} from "firebase/firestore";
+import type { User } from "firebase/auth";
+import { db } from "../firebase";
+import {
+  CURSOR_MIN_PX,
+  CURSOR_THROTTLE_MS,
+  HEARTBEAT_MS,
+  type Participant,
+  type Point,
+  type ViewMode,
+  colorForUid,
+  livingParticipants,
+  movedEnough,
+  shouldPublish,
+  toNormalized,
+} from "../lib/presence";
+
+/** What the last snapshot was for. Stored alongside the rows so a session
+ *  or account switch shows nothing rather than the previous room's people
+ *  while the new subscription's first snapshot is still in flight. */
+interface Snapshot {
+  key: string;
+  rows: Participant[];
+}
+
+const EMPTY: Participant[] = [];
+
+/**
+ * Firestore hands `updatedAt` back as a Timestamp, and as `null` for a local
+ * write the server has not acknowledged yet. Everything above this boundary —
+ * livingParticipants and its tests — deals in plain milliseconds, so the
+ * conversion happens here, once, and a pending write becomes NaN rather than
+ * a number that would read as fresh.
+ */
+function toMillis(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (
+    value &&
+    typeof value === "object" &&
+    typeof (value as { toMillis?: unknown }).toMillis === "function"
+  ) {
+    return (value as { toMillis: () => number }).toMillis();
+  }
+  return NaN;
+}
+
+function toParticipant(uid: string, data: Record<string, unknown>): Participant {
+  return {
+    uid,
+    name: typeof data.name === "string" ? data.name : "",
+    photoURL: typeof data.photoURL === "string" ? data.photoURL : null,
+    color: typeof data.color === "string" ? data.color : "",
+    cursor: (data.cursor as Participant["cursor"]) ?? null,
+    updatedAt: toMillis(data.updatedAt),
+  };
+}
+
+export function usePresence(
+  sessionCode: string | undefined,
+  user: User | null,
+  mode: ViewMode,
+) {
+  const [snapshot, setSnapshot] = useState<Snapshot>({ key: "", rows: EMPTY });
+  const [now, setNow] = useState(() => Date.now());
+  const lastPoint = useRef<Point | null>(null);
+  const lastWrite = useRef(0);
+
+  const publishing = shouldPublish(mode, !!user);
+  const selfUid = user?.uid ?? null;
+  // Solo is symmetric, per the spec's error table: no doc written, own doc
+  // deleted, OTHERS' CURSORS HIDDEN. So the same gate that stops us
+  // broadcasting also stops us subscribing — a solo user does not even read
+  // the collection. The key carries the mode so flipping the toggle tears the
+  // old subscription down rather than leaving it running.
+  //
+  // Empty while auth is still loading (user is null), which is exactly the
+  // anonymous case: no subscription, no writes, no UI.
+  const key =
+    sessionCode && selfUid && publishing ? `${sessionCode}\u0000${selfUid}\u0000${mode}` : "";
+
+  const selfRef = useCallback(() => {
+    if (!sessionCode || !selfUid) return null;
+    return doc(db, "presence", sessionCode, "participants", selfUid);
+  }, [sessionCode, selfUid]);
+
+  // Subscribe. Reading requires auth (see firestore.rules), so anonymous
+  // visitors get nothing and the UI shows nothing.
+  //
+  // Nothing is cleared here on the way out: setState in an effect body is a
+  // cascading render (and a lint error in this codebase). Instead the render
+  // below ignores any snapshot whose key is not the current one, which has
+  // the same effect without the extra pass.
+  useEffect(() => {
+    if (!key || !sessionCode) return;
+    const unsub = onSnapshot(
+      collection(db, "presence", sessionCode, "participants"),
+      (snap) => {
+        setSnapshot({
+          key,
+          rows: snap.docs.map((d) => toParticipant(d.id, d.data())),
+        });
+      },
+      // Presence must never take the dashboard down with it.
+      () => setSnapshot({ key, rows: EMPTY }),
+    );
+    return unsub;
+  }, [key, sessionCode]);
+
+  // Re-evaluate staleness on a timer: a participant who stops heartbeating
+  // produces no snapshot, so nothing would otherwise re-render them away.
+  //
+  // Only while subscribed. Signed-out and solo dashboards have no presence UI
+  // at all, so this was a 5s wake-up (and re-render) for nothing.
+  useEffect(() => {
+    if (!key) return;
+    const id = setInterval(() => setNow(Date.now()), 5_000);
+    return () => clearInterval(id);
+  }, [key]);
+
+  // Publish + heartbeat, and remove ourselves the moment we stop publishing.
+  useEffect(() => {
+    const ref = selfRef();
+    if (!ref || !user) return;
+    if (!publishing) {
+      void deleteDoc(ref).catch(() => {});
+      return;
+    }
+    const write = (cursor: Point | null) =>
+      setDoc(
+        ref,
+        {
+          name: user.displayName || "Guest",
+          photoURL: user.photoURL ?? null,
+          color: colorForUid(user.uid),
+          cursor,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      ).catch(() => {});
+
+    void write(null);
+    const id = setInterval(() => void write(lastPoint.current), HEARTBEAT_MS);
+    const leave = () => void deleteDoc(ref).catch(() => {});
+    window.addEventListener("pagehide", leave);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("pagehide", leave);
+      leave();
+    };
+  }, [selfRef, publishing, user]);
+
+  const publishCursor = useCallback(
+    (clientX: number, clientY: number, rect: DOMRect) => {
+      const ref = selfRef();
+      if (!ref || !publishing || document.visibilityState !== "visible") return;
+      const point = toNormalized(clientX, clientY, rect);
+      if (!point) return;
+      if (!movedEnough(lastPoint.current, point, CURSOR_MIN_PX, rect)) return;
+      const t = Date.now();
+      if (t - lastWrite.current < CURSOR_THROTTLE_MS) return;
+      lastWrite.current = t;
+      lastPoint.current = point;
+      // Date.now() throttles the write; only the server stamps the document.
+      void setDoc(
+        ref,
+        { cursor: point, updatedAt: serverTimestamp() },
+        { merge: true },
+      ).catch(() => {});
+    },
+    [selfRef, publishing],
+  );
+
+  const rows = key && snapshot.key === key ? snapshot.rows : EMPTY;
+
+  return {
+    participants: livingParticipants(rows, selfUid, now),
+    publishCursor,
+    publishing,
+  };
+}

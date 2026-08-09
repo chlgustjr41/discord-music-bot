@@ -41,6 +41,62 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
 
+    // Ephemeral dashboard presence and cursors. Deliberately NOT under
+    // /servers, whose subcollection rule is `allow read, write: if true` —
+    // rules are OR'd across matches, so anything placed there could never
+    // restrict access no matter how it was written. Read requires auth so
+    // anonymous visitors cannot enumerate who is in a session; write is
+    // uid-scoped so nobody can move someone else's cursor or impersonate
+    // them. This is the one place in this app where per-user write rules are
+    // both meaningful and achievable.
+    // `updatedAt` is stamped by the server, never by the writer: a client-set
+    // timestamp lets anyone write one far-future value and stay in everyone's
+    // presence bar forever, and nobody else could delete them because writes
+    // are uid-scoped. Clock skew alone would also make honest users flicker
+    // in and out.
+    //
+    // The shape is constrained as well as the author. Without that, `name` and
+    // `color` are free text (an avatar and cursor pill visually identical to
+    // somebody else's) and `photoURL` is worse: it is rendered as an <img src>
+    // for every viewer, so an attacker-controlled URL harvests the IP and
+    // User-Agent of everyone on the dashboard on every render, with no
+    // interaction. Name collision is only BOUNDED here, not eliminated — two
+    // people can legitimately share a display name — which is acceptable
+    // because every participant is an authenticated member of a session whose
+    // code they already have.
+    match /presence/{sessionCode}/participants/{uid} {
+      function validPhoto(photo) {
+        return photo == null
+          || (photo is string
+              && photo.size() < 512
+              // matches() is a full-string match: an https URL whose host is a
+              // googleusercontent.com subdomain, the Google account photo host.
+              && photo.matches('https://[a-zA-Z0-9-]+[.]googleusercontent[.]com/.*'));
+      }
+      function validCursor(cursor) {
+        return cursor == null
+          || (cursor.keys().hasOnly(['x', 'y'])
+              && cursor.keys().hasAll(['x', 'y'])
+              && cursor.x is number
+              && cursor.y is number);
+      }
+
+      allow read: if request.auth != null;
+      allow delete: if request.auth != null && request.auth.uid == uid;
+      allow create, update: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(
+             ['name', 'photoURL', 'color', 'cursor', 'updatedAt'])
+        && request.resource.data.keys().hasAll(['name', 'color', 'updatedAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 64
+        && request.resource.data.color is string
+        && request.resource.data.color.size() <= 32
+        && validPhoto(request.resource.data.get('photoURL', null))
+        && validCursor(request.resource.data.get('cursor', null))
+        && request.resource.data.updatedAt == request.time;
+    }
+
     // Default deny
     match /{document=**} {
       allow read, write: if false;

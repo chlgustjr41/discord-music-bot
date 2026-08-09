@@ -1,9 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { useServerState } from "../hooks/useServerState";
 import { useActivityToasts } from "../hooks/useActivityToasts.js";
+import { useAuth } from "../hooks/useAuth";
+import type { ViewMode } from "../lib/presence";
 import { NowPlaying } from "./NowPlaying";
 import { Queue } from "./Queue";
 import { PlaybackControls } from "./PlaybackControls";
@@ -14,6 +16,9 @@ import { MusicHistory } from "./MusicHistory";
 import { StatsPanel } from "./StatsPanel";
 import { IdentityChip } from "./IdentityChip";
 import { PinServerButton } from "./PinServerButton";
+import { AccountMenu } from "./AccountMenu";
+import { PresenceLayer, type PublishCursor } from "./PresenceLayer";
+import { SharedViewToggle } from "./SharedViewToggle";
 import { ActivityLog } from "./ActivityLog";
 import { NodeStatus } from "./NodeStatus";
 import { Button } from "@/components/ui/button";
@@ -21,13 +26,53 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Music, Loader2, WifiOff, AlertTriangle, LogOut, RotateCcw } from "lucide-react";
 
+const MODE_KEY = (code: string) => `jacky:view:${code}`;
+
+/** Anything that is not exactly one of the two modes is treated as shared:
+ *  a corrupted localStorage value must not become a third, invisible mode
+ *  that shouldPublish() silently reads as solo. */
+function storedMode(code: string | undefined): ViewMode {
+  if (!code) return "shared";
+  return localStorage.getItem(MODE_KEY(code)) === "solo" ? "solo" : "shared";
+}
+
+/**
+ * The session code is this screen's IDENTITY, not merely an input to it.
+ *
+ * `mode` is per-session and lives in localStorage under a per-session key, but
+ * React Router reuses one component instance when only the param changes, so
+ * the lazy initializer runs once per mount. Without a remount, navigating from
+ * a session left on shared into one the user had set to solo would keep
+ * "shared" AND overwrite the new session's stored preference with it —
+ * publishing their name, photo, colour, and cursor into a session they had
+ * explicitly opted out of. Keying on the code makes every per-session
+ * initializer honest, which is why this is a remount rather than a
+ * re-read-on-change effect: an effect can only correct the state after a
+ * render (and after the persist effect) has already used the stale value.
+ */
 export function Dashboard() {
   const { sessionCode } = useParams<{ sessionCode: string }>();
+  return <DashboardView key={sessionCode} sessionCode={sessionCode} />;
+}
+
+function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
   const { serverId, state, error, loading, sessionExpired } = useServerState(sessionCode);
   const navigate = useNavigate();
   const logEntries = useActivityToasts(state);
+  const { user } = useAuth();
   const [exiting, setExiting] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [mode, setMode] = useState<ViewMode>(() => storedMode(sessionCode));
+
+  useEffect(() => {
+    if (sessionCode) localStorage.setItem(MODE_KEY(sessionCode), mode);
+  }, [sessionCode, mode]);
+
+  // Presence state deliberately does NOT live here: see PresenceLayer. This
+  // component holds `mode` and nothing else that changes at cursor rate, so a
+  // remote pointer moving cannot re-render the panels below.
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const cursorRef = useRef<PublishCursor | null>(null);
 
   const botConnected = !!state?.voiceChannelId;
 
@@ -124,10 +169,14 @@ export function Dashboard() {
           </button>
         </div>
       </header>
-      <div className="mx-auto max-w-3xl p-4 space-y-4">
+      <div
+        ref={contentRef}
+        onPointerMove={(e) => cursorRef.current?.(e.clientX, e.clientY)}
+        className="mx-auto max-w-3xl p-4 space-y-4"
+      >
         {/* Header with server info */}
         <Card>
-        <CardContent className="flex items-center gap-4 p-4">
+        <CardContent className="flex flex-wrap items-center gap-4 p-4">
           {state.serverIcon ? (
             <img
               src={state.serverIcon}
@@ -161,7 +210,22 @@ export function Dashboard() {
               <NodeStatus serverId={serverId} />
             </div>
           </div>
+          {/* One wrapping cluster: at narrow widths the whole group drops to
+              its own line instead of squeezing (or clipping) the controls. */}
+          <div className="flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto sm:gap-2">
+          {/* Solo hides other people as well as hiding you: no bar, no
+              cursor layer, and usePresence does not even subscribe. */}
+          {mode === "shared" && (
+            <PresenceLayer
+              sessionCode={sessionCode}
+              user={user}
+              mode={mode}
+              containerRef={contentRef}
+              cursorRef={cursorRef}
+            />
+          )}
           <IdentityChip />
+          <SharedViewToggle mode={mode} signedIn={!!user} onChange={setMode} />
           <PinServerButton serverId={serverId} serverName={state.serverName} />
           <Button
             variant="ghost"
@@ -193,6 +257,8 @@ export function Dashboard() {
             )}
             {exiting ? "Disconnecting…" : "Exit"}
           </Button>
+          <AccountMenu />
+          </div>
         </CardContent>
       </Card>
 
@@ -219,7 +285,7 @@ export function Dashboard() {
       <NowPlaying track={state.currentTrack} isPaused={state.isPaused || !botConnected} serverId={serverId} />
       <PlaybackControls state={state} serverId={serverId} disabled={!botConnected} />
       <Queue queue={state.queue} serverId={serverId} />
-      <SearchPanel serverId={serverId} searchResults={state.searchResults} searchQuery={state.searchQuery} searchPlaylistName={state.searchPlaylistName} />
+      <SearchPanel serverId={serverId} searchResults={state.searchResults} searchQuery={state.searchQuery} searchPlaylistName={state.searchPlaylistName} mode={mode} />
       <PlaylistManager
         serverId={serverId}
         currentQueue={state.queue}
