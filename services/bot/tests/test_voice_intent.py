@@ -3,94 +3,7 @@
 import pytest
 
 from jacky.api.voice_actions import Action
-from jacky.api.voice_intent import (
-    Intent,
-    normalize_playlist_name,
-    parse_fallback,
-    parse_intent,
-)
-
-
-@pytest.mark.parametrize(
-    ("said", "kind"),
-    [
-        ("skip", "skip"),
-        ("Skip.", "skip"),
-        ("next", "skip"),
-        ("skip track", "skip"),
-        ("pause", "pause"),
-        ("resume", "resume"),
-        ("unpause", "resume"),
-        ("continue", "resume"),
-        ("volume up", "volume_up"),
-        ("louder", "volume_up"),
-        ("turn it up", "volume_up"),
-        ("volume down", "volume_down"),
-        ("quieter", "volume_down"),
-        ("turn it down", "volume_down"),
-    ],
-)
-def test_exact_commands(said, kind):
-    assert parse_intent(said) == Intent(kind, "")
-
-
-@pytest.mark.parametrize(
-    ("said", "kind", "arg"),
-    [
-        ("play playlist chill vibes", "playlist_play", "chill vibes"),
-        ("Play playlist Chill Vibes", "playlist_play", "Chill Vibes"),
-        ("add playlist chill", "playlist_add", "chill"),
-        ("queue playlist chill", "playlist_add", "chill"),
-    ],
-)
-def test_playlist_commands(said, kind, arg):
-    assert parse_intent(said) == Intent(kind, arg)
-
-
-@pytest.mark.parametrize(
-    ("said", "arg"),
-    [
-        ("play bohemian rhapsody", "bohemian rhapsody"),
-        ("add bohemian rhapsody", "bohemian rhapsody"),
-        ("queue bohemian rhapsody", "bohemian rhapsody"),
-        # The free-form case: no verb at all.
-        ("bohemian rhapsody", "bohemian rhapsody"),
-        # "playlist" only counts directly after the verb.
-        ("play the playlist song", "the playlist song"),
-    ],
-)
-def test_search(said, arg):
-    assert parse_intent(said) == Intent("search", arg)
-
-
-def test_query_keeps_original_punctuation_and_case():
-    """Matching normalizes; the ARGUMENT must not — 'AC/DC' is a real band."""
-    assert parse_intent("play AC/DC Back in Black") == Intent(
-        "search", "AC/DC Back in Black"
-    )
-
-
-def test_trailing_sentence_punctuation_is_stripped_from_queries():
-    assert parse_intent("play bohemian rhapsody.") == Intent(
-        "search", "bohemian rhapsody"
-    )
-
-
-def test_empty_transcript_is_none():
-    assert parse_intent("") is None
-    assert parse_intent("   ") is None
-    assert parse_intent("...") is None
-
-
-def test_bare_verb_is_not_a_command():
-    """'play' with nothing after it is not a search for the empty string."""
-    assert parse_intent("play") == Intent("search", "play")
-    assert parse_intent("play playlist") == Intent("search", "play playlist")
-
-
-def test_stop_is_not_a_voice_command():
-    """Excluded by design: one misrecognition would clear the queue."""
-    assert parse_intent("stop") == Intent("search", "stop")
+from jacky.api.voice_intent import normalize_playlist_name, parse_fallback
 
 
 @pytest.mark.parametrize(
@@ -182,11 +95,18 @@ async def test_transcriber_does_not_double_wrap_a_status_error():
         ("skip", Action("skip", count=1)),
         ("Skip.", Action("skip", count=1)),
         ("next", Action("skip", count=1)),
+        ("skip track", Action("skip", count=1)),
         ("pause", Action("pause")),
         ("stop", Action("pause")),          # stop-like speech pauses
         ("resume", Action("resume")),
+        ("unpause", Action("resume")),
+        ("continue", Action("resume")),
         ("louder", Action("volume", delta=10)),
+        ("volume up", Action("volume", delta=10)),
+        ("turn it up", Action("volume", delta=10)),
         ("quieter", Action("volume", delta=-10)),
+        ("volume down", Action("volume", delta=-10)),
+        ("turn it down", Action("volume", delta=-10)),
         ("shuffle", Action("shuffle")),
         ("clear the queue", Action("clear_queue")),
     ],
@@ -203,6 +123,12 @@ def test_fallback_exact_commands(said, action):
         ("add bohemian rhapsody", "bohemian rhapsody", "end"),
         ("queue bohemian rhapsody", "bohemian rhapsody", "end"),
         ("bohemian rhapsody", "bohemian rhapsody", "now"),
+        # Trailing sentence punctuation is stripped from the query.
+        ("play bohemian rhapsody.", "bohemian rhapsody", "now"),
+        # "playlist" only counts directly after the verb.
+        ("play the playlist song", "the playlist song", "now"),
+        # A bare verb is not a command, and not a search for the empty string.
+        ("play", "play", "now"),
     ],
 )
 def test_fallback_play_placements(said, query, placement):
@@ -218,10 +144,18 @@ def test_fallback_playlist_placements():
     assert parse_fallback("add playlist chill") == [
         Action("playlist", name="chill", placement="end")
     ]
+    assert parse_fallback("queue playlist chill") == [
+        Action("playlist", name="chill", placement="end")
+    ]
+    # Matching normalizes case; the NAME keeps the case it was spoken in.
+    assert parse_fallback("Play playlist Chill Vibes") == [
+        Action("playlist", name="Chill Vibes", placement="now")
+    ]
 
 
 def test_fallback_empty_transcript_is_empty_list():
     assert parse_fallback("") == []
+    assert parse_fallback("   ") == []
     assert parse_fallback("...") == []
 
 
