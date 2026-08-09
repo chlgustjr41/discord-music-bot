@@ -97,6 +97,24 @@ Once signed in, their authentication persists across restarts and key changes.
   | `louder` / `quieter`, `volume 40` | Relative or absolute |
   | `shuffle`, `clear the queue` | Queue controls |
   | `repeat this song` | Loop mode |
+  | `what's playing` | Posts the current track to the Discord channel |
+  | `post the session code` | Posts the code + dashboard link to Discord |
+  | `open the dashboard` | Opens the dashboard in your browser |
+
+  The two posting commands write to the session's own text channel — the same
+  place `j!nowplaying` and `j!session` post, using the same embeds, so the
+  output is identical however it was triggered. They share a 10-second
+  per-guild cooldown, so a misrecognition cannot spam the channel; the second
+  of two announces in quick succession reports "Just posted". Asking what's
+  playing when nothing is fails on the key rather than announcing that to the
+  channel — you're at the Stream Deck, not reading Discord.
+
+  `open the dashboard` opens exactly what the Open Dashboard key opens: both
+  go through one shared URL builder, so they cannot drift apart. It is the
+  only voice command that acts on your machine rather than on the server —
+  the response carries a directive the plugin executes, and the plugin only
+  opens `https:` URLs, so a misconfigured or hostile API URL cannot hand it a
+  `javascript:` or `file:` target.
 
   Search terms are taken literally — it will not invent music you didn't
   name; "play something chill" searches for "something chill". Up to 5
