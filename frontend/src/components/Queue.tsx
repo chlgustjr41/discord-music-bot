@@ -3,6 +3,7 @@ import { doc, updateDoc, setDoc, increment, serverTimestamp } from "firebase/fir
 import { db } from "../firebase";
 import { getIdentityName } from "../lib/identity";
 import { bumpMemberStat } from "../lib/social";
+import { useSharedSection } from "../hooks/useSharedSection";
 import type { Track } from "../types";
 import {
   DndContext,
@@ -179,7 +180,7 @@ function SortableTrack({
 }
 
 export function Queue({ queue, serverId }: Props) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useSharedSection("queue", true);
   const [localQueue, setLocalQueue] = useState(queue);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [selectMode, setSelectMode] = useState(false);

@@ -16,12 +16,31 @@
  *
  * Dashboard keeps only `mode`. It reaches publishCursor through a ref, so
  * pointer movement never crosses a state boundary either.
+ *
+ * ## Why the panels are this component's CHILDREN
+ *
+ * SharedViewProvider needs the participant roster too, to put a name on the
+ * shared search field. Hoisting usePresence back into Dashboard to feed it
+ * would undo everything above — so the provider is mounted HERE, where the
+ * roster already is, and the panels arrive as a `children` element built by
+ * Dashboard.
+ *
+ * That element's identity is what preserves the isolation: Dashboard does not
+ * re-render on a cursor tick, so `children` is the same object on every one of
+ * this component's cursor-rate renders, and React skips the whole subtree. The
+ * provider in between re-renders, but its context value is memoised on a roster
+ * signature that ignores cursors, so no consumer sees a change either.
+ *
+ * PresenceBar therefore has to reach its place in the header by portal rather
+ * than by being rendered there: it is the one piece of presence UI that does
+ * not live above the panels. `barSlot` is that place.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { User } from "firebase/auth";
 import { usePresence } from "../hooks/usePresence";
+import { SharedViewProvider } from "../hooks/useSharedView";
 import type { ViewMode } from "../lib/presence";
 import { PresenceBar } from "./PresenceBar";
 import { CursorLayer } from "./CursorLayer";
@@ -38,10 +57,33 @@ interface Props {
   /** Filled in with the pointer sink while this layer is mounted, and cleared
    *  on the way out so a solo dashboard's pointer handler is a no-op. */
   cursorRef: React.RefObject<PublishCursor | null>;
+  /** Where PresenceBar is portalled — a `display:contents` marker in the
+   *  header's control cluster. Null for the first commit, before Dashboard has
+   *  a DOM node to hand over. */
+  barSlot: HTMLElement | null;
+  /** The dashboard panels. See the note above: this must be an element
+   *  Dashboard creates, not JSX written inside this component. */
+  children: ReactNode;
 }
 
-export function PresenceLayer({ sessionCode, user, mode, containerRef, cursorRef }: Props) {
+export function PresenceLayer({
+  sessionCode,
+  user,
+  mode,
+  containerRef,
+  cursorRef,
+  barSlot,
+  children,
+}: Props) {
   const { participants, publishCursor } = usePresence(sessionCode, user, mode);
+
+  // This component is now mounted in both modes — it wraps the panels, and
+  // unmounting it on a mode toggle would throw away every panel's state.
+  // usePresence already refuses to subscribe or write in solo, so the only
+  // thing left to gate is the measuring: a solo dashboard has no cursors to
+  // place, and re-measuring on every scroll frame for nobody is exactly the
+  // work this file exists to avoid.
+  const active = mode === "shared";
 
   const [rect, setRect] = useState<DOMRect | null>(null);
   // publishCursor reads the ref rather than the state, so it normalises
@@ -69,6 +111,7 @@ export function PresenceLayer({ sessionCode, user, mode, containerRef, cursorRef
   }, [measure]);
 
   useEffect(() => {
+    if (!active) return;
     measure();
     window.addEventListener("resize", scheduleMeasure);
     window.addEventListener("scroll", scheduleMeasure, { passive: true });
@@ -78,7 +121,7 @@ export function PresenceLayer({ sessionCode, user, mode, containerRef, cursorRef
       if (frame.current !== null) cancelAnimationFrame(frame.current);
       frame.current = null;
     };
-  }, [measure, scheduleMeasure]);
+  }, [active, measure, scheduleMeasure]);
 
   useEffect(() => {
     const ref = cursorRef;
@@ -93,11 +136,19 @@ export function PresenceLayer({ sessionCode, user, mode, containerRef, cursorRef
 
   return (
     <>
-      <PresenceBar participants={participants} />
+      {barSlot && createPortal(<PresenceBar participants={participants} />, barSlot)}
       {/* Portalled to the body: the layer is position:fixed, and any ancestor
           with a transform, filter or backdrop-filter would silently become its
           containing block and shift every cursor. */}
       {createPortal(<CursorLayer participants={participants} rect={rect} />, document.body)}
+      <SharedViewProvider
+        sessionCode={sessionCode}
+        user={user}
+        mode={mode}
+        participants={participants}
+      >
+        {children}
+      </SharedViewProvider>
     </>
   );
 }

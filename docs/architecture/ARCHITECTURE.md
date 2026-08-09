@@ -99,4 +99,13 @@ Solo is symmetric on purpose: opting out of being watched also stops you watchin
 
 **Search is a bot capability, and that limits solo mode.** `SearchPanel` writes `searchQuery` to `servers/{id}` and the *bot* writes results back, so a shared-mode search is visible to everyone by construction. Solo mode therefore (a) stops following other people's searches and (b) tries a client-side endpoint first, falling back to the bot when it is unavailable. `functions/searchYouTube` is **not deployed** today, so that fallback is the live path — solo search works, it is just not yet private, and the panel toasts once to say so. Deploying the function with a `YOUTUBE_API_KEY` makes solo search private with no frontend change; the `/api/searchYouTube` hosting rewrite is already in place.
 
+**Shared view state.** Beyond presence, shared mode also syncs *what the dashboard looks like*: which panels are expanded and what is in the shared text fields. That lives in one collective document, `presence/{sessionCode}/shared/view` — deliberately **not** uid-scoped, because it is a shared control surface like the queue rather than something one person owns. Writes are shape-constrained and `updatedAt` is server-stamped, for the same reason as presence.
+
+Two rules make it usable rather than a fight:
+
+- **A focused input is never overwritten.** You adopt someone else's text only when you are not typing in that field; two people typing at once each keep their own until they blur. `shouldAdoptInput` in `src/lib/sharedView.ts` is the single place that decides.
+- **Adoption is inert.** Setting an input from a remote update must not schedule a search and must not republish. Without that, Ada typing would make *Bob's* debounce fire a search, which writes `searchQuery` to the shared server document, which the bot answers — a search-per-keystroke-per-viewer amplification. `consumeAdopted()` is read before the debounce effect can act, and the effect order in `SearchPanel` is load-bearing: the adoption effect must be declared first, or the flag is consumed by the previous render's debounce.
+
+Sharing text is also why the toggle matters: **in shared mode what you type is visible before you submit it.**
+
 **Idle sign-out** is app-wide (`src/lib/idleSignOut.ts`): 30 minutes, warning at 60 s, cross-tab via `localStorage`, timestamp-based so a sleeping laptop signs out on wake rather than resuming a stale timer.

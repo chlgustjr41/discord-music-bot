@@ -97,6 +97,122 @@ service cloud.firestore {
         && request.resource.data.updatedAt == request.time;
     }
 
+    // Collective view state: which panels are open and what is in the shared
+    // text fields. Deliberately NOT uid-scoped — this is a shared control
+    // surface, like the queue, so any participant of THAT session may write it
+    // (see inSession below — collective is not the same as unrestricted).
+    // The shape is still constrained, and updatedAt is server-stamped for the
+    // same reason as presence: a client-set timestamp cannot be trusted.
+    //
+    // The path alternates collection/document exactly as the participants rule
+    // does — presence (collection) / {sessionCode} (document) / shared
+    // (collection) / view (document) — so it is a sibling of that rule and not
+    // captured by it: `participants` there is a literal segment and cannot
+    // match `shared`. Rules are OR'd across matches, so the catch-all deny
+    // below does not shadow this either.
+    match /presence/{sessionCode}/shared/view {
+      // Both maps are optional: every write is a nested merge, so the first
+      // one to land carries only `sections` or only `inputs`.
+      function sections() { return request.resource.data.get('sections', {}); }
+      function inputs() { return request.resource.data.get('inputs', {}); }
+
+      // Panel ids are open-ended (a new panel is one line in a component), so
+      // only the count is bounded. The values are booleans consumed through
+      // mergeSections, which drops anything that is not one.
+      // `is map` first, and it is not redundant: size() is defined on strings
+      // and lists too, so a bare count check accepts `sections: "ab"` — which
+      // the client then casts to Record<string, boolean> and hands to every
+      // panel.
+      function validSections() {
+        return sections() is map
+          && sections().size() <= 20;
+      }
+
+      function validEntry(entry) {
+        return entry is map
+          && entry.keys().hasOnly(['value', 'by'])
+          && entry.keys().hasAll(['value', 'by'])
+          && entry.value is string
+          // Matches MAX_INPUT_LEN in lib/sharedView.ts, which slices to exactly
+          // that length — so this is <=, not <, or every full-length write from
+          // an honest client would be rejected.
+          && entry.value.size() <= 200
+          && entry.by is string
+          && entry.by.size() <= 128
+          // `by` must be YOUR uid, not merely a uid. typistLabel resolves it
+          // straight into a display name and that person's presence colour —
+          // the one thing tying a face in the avatar bar to a cursor on
+          // screen — so an unbound `by` lets anyone put someone else's name
+          // and colour on text they never typed. The victim is the one person
+          // who would not see it: shouldAdoptInput ignores an entry whose
+          // `by` is your own uid. This document is not uid-scoped (it is
+          // collective state) but authorship within it still is; the two are
+          // separable and only the first was intended.
+          && entry.by == request.auth.uid;
+      }
+
+      // Rules cannot iterate a map, so every shared input id is named here and
+      // validated individually. That is a deliberate trade: adding a shared
+      // field costs a rules deploy, and in exchange there is no id for which
+      // `value` is unbounded free text that every viewer's browser renders.
+      // The count cap is kept as well, as the statement of intent.
+      // Whether this write TOUCHES the inputs map at all.
+      //
+      // On an update `request.resource.data` is the whole document as it will
+      // exist afterwards, including fields this write leaves alone — so the
+      // author check below has to be conditioned on `inputs` actually
+      // changing. Applied to the resulting document unconditionally it would
+      // mean nobody could toggle a panel unless they also happened to be the
+      // last person to type in the shared search box, and a panel toggle
+      // carries no `inputs` at all. Data that is not being written was
+      // validated by the write that put it there.
+      function inputsChanged() {
+        return resource == null
+          || request.resource.data.diff(resource.data).affectedKeys().hasAny(['inputs']);
+      }
+
+      function validInputs() {
+        return inputs() is map
+          && inputs().size() <= 10
+          && inputs().keys().hasOnly(['search'])
+          // Only when present, and only when this write is what changed it:
+          // there is no sentinel default that could satisfy the author check.
+          && (!inputsChanged()
+              || !inputs().keys().hasAny(['search'])
+              || validEntry(inputs().search));
+      }
+
+      // Not uid-scoped, but participant-scoped: you must be IN the session to
+      // drive its panels. Without this, any signed-in account that learns or
+      // guesses a session code can rewrite this document in a loop —
+      // force-collapsing every panel on every dashboard and blanking the
+      // shared search box — and the 300 ms throttle that would normally
+      // bound it lives entirely in the client. Victims have no in-app remedy:
+      // they cannot revoke a writer, so the only escape is the solo toggle.
+      // "Not uid-scoped" was the decision; "not participant-scoped" came
+      // along with it unintentionally.
+      //
+      // Costs one document read per write. The client publishes its presence
+      // document on entering shared mode, before any panel can be clicked, so
+      // an honest participant always satisfies this.
+      function inSession() {
+        return exists(
+          /databases/$(database)/documents/presence/$(sessionCode)/participants/$(request.auth.uid)
+        );
+      }
+
+      allow read: if request.auth != null;
+      // create and update, not `write`: on a delete `request.resource.data` is
+      // null and `.keys()` errors out. That denies the delete either way, but
+      // for the wrong reason and with a misleading error.
+      allow create, update: if request.auth != null
+        && inSession()
+        && request.resource.data.keys().hasOnly(['sections', 'inputs', 'updatedAt'])
+        && request.resource.data.updatedAt == request.time
+        && validSections()
+        && validInputs();
+    }
+
     // Default deny
     match /{document=**} {
       allow read, write: if false;

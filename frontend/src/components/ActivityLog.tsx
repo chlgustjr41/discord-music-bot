@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useSharedSection } from "../hooks/useSharedSection";
 import type { LogEntry } from "../hooks/useActivityToasts";
 import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,7 +19,7 @@ function formatTime(date: Date) {
 }
 
 export function ActivityLog({ entries }: Props) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useSharedSection("activity", false);
 
   return (
     <Card>

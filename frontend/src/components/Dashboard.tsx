@@ -73,6 +73,11 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
   // remote pointer moving cannot re-render the panels below.
   const contentRef = useRef<HTMLDivElement | null>(null);
   const cursorRef = useRef<PublishCursor | null>(null);
+  // The presence bar's place in the header. State rather than a ref because
+  // PresenceLayer portals into it and must re-render once it exists; a plain
+  // state setter as the ref callback is stable, so this settles on mount and
+  // never fires again.
+  const [barSlot, setBarSlot] = useState<HTMLDivElement | null>(null);
 
   const botConnected = !!state?.voiceChannelId;
 
@@ -213,17 +218,13 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
           {/* One wrapping cluster: at narrow widths the whole group drops to
               its own line instead of squeezing (or clipping) the controls. */}
           <div className="flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto sm:gap-2">
-          {/* Solo hides other people as well as hiding you: no bar, no
-              cursor layer, and usePresence does not even subscribe. */}
-          {mode === "shared" && (
-            <PresenceLayer
-              sessionCode={sessionCode}
-              user={user}
-              mode={mode}
-              containerRef={contentRef}
-              cursorRef={cursorRef}
-            />
-          )}
+          {/* Solo hides other people as well as hiding you: no bar, no cursor
+              layer, and usePresence does not even subscribe — all of which is
+              decided inside PresenceLayer now, because it also wraps the
+              panels and unmounting it on a mode toggle would reset every one
+              of them. `display:contents` keeps the bar a direct flex item of
+              this cluster. */}
+          <div ref={setBarSlot} className="contents" />
           <IdentityChip />
           <SharedViewToggle mode={mode} signedIn={!!user} onChange={setMode} />
           <PinServerButton serverId={serverId} serverName={state.serverName} />
@@ -282,22 +283,35 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
         </Card>
       )}
 
-      <NowPlaying track={state.currentTrack} isPaused={state.isPaused || !botConnected} serverId={serverId} />
-      <PlaybackControls state={state} serverId={serverId} disabled={!botConnected} />
-      <Queue queue={state.queue} serverId={serverId} />
-      <SearchPanel serverId={serverId} searchResults={state.searchResults} searchQuery={state.searchQuery} searchPlaylistName={state.searchPlaylistName} mode={mode} />
-      <PlaylistManager
-        serverId={serverId}
-        currentQueue={state.queue}
-        currentTrack={state.currentTrack}
-        searchResults={state.searchResults}
-        searchQuery={state.searchQuery}
-        searchPlaylistName={state.searchPlaylistName}
-      />
-      <StatsPanel serverId={serverId} />
-      <MusicHistory serverId={serverId} />
-      <CommandHistory serverId={serverId} />
-      <ActivityLog entries={logEntries} />
+      {/* Everything below reads the collective view state, so it is mounted
+          inside PresenceLayer's provider. These children are created here, in
+          a component that does not re-render on a cursor tick — which is what
+          keeps the panels out of the cursor render path. */}
+      <PresenceLayer
+        sessionCode={sessionCode}
+        user={user}
+        mode={mode}
+        containerRef={contentRef}
+        cursorRef={cursorRef}
+        barSlot={barSlot}
+      >
+        <NowPlaying track={state.currentTrack} isPaused={state.isPaused || !botConnected} serverId={serverId} />
+        <PlaybackControls state={state} serverId={serverId} disabled={!botConnected} />
+        <Queue queue={state.queue} serverId={serverId} />
+        <SearchPanel serverId={serverId} searchResults={state.searchResults} searchQuery={state.searchQuery} searchPlaylistName={state.searchPlaylistName} mode={mode} />
+        <PlaylistManager
+          serverId={serverId}
+          currentQueue={state.queue}
+          currentTrack={state.currentTrack}
+          searchResults={state.searchResults}
+          searchQuery={state.searchQuery}
+          searchPlaylistName={state.searchPlaylistName}
+        />
+        <StatsPanel serverId={serverId} />
+        <MusicHistory serverId={serverId} />
+        <CommandHistory serverId={serverId} />
+        <ActivityLog entries={logEntries} />
+      </PresenceLayer>
       </div>
     </>
   );
