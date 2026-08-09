@@ -55,6 +55,27 @@ describe("livingParticipants", () => {
     const all = [{ ...p("bad", now), updatedAt: undefined as unknown as number }];
     expect(livingParticipants(all, "me", now)).toEqual([]);
   });
+
+  it("treats a not-yet-acked local write (null updatedAt) as not living", () => {
+    // serverTimestamp() reads back as null until the server acks it.
+    const all = [{ ...p("pending", now), updatedAt: null as unknown as number }];
+    expect(livingParticipants(all, "me", now)).toEqual([]);
+  });
+
+  it("refuses a far-future timestamp instead of reading it as freshest possible", () => {
+    // Belt-and-braces behind the `updatedAt == request.time` rule: a ghost
+    // stamped a year ahead must not be permanently alive if a rule is relaxed.
+    const all = [p("ghost", now + 1e12), p("ghost2", now + PRESENCE_TTL_MS + 1)];
+    expect(livingParticipants(all, "me", now)).toEqual([]);
+  });
+
+  it("survives a modestly skewed VIEWER clock rather than showing nobody", () => {
+    // updatedAt is now the server's clock and `now` is still this browser's,
+    // so a viewer running a few seconds slow sees every live entry as
+    // slightly future-dated. Rejecting those would blank the bar for them.
+    const all = [p("live", now + 3_000)];
+    expect(livingParticipants(all, "me", now).map((x) => x.uid)).toEqual(["live"]);
+  });
 });
 
 describe("coordinates", () => {

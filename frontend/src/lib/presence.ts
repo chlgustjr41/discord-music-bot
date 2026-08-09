@@ -42,17 +42,31 @@ export function colorForUid(uid: string): string {
   return `hsl(${Math.abs(hash) % 360}, 70%, 60%)`;
 }
 
+/**
+ * Who is still here.
+ *
+ * `updatedAt` is written with the server's clock (see usePresence), so it is
+ * not something a participant can choose — but this stays defensive anyway,
+ * because a rules change is one console click away and the failure it would
+ * cause is an immortal ghost nobody else can delete.
+ *
+ * The window is two-sided. Too old is gone; impossibly far in the future is
+ * gone too. It is not one-sided (`>= 0`) because `now` is still THIS browser's
+ * clock while `updatedAt` is the server's: a viewer running a few seconds slow
+ * would otherwise see every live entry as future-dated and see nobody at all.
+ * A forged stamp therefore buys at most one extra TTL of afterlife.
+ */
 export function livingParticipants(
   all: Participant[],
   selfUid: string | null,
   now: number,
 ): Participant[] {
-  return all.filter(
-    (p) =>
-      p.uid !== selfUid &&
-      typeof p.updatedAt === "number" &&
-      now - p.updatedAt <= PRESENCE_TTL_MS,
-  );
+  return all.filter((p) => {
+    if (p.uid === selfUid) return false;
+    if (typeof p.updatedAt !== "number" || !Number.isFinite(p.updatedAt)) return false;
+    const age = now - p.updatedAt;
+    return age <= PRESENCE_TTL_MS && age >= -PRESENCE_TTL_MS;
+  });
 }
 
 export function toNormalized(
