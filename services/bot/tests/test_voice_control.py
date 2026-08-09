@@ -304,6 +304,30 @@ async def test_actions_run_in_order_and_a_failure_does_not_block_the_rest(
     assert (await service.repo.get_state(sid))["isPaused"] is True
 
 
+async def test_search_failure_does_not_log_the_query(
+    dispatcher, service, guild_id, caplog
+):
+    """Lavalink's NodeError embeds the URL-encoded search query in its
+    message, so logging the exception would put transcribed speech on
+    container stdout."""
+    secret = "my deeply private search phrase"
+
+    async def boom(_query):
+        raise RuntimeError(
+            f"GET /loadtracks?identifier=ytsearch%3A{secret.replace(' ', '%20')}"
+            " -> HTTP 500"
+        )
+
+    service.resolve = boom
+    with caplog.at_level(0):
+        results = await dispatcher.dispatch_all(
+            guild_id, [Action("play", query=secret, placement="end")]
+        )
+    assert results[0].ok is False
+    assert "private" not in caplog.text
+    assert secret.replace(" ", "%20") not in caplog.text
+
+
 async def test_a_raising_action_is_contained(dispatcher, service, guild_id):
     """One exploding action must not abort the batch."""
     async def boom(*_a, **_k):

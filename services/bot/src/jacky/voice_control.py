@@ -115,8 +115,14 @@ class VoiceIntentDispatcher:
         try:
             result = await self.service.resolve(action.query)
         except Exception as exc:  # noqa: BLE001 — surfaced on the key
-            # Deliberately NOT logging `action.query`: it is transcribed speech.
-            log.warning("voice search failed: %s", exc)
+            # Type name only. `action.query` is transcribed speech, and so is
+            # the exception MESSAGE: node.py raises
+            # NodeError("GET /loadtracks?identifier=... -> HTTP ...") with the
+            # query URL-encoded into the path, and URL-encoding is not
+            # redaction. The fallback parser routes any unrecognized utterance
+            # to `play` with the whole transcript as the query, so during an
+            # OpenAI outage that message is the entire spoken sentence.
+            log.warning("voice search failed: %s", type(exc).__name__)
             return DispatchResult(False, "Search failed")
         if not result.tracks:
             return DispatchResult(False, "No results")
