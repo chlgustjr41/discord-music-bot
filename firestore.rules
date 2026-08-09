@@ -119,12 +119,18 @@ service cloud.firestore {
       // Panel ids are open-ended (a new panel is one line in a component), so
       // only the count is bounded. The values are booleans consumed through
       // mergeSections, which drops anything that is not one.
+      // `is map` first, and it is not redundant: size() is defined on strings
+      // and lists too, so a bare count check accepts `sections: "ab"` — which
+      // the client then casts to Record<string, boolean> and hands to every
+      // panel.
       function validSections() {
-        return sections().size() <= 20;
+        return sections() is map
+          && sections().size() <= 20;
       }
 
       function validEntry(entry) {
-        return entry.keys().hasOnly(['value', 'by'])
+        return entry is map
+          && entry.keys().hasOnly(['value', 'by'])
           && entry.keys().hasAll(['value', 'by'])
           && entry.value is string
           // Matches MAX_INPUT_LEN in lib/sharedView.ts, which slices to exactly
@@ -151,7 +157,8 @@ service cloud.firestore {
       // `value` is unbounded free text that every viewer's browser renders.
       // The count cap is kept as well, as the statement of intent.
       function validInputs() {
-        return inputs().size() <= 10
+        return inputs() is map
+          && inputs().size() <= 10
           && inputs().keys().hasOnly(['search'])
           && validEntry(inputs().get('search', {'value': '', 'by': ''}));
       }
