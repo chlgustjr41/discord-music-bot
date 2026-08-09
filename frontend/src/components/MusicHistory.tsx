@@ -12,6 +12,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { getIdentityName } from "../lib/identity";
+import { useSharedSection } from "../hooks/useSharedSection";
 import type { MusicHistoryEntry, Track } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -38,7 +39,7 @@ interface Props {
 
 export function MusicHistory({ serverId }: Props) {
   const [tracks, setTracks] = useState<MusicHistoryEntry[]>([]);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useSharedSection("music", false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [actionMsg, setActionMsg] = useState("");
 

@@ -8,6 +8,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../firebase";
 import { getIdentityName } from "../lib/identity";
+import { useSharedSection } from "../hooks/useSharedSection";
 import type { Track, CurrentTrack, SearchResult } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -49,7 +50,7 @@ export function PlaylistManager({
   searchQuery,
   searchPlaylistName,
 }: Props) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useSharedSection("playlists", false);
   const [playlists, setPlaylists] = useState<PlaylistDoc[]>([]);
   const [openPlaylist, setOpenPlaylist] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);

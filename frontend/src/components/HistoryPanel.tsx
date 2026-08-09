@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { collection, getDocs, query, orderBy, limit, doc, updateDoc, arrayUnion } from "firebase/firestore";
 import { db } from "../firebase";
 import { getIdentityName } from "../lib/identity";
+import { useSharedSection } from "../hooks/useSharedSection";
 import type { HistorySession } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,7 @@ interface Props {
 
 export function HistoryPanel({ serverId }: Props) {
   const [sessions, setSessions] = useState<HistorySession[]>([]);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useSharedSection("history", false);
 
   useEffect(() => {
     if (!expanded) return;
