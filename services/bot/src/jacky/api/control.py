@@ -41,6 +41,10 @@ _LOG_COMMAND_FOR = {
     "playlist": "playlist",
     "volume": "volume",
     "clear_queue": "clear",
+    # Retrigger targets: these map onto real j! commands.
+    "now_playing": "nowplaying",
+    "session_info": "session",
+    # open_dashboard has no j! equivalent — it logs under its own name.
 }
 
 
@@ -421,6 +425,11 @@ def register_control_routes(
             "ok": done == len(results),
             "detail": results[0].detail if len(results) == 1
                       else f"{done} of {len(results)} done",
+            # Directives the SERVER cannot perform — currently only opening a
+            # browser, which lives on the user's machine. Filtered, so a
+            # response with no directives carries an empty list rather than a
+            # list of nulls the plugin would have to skip.
+            "client": [r.client for r in results if r.client is not None],
         })
 
     async def summon(request: web.Request, user_id: str) -> web.Response:
