@@ -39,6 +39,16 @@ function Panel() {
   );
 }
 
+/** A panel that starts closed — the case the solo fallback is about. */
+function StatsPanel() {
+  const [open, setOpen] = useSharedSection("stats", false);
+  return (
+    <button type="button" onClick={() => setOpen(!open)}>
+      {open ? "open" : "closed"}
+    </button>
+  );
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -71,6 +81,22 @@ describe("useSharedSection", () => {
 
     act(() => screen.getByRole("button").click());
     expect(setSection).toHaveBeenCalledWith("queue", true);
+  });
+
+  it("keeps the panel as the user was last shown it when they flip to solo", () => {
+    // Ada opens Stats; Bob never touches it. Flipping to solo must leave Bob
+    // looking at the panel he was shown, not snap it shut under him — which
+    // is what happens if the local fallback only ever records local clicks.
+    vi.mocked(useSharedViewContext).mockReturnValue(
+      context({ publishing: true, selfUid: "bob", sections: { stats: true } }),
+    );
+    const view = render(<StatsPanel />);
+    expect(screen.getByRole("button").textContent).toBe("open");
+
+    vi.mocked(useSharedViewContext).mockReturnValue(context({ sections: { stats: true } }));
+    act(() => view.rerender(<StatsPanel />));
+
+    expect(screen.getByRole("button").textContent).toBe("open");
   });
 
   it("falls back to the panel default for a panel nobody has touched", () => {

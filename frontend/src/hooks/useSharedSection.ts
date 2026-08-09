@@ -22,13 +22,23 @@ export function useSharedSection(
 ): [boolean, (open: boolean) => void] {
   const { sections, setSection, publishing } = useSharedViewContext();
 
-  // Kept even while publishing, so that flipping to solo leaves the panel as
-  // the user last saw it rather than snapping back to the default.
+  // What this panel shows when nobody is publishing. It tracks whatever was
+  // last DISPLAYED, not merely what this user clicked: flipping to solo has
+  // to leave the panel as the user was last shown it. Written only by the
+  // local setter, it would not — Ada opens Stats, Bob (who never touched it)
+  // sees it open, flips to solo, and it snaps shut under him.
   const [local, setLocal] = useState(defaultOpen);
 
   // mergeSections is what decides that an absent — or malformed — remote value
   // means "use the panel's own default", rather than rendering `undefined`.
   const value = publishing ? mergeSections(sections, { [id]: defaultOpen })[id] : local;
+
+  // So the shown value is mirrored back into `local`. During render, not in an
+  // effect: this is React's own "adjust state while rendering" pattern, which
+  // re-runs this component before anything is committed rather than painting
+  // once and correcting afterwards — and setState in an effect is the
+  // cascading render this codebase lints against.
+  if (publishing && local !== value) setLocal(value);
 
   const set = useCallback(
     (open: boolean) => {
