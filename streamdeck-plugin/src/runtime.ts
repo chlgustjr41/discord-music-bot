@@ -45,6 +45,8 @@ function describeSignInFailure(err: unknown): string {
         return "Blocked: finish sign-in in the browser on this computer — never from a link someone sent you.";
       case "timeout":
         return "Sign-in timed out. Try again.";
+      case "unsafe-authorize-url":
+        return "The server returned an unsafe sign-in link, so nothing was opened. Check the Server URL.";
       case "unknown-state":
         return "Sign-in expired. Try again.";
       case "busy":
