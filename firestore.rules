@@ -156,11 +156,30 @@ service cloud.firestore {
       // field costs a rules deploy, and in exchange there is no id for which
       // `value` is unbounded free text that every viewer's browser renders.
       // The count cap is kept as well, as the statement of intent.
+      // Whether this write TOUCHES the inputs map at all.
+      //
+      // On an update `request.resource.data` is the whole document as it will
+      // exist afterwards, including fields this write leaves alone — so the
+      // author check below has to be conditioned on `inputs` actually
+      // changing. Applied to the resulting document unconditionally it would
+      // mean nobody could toggle a panel unless they also happened to be the
+      // last person to type in the shared search box, and a panel toggle
+      // carries no `inputs` at all. Data that is not being written was
+      // validated by the write that put it there.
+      function inputsChanged() {
+        return resource == null
+          || request.resource.data.diff(resource.data).affectedKeys().hasAny(['inputs']);
+      }
+
       function validInputs() {
         return inputs() is map
           && inputs().size() <= 10
           && inputs().keys().hasOnly(['search'])
-          && validEntry(inputs().get('search', {'value': '', 'by': ''}));
+          // Only when present, and only when this write is what changed it:
+          // there is no sentinel default that could satisfy the author check.
+          && (!inputsChanged()
+              || !inputs().keys().hasAny(['search'])
+              || validEntry(inputs().search));
       }
 
       // Not uid-scoped, but participant-scoped: you must be IN the session to
