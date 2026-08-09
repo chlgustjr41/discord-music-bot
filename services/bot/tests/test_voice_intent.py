@@ -2,7 +2,13 @@
 
 import pytest
 
-from jacky.api.voice_intent import Intent, normalize_playlist_name, parse_intent
+from jacky.api.voice_actions import Action
+from jacky.api.voice_intent import (
+    Intent,
+    normalize_playlist_name,
+    parse_fallback,
+    parse_intent,
+)
 
 
 @pytest.mark.parametrize(
@@ -165,3 +171,69 @@ async def test_transcriber_does_not_double_wrap_a_status_error():
         await t.transcribe(b"RIFFfake")
     assert exc.value.__cause__ is None
     assert "500" in str(exc.value)
+
+
+# ── fallback parser (LLM action vocabulary) ──────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("said", "action"),
+    [
+        ("skip", Action("skip", count=1)),
+        ("Skip.", Action("skip", count=1)),
+        ("next", Action("skip", count=1)),
+        ("pause", Action("pause")),
+        ("stop", Action("pause")),          # stop-like speech pauses
+        ("resume", Action("resume")),
+        ("louder", Action("volume", delta=10)),
+        ("quieter", Action("volume", delta=-10)),
+        ("shuffle", Action("shuffle")),
+        ("clear the queue", Action("clear_queue")),
+    ],
+)
+def test_fallback_exact_commands(said, action):
+    assert parse_fallback(said) == [action]
+
+
+@pytest.mark.parametrize(
+    ("said", "query", "placement"),
+    [
+        ("play bohemian rhapsody", "bohemian rhapsody", "now"),
+        ("play bohemian rhapsody next", "bohemian rhapsody", "next"),
+        ("add bohemian rhapsody", "bohemian rhapsody", "end"),
+        ("queue bohemian rhapsody", "bohemian rhapsody", "end"),
+        ("bohemian rhapsody", "bohemian rhapsody", "now"),
+    ],
+)
+def test_fallback_play_placements(said, query, placement):
+    assert parse_fallback(said) == [
+        Action("play", query=query, placement=placement)
+    ]
+
+
+def test_fallback_playlist_placements():
+    assert parse_fallback("play playlist chill") == [
+        Action("playlist", name="chill", placement="now")
+    ]
+    assert parse_fallback("add playlist chill") == [
+        Action("playlist", name="chill", placement="end")
+    ]
+
+
+def test_fallback_empty_transcript_is_empty_list():
+    assert parse_fallback("") == []
+    assert parse_fallback("...") == []
+
+
+def test_fallback_query_keeps_original_punctuation_and_case():
+    assert parse_fallback("play AC/DC Back in Black") == [
+        Action("play", query="AC/DC Back in Black", placement="now")
+    ]
+
+
+def test_fallback_incomplete_playlist_command_is_not_a_search_for_playlist():
+    """'play playlist' with no name must not become a song search for the
+    literal word 'playlist' — the existing grammar's guard, preserved."""
+    assert parse_fallback("play playlist") == [
+        Action("play", query="play playlist", placement="now")
+    ]
