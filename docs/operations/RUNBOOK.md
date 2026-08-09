@@ -103,6 +103,36 @@ reconnects with backoff and re-issues "play at position X" from Firestore
 budget is ~800MB RSS on the 2GB VM — and inspect `make logs s=lavalink`
 for a config error before restarting again.
 
+### F4a — boot-loops on the plugin download
+
+**Looks like:** the log never gets past
+`Downloading …youtube-plugin-….jar`, and restarts every ~3 min.
+`docker inspect` shows `ExitCode=0`, `OOMKilled=false` — not a crash.
+
+**Confirm it's upstream, not us:** from the VM, `curl` GitHub (should be
+200) and `https://maven.lavalink.dev/` (times out). Then curl maven **from
+your dev machine too** — if it fails there as well, the Maven repo is down
+globally and nothing on the VM will fix it. This happened on 2026-08-09.
+
+**Fix:** switch to local-jar mode, which sources the jar from GitHub
+releases instead. In `deploy/.env`, set `YOUTUBE_PLUGIN_VERSION` to a
+**release tag** (GitHub has no snapshot builds) and set
+`YOUTUBE_PLUGIN_SHA256` to that jar's checksum, then `make up`. The
+entrypoint downloads, verifies, and fails closed on mismatch.
+
+**If it then fails with `curl: (23) Failure writing output to
+destination`:** the plugins volume is root-owned and Lavalink runs as uid
+322. Fix the existing volume with
+`docker run --rm -v jacky-music_lavalink_plugins:/p alpine chown -R 322:322 /p`.
+(The Dockerfile now creates the dir owned correctly, so fresh volumes are
+fine — this only bites volumes created before that change.)
+
+**Why it can happen at all:** `docker compose up -d <service>` also brings
+up that service's dependencies and recreates them when their config hash
+changed. So deploying only the bot can recreate Lavalink. Since 2026-08-09
+`/opt/Lavalink/plugins` is a named volume, so a recreate no longer needs to
+re-download — but a first-ever boot on a new VM still does.
+
 ## F5 — Bot hung (gateway zombie)
 
 **Alert looks like:** `[F5] Bot health ping timed out — restarting bot
