@@ -4,7 +4,7 @@ playback handlers, channel discovery."""
 import pytest
 from aiohttp.test_utils import TestClient, TestServer
 
-from jacky.api.voice_actions import Action
+from jacky.api.voice_actions import MAX_ACTIONS, Action
 from jacky.api.voice_llm import InterpretError
 from tests.conftest import FakeGuild, FakeMember, FakeVoiceState
 
@@ -1154,6 +1154,22 @@ async def test_voice_422_when_nothing_survives_interpretation(
     transcriber.text = "..."      # fallback parser yields nothing
     resp = await client.post("/control/voice", data=WAV, headers=auth)
     assert resp.status == 422
+
+
+async def test_voice_caps_the_action_list_at_the_route(
+    client, service, guild_id, auth, transcriber, interpreter
+):
+    """The cap is the route's own blast-radius bound, not a favour the
+    interpreter does it. `interpreter` is an injected Any: an implementation
+    that skipped validate_actions would otherwise get one dispatch and one
+    history row per action, unbounded."""
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "pause " * 9
+    interpreter.actions = [Action("pause")] * 9
+    before = len(service.repo.command_log)
+    body = await (await client.post("/control/voice", data=WAV, headers=auth)).json()
+    assert len(body["actions"]) == MAX_ACTIONS
+    assert len(service.repo.command_log) - before == MAX_ACTIONS
 
 
 async def test_voice_transcript_never_reaches_stdout(

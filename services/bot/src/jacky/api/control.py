@@ -20,6 +20,7 @@ from typing import Any
 import discord
 from aiohttp import web
 
+from jacky.api.voice_actions import MAX_ACTIONS
 from jacky.api.voice_intent import parse_fallback
 
 log = logging.getLogger("jacky.control")
@@ -359,6 +360,11 @@ def register_control_routes(
             actions = []
         if not actions:
             actions = parse_fallback(transcript)
+        # Defence in depth: LlmIntentInterpreter runs validate_actions, which
+        # already truncates, but `interpreter` is an injected Any and the cap
+        # is this route's own blast-radius bound — one dispatch and one history
+        # row per action. It must not depend on a collaborator to enforce it.
+        actions = actions[:MAX_ACTIONS]
         if not actions:
             return web.json_response({"error": "no-speech"}, status=422)
 
