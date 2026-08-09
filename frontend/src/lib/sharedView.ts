@@ -43,6 +43,26 @@ export function shouldAdoptInput(args: {
 }
 
 /**
+ * May a change to a shared text field trigger the side effect a keystroke
+ * would normally trigger?
+ *
+ * SearchPanel debounces a search off every change to `query`. Left alone, a
+ * value adopted from the room is indistinguishable from typing, and the result
+ * is one bot search per keystroke PER VIEWER: Ada types "radiohead", every
+ * other dashboard adopts it, every one of them debounces a search, every one of
+ * them writes `searchQuery` to the shared `servers/{id}` document, and the bot
+ * answers each duplicate in turn. That is the amplification this function
+ * exists to stop, so `adopted` is checked before anything else.
+ *
+ * The empty-query rule is here too rather than only at the call site, so the
+ * whole "should this schedule a search" decision has one tested home.
+ */
+export function shouldScheduleSearch(args: { adopted: boolean; query: string }): boolean {
+  if (args.adopted) return false;
+  return args.query.trim().length > 0;
+}
+
+/**
  * Takes only the three fields it reads, not a whole Participant: the caller
  * (useSharedView) deliberately hands over a roster stripped of `cursor` and
  * `updatedAt`, because those change ten times a second and would drag a

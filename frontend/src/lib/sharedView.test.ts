@@ -3,6 +3,7 @@ import {
   MAX_INPUT_LEN,
   mergeSections,
   shouldAdoptInput,
+  shouldScheduleSearch,
   typistLabel,
   type InputEntry,
 } from "./sharedView";
@@ -84,6 +85,32 @@ describe("typistLabel", () => {
 
   it("is silent when there is no entry at all", () => {
     expect(typistLabel(undefined, "bob", people)).toBeNull();
+  });
+});
+
+describe("shouldScheduleSearch", () => {
+  it("schedules a search for what this user typed", () => {
+    expect(shouldScheduleSearch({ adopted: false, query: "radiohead" })).toBe(true);
+  });
+
+  it("refuses to search a value that arrived from someone else", () => {
+    // The amplification case. Every viewer adopts Ada's query; if adoption
+    // scheduled a search, every viewer would write it to servers/{id} and the
+    // bot would answer the same question once per person watching.
+    expect(shouldScheduleSearch({ adopted: true, query: "radiohead" })).toBe(false);
+  });
+
+  it("refuses regardless of how the adopted text looks", () => {
+    // Pinned separately so that a guard which only special-cased, say, blank or
+    // unchanged text would not pass by accident.
+    for (const query of ["a", "radiohead in rainbows", "https://youtu.be/x", " padded "]) {
+      expect(shouldScheduleSearch({ adopted: true, query })).toBe(false);
+    }
+  });
+
+  it("does not search an empty or whitespace-only box", () => {
+    expect(shouldScheduleSearch({ adopted: false, query: "" })).toBe(false);
+    expect(shouldScheduleSearch({ adopted: false, query: "   " })).toBe(false);
   });
 });
 

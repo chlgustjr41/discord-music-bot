@@ -14,6 +14,9 @@ import {
   shouldAdoptSharedResults,
   type OwnSearchState,
 } from "../lib/searchMode";
+import { shouldScheduleSearch } from "../lib/sharedView";
+import { useSharedInput } from "../hooks/useSharedInput";
+import { TypistChip } from "./TypistChip";
 import type { SearchResult, Track } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -61,6 +64,15 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
   const fallbackToasted = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSentQuery = useRef("");
+
+  // The query text itself is shared with the room — a different thing from the
+  // `searchQuery`/`searchResults` fields above, which are the bot's ANSWER.
+  // Declared before the debounce effect on purpose: `consumeAdopted` is a
+  // read-and-clear flag about the most recent change, and React runs effects in
+  // declaration order, so the adoption effect inside this hook must have run
+  // before the effect that asks whether the change was adopted.
+  const shared = useSharedInput("search", query, setQuery);
+  const { consumeAdopted } = shared;
 
   // Watch for bot search results coming back via Firestore
   useEffect(() => {
@@ -172,6 +184,9 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
+    // Read unconditionally, so the flag never outlives the change it describes
+    // and cannot suppress a later, genuinely local search.
+    const adopted = consumeAdopted();
     const trimmed = query.trim();
     if (!trimmed) {
       setResults([]);
@@ -180,6 +195,12 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
       lastSentQuery.current = "";
       return;
     }
+
+    // The loop guard. An adopted value updates what everyone SEES in the box
+    // and stops there: it is not republished (publish() is called only from
+    // onChange, i.e. local typing) and it does not schedule a search, so Ada's
+    // keystrokes cost one bot search rather than one per viewer.
+    if (!shouldScheduleSearch({ adopted, query })) return;
 
     debounceRef.current = setTimeout(() => {
       fireSearch(trimmed);
@@ -284,8 +305,13 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
             <Input
               type="text"
               value={query}
+              onFocus={shared.onFocus}
+              onBlur={shared.onBlur}
               onChange={(e) => {
                 setQuery(e.target.value);
+                // LOCAL typing only. Publishing from the adoption path would
+                // echo the room's own value back at it forever.
+                shared.publish(e.target.value);
                 setAddedMsg("");
               }}
               placeholder="Search or paste a YouTube / SoundCloud / Bandcamp link…"
@@ -295,6 +321,7 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
               <Loader2 className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
             )}
           </div>
+          <TypistChip typist={shared.typist} />
           {/* Supported formats info */}
           <div className="shrink-0">
             <button
