@@ -2,6 +2,8 @@
 
 import discord
 
+from jacky.api.dashboard_link import session_url
+
 EMBED_COLOR = 0x1DB954  # Spotify-green accent
 
 
@@ -45,7 +47,10 @@ def queue_embed(
 
 
 def session_embed(code: str, web_url: str) -> discord.Embed:
-    direct_link = f"{web_url.rstrip('/')}/dashboard/{code}"
+    # Shared builder, not a local f-string: this link, the Dashboard key, and
+    # the voice open_dashboard action must all point at the same page. Three
+    # copies that happen to agree today is how they stop agreeing later.
+    direct_link = session_url(web_url, code)
     embed = discord.Embed(
         title="🎵 Jacky Music Session Started",
         description=(

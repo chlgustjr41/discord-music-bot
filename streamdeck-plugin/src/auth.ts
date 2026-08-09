@@ -1,3 +1,5 @@
+import { openableUrl } from "./url-guard";
+
 export type SignInResult = { token: string; discordUserId: string; discordUserName: string };
 
 const POLL_MS = 2000;
@@ -28,7 +30,8 @@ async function errorCodeOf(res: Response): Promise<string | null> {
 /** Start OAuth: opens the authorize URL via `openUrl`, then polls until the
  *  user completes sign-in in the browser. Resolves with the minted token and
  *  identity, or rejects with a SignInError (410 expired, 408 timed out,
- *  403 not-a-member / device-mismatch). A network fault or the 10s per-request
+ *  403 not-a-member / device-mismatch, 502 unsafe-authorize-url). A network
+ *  fault or the 10s per-request
  *  timeout rejects with the underlying fetch error instead. */
 export async function signIn(
   apiUrl: string,
@@ -46,7 +49,16 @@ export async function signIn(
   const { state, authorizeUrl } = (await startRes.json()) as {
     state: string; authorizeUrl: string;
   };
-  openUrl(authorizeUrl);
+  // Same guard as every other server-supplied URL the plugin opens, and this
+  // one is the least trustworthy of the three: /control/auth/start is pre-auth
+  // by definition, so a hostile `apiUrl` reaches it with no token at all.
+  // Fail the sign-in rather than skipping the open — polling on with no
+  // browser open would leave the user staring at a spinner for five minutes.
+  const safeAuthorizeUrl = openableUrl(authorizeUrl);
+  if (!safeAuthorizeUrl) {
+    throw new SignInError(502, "unsafe-authorize-url");
+  }
+  openUrl(safeAuthorizeUrl);
   const deadline = Date.now() + TIMEOUT_MS;
   for (;;) {
     await new Promise((r) => setTimeout(r, POLL_MS));

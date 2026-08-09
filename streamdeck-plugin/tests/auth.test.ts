@@ -91,6 +91,24 @@ describe("signIn", () => {
     await assertion;
   });
 
+  it("refuses to open a javascript: authorize url", async () => {
+    // /control/auth/start is pre-auth and apiUrl is user-overridable, so this
+    // response body is the least trustworthy URL the plugin ever handles.
+    // Failing the sign-in beats skipping the open: a sign-in that never opens
+    // a browser but keeps polling would just hang for five minutes.
+    const f = vi
+      .fn()
+      .mockResolvedValueOnce(
+        res(200, { state: "st4te", authorizeUrl: "javascript:alert(1)" }),
+      ) as unknown as typeof fetch;
+    const openUrl = vi.fn();
+
+    await expect(
+      signIn("https://control.example.com", openUrl, f),
+    ).rejects.toMatchObject({ code: "unsafe-authorize-url" });
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
   it("rejects when the start request fails", async () => {
     const f = vi
       .fn()

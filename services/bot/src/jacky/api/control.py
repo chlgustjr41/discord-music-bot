@@ -20,6 +20,7 @@ from typing import Any
 import discord
 from aiohttp import web
 
+from jacky.api.dashboard_link import entry_url, session_url
 from jacky.api.voice_actions import MAX_ACTIONS
 from jacky.api.voice_intent import parse_fallback
 
@@ -33,13 +34,24 @@ _MEMBER_LOOKUP_ERRORS: tuple = (discord.NotFound, discord.HTTPException)
 # 600 KB ~= 18 s of 16 kHz mono WAV, comfortably above the client's 15 s cap.
 VOICE_MAX_BYTES = 600_000
 
-# Maps a voice verb to the j! command name the dashboard's history renders and
-# retriggers. Verbs not listed here log under their own name.
+# Maps a voice verb to the j! command name the dashboard's history DISPLAYS,
+# so a spoken command reads the same as the typed one it corresponds to.
+# Verbs not listed here log under their own name.
+#
+# This is a display/reading mapping only — it does not make the row's
+# retrigger button work. The listener's _handle_retrigger dispatches on the
+# logged command name and only implements play/skip/pause/resume/loop/volume,
+# so retriggering a "nowplaying", "session", "clear" or "playlist" row writes
+# a new history row and does nothing else.
 _LOG_COMMAND_FOR = {
     "play": "play",
     "playlist": "playlist",
     "volume": "volume",
     "clear_queue": "clear",
+    # These name real j! commands, so history reads naturally.
+    "now_playing": "nowplaying",
+    "session_info": "session",
+    # open_dashboard has no j! equivalent — it logs under its own name.
 }
 
 
@@ -317,7 +329,6 @@ def register_control_routes(
         The code is read live, never cached client-side: begin_session mints a
         new one per session and teardown invalidates it.
         """
-        web_base = service.settings.web_app_url.rstrip("/")
         guild = await resolve_guild(member_id_of(user_id))
         if guild is not None:
             state = await service.repo.get_state(str(guild.id)) or {}
@@ -325,10 +336,13 @@ def register_control_routes(
             if code:
                 return web.json_response({
                     "active": True,
-                    "url": f"{web_base}/dashboard/{code}",
+                    "url": session_url(service.settings.web_app_url, code),
                     "guildName": guild.name,
                 })
-        return web.json_response({"active": False, "url": f"{web_base}/app"})
+        return web.json_response({
+            "active": False,
+            "url": entry_url(service.settings.web_app_url),
+        })
 
     async def voice(request: web.Request, user_id: str) -> web.Response:
         """Transcribe a push-to-talk clip and run the recognized command."""
@@ -418,6 +432,11 @@ def register_control_routes(
             "ok": done == len(results),
             "detail": results[0].detail if len(results) == 1
                       else f"{done} of {len(results)} done",
+            # Directives the SERVER cannot perform — currently only opening a
+            # browser, which lives on the user's machine. Filtered, so a
+            # response with no directives carries an empty list rather than a
+            # list of nulls the plugin would have to skip.
+            "client": [r.client for r in results if r.client is not None],
         })
 
     async def summon(request: web.Request, user_id: str) -> web.Response:

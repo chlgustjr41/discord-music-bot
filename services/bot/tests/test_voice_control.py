@@ -1,9 +1,12 @@
 """Voice dispatch onto PlayerService, and voice command-history logging."""
 
+import copy
+
 import pytest
 
 from jacky.api.voice_actions import Action
 from jacky.audio.models import LoadResult
+from jacky.voice_control import ANNOUNCE_COOLDOWN_S
 from tests.conftest import FakeRepo
 
 
@@ -349,3 +352,156 @@ async def test_a_raising_action_is_contained(dispatcher, service, guild_id):
     ])
     assert results[0].ok is False
     assert results[1].ok is True
+
+
+# ── announce + client-directive actions ──────────────────────────────────
+
+
+async def test_now_playing_posts_the_track_embed(dispatcher, service, guild_id, sid):
+    await service.repo.update_state(sid, {"currentTrack": {"title": "Song"}})
+    result = (await dispatcher.dispatch_all(guild_id, [Action("now_playing")]))[0]
+    assert result.ok
+    assert "Song" in result.detail
+    # WHICH embed, not merely that one was posted: `detail` is computed
+    # independently of the embed, so "is not None" leaves the two announce
+    # branches free to post each other's embed (or success_embed) undetected.
+    embed = service.fake_notifier.sent[-1]["embed"]
+    assert embed.title == "Now Playing"
+    assert "Song" in embed.description
+
+
+async def test_now_playing_with_nothing_playing_posts_nothing(
+    dispatcher, service, guild_id, sid
+):
+    """The asker is at the Stream Deck, not reading Discord — so this fails on
+    the key rather than announcing 'nothing is playing' to the channel."""
+    before = len(service.fake_notifier.sent)
+    result = (await dispatcher.dispatch_all(guild_id, [Action("now_playing")]))[0]
+    assert result.ok is False
+    assert len(service.fake_notifier.sent) == before
+
+
+async def test_session_info_posts_the_code(dispatcher, service, guild_id, sid):
+    await service.repo.update_state(sid, {"sessionCode": "CODE1234"})
+    result = (await dispatcher.dispatch_all(guild_id, [Action("session_info")]))[0]
+    assert result.ok
+    assert "CODE1234" in result.detail
+    embed = service.fake_notifier.sent[-1]["embed"]
+    assert embed.title == "🎵 Jacky Music Session Started"
+    assert "CODE1234" in embed.description
+
+
+async def test_session_info_without_a_code_posts_nothing(
+    dispatcher, service, guild_id
+):
+    before = len(service.fake_notifier.sent)
+    result = (await dispatcher.dispatch_all(guild_id, [Action("session_info")]))[0]
+    assert result.ok is False
+    assert len(service.fake_notifier.sent) == before
+
+
+async def test_a_notifier_that_cannot_post_is_reported_as_failure(
+    dispatcher, service, guild_id, sid
+):
+    """Silently reporting success for a message nobody received is the worst
+    outcome: the user assumes the channel saw it."""
+    await service.repo.update_state(sid, {"currentTrack": {"title": "Song"}})
+    service.fake_notifier.fail = True
+    result = (await dispatcher.dispatch_all(guild_id, [Action("now_playing")]))[0]
+    assert result.ok is False
+
+
+async def test_a_failed_post_does_not_start_the_cooldown(
+    dispatcher, service, guild_id, sid
+):
+    """One Discord hiccup must not silently block the next 10 seconds of
+    legitimate announcements."""
+    await service.repo.update_state(sid, {"currentTrack": {"title": "Song"}})
+    service.fake_notifier.fail = True
+    assert (await dispatcher.dispatch_all(guild_id, [Action("now_playing")]))[0].ok is False
+    service.fake_notifier.fail = False
+    assert (await dispatcher.dispatch_all(guild_id, [Action("now_playing")]))[0].ok is True
+
+
+async def test_open_dashboard_returns_a_directive_and_touches_nothing(
+    dispatcher, service, guild_id, sid
+):
+    await service.repo.update_state(sid, {"sessionCode": "CODE1234"})
+    before_updates = len(service.node.updates)
+    before_sent = len(service.fake_notifier.sent)
+    # deepcopy, not the reference: FakeRepo.get_state hands back the live dict
+    # it stores, so comparing it against itself would pass for any mutation.
+    before_state = copy.deepcopy(await service.repo.get_state(sid))
+    result = (await dispatcher.dispatch_all(guild_id, [Action("open_dashboard")]))[0]
+    assert result.ok
+    assert result.client == {
+        "type": "open_url", "url": "http://web.test/dashboard/CODE1234",
+    }
+    assert len(service.node.updates) == before_updates, "no playback effect"
+    assert len(service.fake_notifier.sent) == before_sent, "posts nothing"
+    # "performs no server-side effect" is a named property of this verb in the
+    # spec, so pin the state itself rather than only its visible side channels.
+    assert await service.repo.get_state(sid) == before_state, "writes nothing"
+
+
+async def test_open_dashboard_without_a_session_uses_the_entry_url(
+    dispatcher, service, guild_id
+):
+    result = (await dispatcher.dispatch_all(guild_id, [Action("open_dashboard")]))[0]
+    assert result.client == {"type": "open_url", "url": "http://web.test/app"}
+
+
+async def test_existing_actions_carry_no_directive(dispatcher, service, guild_id):
+    result = (await dispatcher.dispatch_all(guild_id, [Action("pause")]))[0]
+    assert result.client is None
+
+
+async def test_announce_cooldown_blocks_the_second_post_only(
+    dispatcher, service, guild_id, sid
+):
+    """A misrecognition can now produce a publicly visible message, so the two
+    announcing verbs share a short per-guild window."""
+    await service.repo.update_state(
+        sid, {"currentTrack": {"title": "Song"}, "sessionCode": "CODE1234"}
+    )
+    results = await dispatcher.dispatch_all(
+        guild_id, [Action("now_playing"), Action("session_info")]
+    )
+    assert [r.ok for r in results] == [True, False]
+    assert len(service.fake_notifier.sent) == 1
+
+
+async def test_the_cooldown_expires(dispatcher, service, guild_id, sid):
+    await service.repo.update_state(sid, {"currentTrack": {"title": "Song"}})
+    assert (await dispatcher.dispatch_all(guild_id, [Action("now_playing")]))[0].ok
+    later = dispatcher.now() + ANNOUNCE_COOLDOWN_S + 1
+    dispatcher.now = lambda: later
+    assert (await dispatcher.dispatch_all(guild_id, [Action("now_playing")]))[0].ok
+
+
+async def test_the_cooldown_does_not_block_playback_actions(
+    dispatcher, service, guild_id, sid
+):
+    await service.repo.update_state(sid, {"currentTrack": {"title": "Song"}})
+    results = await dispatcher.dispatch_all(
+        guild_id, [Action("now_playing"), Action("now_playing"), Action("pause")]
+    )
+    assert [r.ok for r in results] == [True, False, True]
+
+
+async def test_nothing_playing_reports_content_not_cooldown(
+    dispatcher, service, guild_id, sid
+):
+    """Content checks come BEFORE the cooldown, so an utterance that had
+    nothing to post never burns the window or blames it."""
+    results = await dispatcher.dispatch_all(
+        guild_id, [Action("now_playing"), Action("now_playing")]
+    )
+    assert [r.detail for r in results] == ["Nothing is playing", "Nothing is playing"]
+    # With the window ALREADY burnt by a successful post, a miss must still
+    # name the real reason. Without this half the ordering is unobservable:
+    # the stamp only lands on success, so two misses never face a cooldown.
+    await service.repo.update_state(sid, {"sessionCode": "CODE1234"})
+    assert (await dispatcher.dispatch_all(guild_id, [Action("session_info")]))[0].ok
+    result = (await dispatcher.dispatch_all(guild_id, [Action("now_playing")]))[0]
+    assert result.detail == "Nothing is playing"

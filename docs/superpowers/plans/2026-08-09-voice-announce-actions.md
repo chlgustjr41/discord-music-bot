@@ -14,7 +14,7 @@
 
 **Baselines:** bot **248** tests; plugin **52** tests. Branch from `master` as `feat/voice-announce`.
 
-**Mutation-testing rule:** this project proves every test non-vacuous. Each task lists mutations to apply; revert the fix, confirm the named test fails, restore. **If a predicted mutation does not fail, say so plainly and strengthen the test** — do not paper over it. Three implementers on the previous plan correctly caught bad predictions in my instructions; the same skepticism is expected.
+**Mutation-testing rule:** this project proves every test non-vacuous. Each task lists mutations to apply; revert the fix, confirm the named test fails, restore. **Restore from a file backup you take first — NOT `git checkout --`**, which reverts to HEAD and wipes the uncommitted implementation along with the mutation. **If a predicted mutation does not fail, say so plainly and strengthen the test** — do not paper over it. Three implementers on the previous plan correctly caught bad predictions in my instructions; the same skepticism is expected.
 
 ---
 
@@ -279,7 +279,7 @@ git commit -m "feat(notifier): accept a prebuilt embed and report whether it pos
 
 Keep every attribute existing tests already read. If `FakeNotifier` has no `fail` attribute, add `self.fail = False` to `__init__`.
 
-`FakeSettings` needs `web_app_url` — check whether it already has one; if not add `web_app_url = "https://web.test"`.
+`FakeSettings` needs `web_app_url` — check whether it already has one; if not add `web_app_url = "http://web.test"`.
 
 - [ ] **Step 2: Write the failing tests.** Append to `services/bot/tests/test_voice_control.py`:
 
@@ -343,7 +343,7 @@ async def test_open_dashboard_returns_a_directive_and_touches_nothing(
     result = (await dispatcher.dispatch_all(guild_id, [Action("open_dashboard")]))[0]
     assert result.ok
     assert result.client == {
-        "type": "open_url", "url": "https://web.test/dashboard/CODE1234",
+        "type": "open_url", "url": "http://web.test/dashboard/CODE1234",
     }
     assert len(service.node.updates) == before_updates, "no playback effect"
     assert len(service.fake_notifier.sent) == before_sent, "posts nothing"
@@ -353,7 +353,7 @@ async def test_open_dashboard_without_a_session_uses_the_entry_url(
     dispatcher, service, guild_id
 ):
     result = (await dispatcher.dispatch_all(guild_id, [Action("open_dashboard")]))[0]
-    assert result.client == {"type": "open_url", "url": "https://web.test/app"}
+    assert result.client == {"type": "open_url", "url": "http://web.test/app"}
 
 
 async def test_existing_actions_carry_no_directive(dispatcher, service, guild_id):
@@ -521,7 +521,7 @@ async def test_voice_response_carries_client_directives_in_order(
     interpreter.actions = [Action("pause"), Action("open_dashboard")]
     body = await (await client.post("/control/voice", data=WAV, headers=auth)).json()
     assert body["client"] == [
-        {"type": "open_url", "url": "https://web.test/dashboard/CODE1234"}
+        {"type": "open_url", "url": "http://web.test/dashboard/CODE1234"}
     ]
 
 
@@ -547,7 +547,7 @@ async def test_announce_actions_log_under_their_j_command_names(
     assert service.repo.command_log[-1][1] == "nowplaying"
 ```
 
-Check `FakeSettings.web_app_url` matches what Task 4 set (`https://web.test`); if the control-api fixtures use a different settings fake, use its value.
+Check `FakeSettings.web_app_url` matches what Task 4 set (`http://web.test`); if the control-api fixtures use a different settings fake, use its value.
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -646,7 +646,7 @@ import { isOpenableUrl } from "../src/url-guard";
 
 describe("isOpenableUrl", () => {
   it("allows https", () => {
-    expect(isOpenableUrl("https://web.test/dashboard/CODE1")).toBe(true);
+    expect(isOpenableUrl("http://web.test/dashboard/CODE1")).toBe(true);
   });
 
   // The real escalation this guard exists to stop: these do not merely
@@ -666,7 +666,7 @@ describe("isOpenableUrl", () => {
   });
 
   it("is not fooled by a scheme appearing later in the string", () => {
-    expect(isOpenableUrl("javascript:void('https://web.test')")).toBe(false);
+    expect(isOpenableUrl("javascript:void('http://web.test')")).toBe(false);
   });
 });
 ```

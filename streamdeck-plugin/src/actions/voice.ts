@@ -1,4 +1,4 @@
-import {
+import streamDeck, {
   action,
   SingletonAction,
   type JsonValue,
@@ -10,6 +10,7 @@ import {
 import { MicRecorder } from "../audio-capture";
 import { handlePiEvent } from "../pi-bridge";
 import { getClient } from "../runtime";
+import { openableUrl } from "../url-guard";
 
 type VoiceSettings = { inputDevice?: string };
 
@@ -114,6 +115,20 @@ export class Voice extends SingletonAction<VoiceSettings> {
       await ev.action.setTitle(result.detail || result.transcript);
       if (result.ok) await ev.action.showOk();
       else await ev.action.showAlert();
+      // Directives execute AFTER the key has rendered, so opening a browser
+      // never delays the feedback the user is waiting on. Unknown types are
+      // ignored rather than dispatched generically — the directive vocabulary
+      // is closed, exactly like the action vocabulary.
+      // The response is not schema-validated, so every shape here is checked
+      // rather than trusted: a non-array `client` would otherwise throw out of
+      // the loop into the catch below and report "Failed" for a command the
+      // server already carried out, prompting the user to run it again.
+      const directives = Array.isArray(result.client) ? result.client : [];
+      for (const directive of directives) {
+        if (directive?.type !== "open_url" || typeof directive.url !== "string") continue;
+        const safe = openableUrl(directive.url);
+        if (safe) await streamDeck.system.openUrl(safe);
+      }
     } catch {
       await ev.action.setTitle("Failed");
       await ev.action.showAlert();

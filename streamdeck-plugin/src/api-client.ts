@@ -30,6 +30,12 @@ export type VoiceResult = {
   actions: { action: string; ok: boolean; detail: string }[];
   ok: boolean;
   detail: string | null;
+  /** Directives the server cannot carry out itself — today only `open_url`,
+   *  because the browser lives on the user's machine, not on the server.
+   *  Optional, and every field is re-checked at the read site: this is a cast
+   *  over an unvalidated response, and an older plugin may face a newer server
+   *  (or the reverse) where the field is absent or shaped differently. */
+  client?: { type: string; url?: string }[];
 };
 
 export type ClientConfig = { apiUrl: string; authToken: string };

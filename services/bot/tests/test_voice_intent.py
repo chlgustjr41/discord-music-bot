@@ -109,10 +109,42 @@ async def test_transcriber_does_not_double_wrap_a_status_error():
         ("turn it down", Action("volume", delta=-10)),
         ("shuffle", Action("shuffle")),
         ("clear the queue", Action("clear_queue")),
+        # Punctuation normalizes to a space, so "what's playing" and the
+        # apostrophe-less spelling are two DIFFERENT keys. Both are exercised.
+        ("what's playing", Action("now_playing")),
+        ("whats playing", Action("now_playing")),
+        ("what is playing", Action("now_playing")),
+        ("now playing", Action("now_playing")),
+        ("post the session", Action("session_info")),
+        ("post the session code", Action("session_info")),
+        ("session code", Action("session_info")),
+        ("open the dashboard", Action("open_dashboard")),
+        ("open dashboard", Action("open_dashboard")),
     ],
 )
 def test_fallback_exact_commands(said, action):
     assert parse_fallback(said) == [action]
+
+
+@pytest.mark.parametrize(
+    ("said", "query"),
+    [
+        # The exact table matches a WHOLE normalized transcript, so a song
+        # whose title collides with a command word is still a search. Pinned
+        # so a future move to prefix matching cannot silently eat searches.
+        ("play now playing by the band", "now playing by the band"),
+        # The load-bearing cases: a verbless search that STARTS with a
+        # command phrase. Prefix matching would swallow these; exact
+        # whole-transcript matching lets them fall through to search.
+        ("now playing by the band", "now playing by the band"),
+        ("open dashboard confessional", "open dashboard confessional"),
+        ("play open the dashboard", "open the dashboard"),
+        ("queue session code", "session code"),
+    ],
+)
+def test_fallback_command_words_inside_a_song_search_still_search(said, query):
+    assert parse_fallback(said)[0].action == "play"
+    assert parse_fallback(said)[0].query == query
 
 
 @pytest.mark.parametrize(

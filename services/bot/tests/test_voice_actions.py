@@ -76,6 +76,7 @@ def test_schema_declares_the_closed_vocabulary():
     assert set(verbs) == {
         "play", "playlist", "skip", "pause", "resume",
         "volume", "shuffle", "clear_queue", "loop",
+        "now_playing", "session_info", "open_dashboard",
     }
     assert not any("delete" in v or "remove" in v for v in verbs)
 
@@ -105,3 +106,18 @@ def test_volume_fields_stay_nullable_so_absolute_and_relative_differ():
     props = ACTION_SCHEMA["properties"]["actions"]["items"]["properties"]
     assert props["level"]["type"] == ["integer", "null"]
     assert props["delta"]["type"] == ["integer", "null"]
+
+
+def test_announce_and_client_verbs_validate():
+    assert validate_actions([
+        {"action": "now_playing"},
+        {"action": "session_info"},
+        {"action": "open_dashboard"},
+    ]) == [Action("now_playing"), Action("session_info"), Action("open_dashboard")]
+
+
+def test_new_verbs_need_no_arguments():
+    """They are argument-free, so nothing may be dropped for a missing query."""
+    assert validate_actions([{"action": "now_playing", "query": ""}]) == [
+        Action("now_playing")
+    ]

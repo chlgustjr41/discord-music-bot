@@ -1203,3 +1203,45 @@ async def test_voice_transcript_never_reaches_stdout(
     with caplog.at_level(0):
         await client.post("/control/voice", data=WAV, headers=auth)
     assert secret not in caplog.text
+
+
+async def test_voice_response_carries_only_the_real_client_directives(
+    client, service, guild_id, sid, auth, transcriber, interpreter
+):
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {"sessionCode": "CODE1234"})
+    interpreter.actions = [Action("pause"), Action("open_dashboard")]
+    body = await (await client.post("/control/voice", data=WAV, headers=auth)).json()
+    assert body["client"] == [
+        {"type": "open_url", "url": "http://web.test/dashboard/CODE1234"}
+    ]
+
+
+async def test_voice_response_has_an_empty_client_list_when_there_are_none(
+    client, service, guild_id, auth, transcriber, interpreter
+):
+    put_user_in_voice(service, guild_id)
+    interpreter.actions = [Action("pause")]
+    body = await (await client.post("/control/voice", data=WAV, headers=auth)).json()
+    assert body["client"] == []
+
+
+async def test_announce_actions_log_under_their_j_command_names(
+    client, service, guild_id, sid, auth, transcriber, interpreter
+):
+    """So the dashboard's history retrigger reaches the matching j! command."""
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {"currentTrack": {"title": "Song"}})
+    interpreter.actions = [Action("now_playing")]
+    await client.post("/control/voice", data=WAV, headers=auth)
+    assert service.repo.command_log[-1][1] == "nowplaying"
+
+
+async def test_open_dashboard_logs_under_its_own_name(
+    client, service, guild_id, sid, auth, transcriber, interpreter
+):
+    """It has no j! equivalent — a bot cannot open your browser."""
+    put_user_in_voice(service, guild_id)
+    interpreter.actions = [Action("open_dashboard")]
+    await client.post("/control/voice", data=WAV, headers=auth)
+    assert service.repo.command_log[-1][1] == "open_dashboard"

@@ -44,27 +44,34 @@ class ChannelNotifier:
         *,
         text: str | None = None,
         track: dict | None = None,
+        embed: "discord.Embed | None" = None,
         error: bool = False,
         text_channel_id: str | None = None,
-    ) -> None:
+    ) -> bool:
+        """Post to the guild's session text channel. Returns whether it
+        actually posted — callers that exist only to announce need to know,
+        and every existing caller is free to ignore it."""
         try:
             if text_channel_id is None:
                 state = await self.bot.repo.get_state(str(guild_id)) or {}
                 text_channel_id = state.get("textChannelId")
             if not text_channel_id:
-                return
+                return False
             channel = self.bot.get_channel(int(text_channel_id))
             if not channel:
-                return
-            if track is not None:
-                embed = now_playing_embed(track)
-            elif error:
-                embed = error_embed(text or "")
-            else:
-                embed = success_embed(text or "")
+                return False
+            if embed is None:
+                if track is not None:
+                    embed = now_playing_embed(track)
+                elif error:
+                    embed = error_embed(text or "")
+                else:
+                    embed = success_embed(text or "")
             await channel.send(embed=embed)
+            return True
         except Exception as exc:  # noqa: BLE001 — notifications are best-effort
             log.debug("notify failed for guild %s: %s", guild_id, exc)
+            return False
 
 
 class JackyBot(commands.Bot):
