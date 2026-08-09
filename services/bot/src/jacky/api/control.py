@@ -353,10 +353,21 @@ def register_control_routes(
 
         try:
             actions = await interpreter.interpret(transcript) if interpreter else []
-        except Exception:  # noqa: BLE001 — degrade to the offline parser
-            # Verb-free message: this reaches container stdout and the
-            # transcript must never appear there (see the INVARIANT below).
-            log.warning("voice interpretation failed; using the fallback parser")
+        except Exception as exc:  # noqa: BLE001 — degrade to the offline parser
+            # Type AND message: a fixed string made "OpenAI rejected the key,
+            # so the feature has silently degraded to the fallback forever"
+            # look identical to a transient network partition, while the key
+            # still appeared to work. Transcript-safe by construction —
+            # LlmIntentInterpreter's messages carry a status, an aiohttp
+            # transport error (host/URL, never the request body), or a fixed
+            # string; test_interpreter_errors_never_carry_the_transcript pins
+            # that for every one of its failure modes. No exc_info: a
+            # traceback is not needed here and this reaches container stdout,
+            # where the transcript must never appear (see the INVARIANT below).
+            log.warning(
+                "voice interpretation failed (%s: %s); using the fallback parser",
+                type(exc).__name__, exc,
+            )
             actions = []
         if not actions:
             actions = parse_fallback(transcript)

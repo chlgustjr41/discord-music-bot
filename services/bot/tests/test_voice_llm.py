@@ -119,11 +119,30 @@ async def test_network_fault_is_wrapped():
     assert isinstance(exc.value.__cause__, OSError)
 
 
-async def test_interpreter_never_logs_or_echoes_the_transcript_in_errors():
-    """Transcripts must not reach stdout; an exception message would."""
+class _BoomHttp:
+    """Transport fault carrying what aiohttp would: host and URL, no body."""
+
+    def post(self, *_a, **_k):
+        raise OSError(
+            "Cannot connect to host api.openai.com:443 ssl:default"
+        )
+
+
+@pytest.mark.parametrize("http", [
+    _Http(_Resp(500, {})),                                    # non-200
+    _BoomHttp(),                                              # transport fault
+    _Http(_Resp(200, {"choices": [{"message": {"content": "not json"}}]})),
+    _Http(_Resp(200, _completion([]))),                       # no usable actions
+])
+async def test_interpreter_errors_never_carry_the_transcript(http):
+    """Transcripts must not reach stdout, and control.py logs this exception's
+    message — so every failure mode must be transcript-free at the SOURCE.
+    The transcript travels in the POST body, which no aiohttp error echoes.
+    Parametrized over all four: a new failure path must be checked here too."""
     from jacky.api.voice_llm import InterpretError, LlmIntentInterpreter
 
     secret = "play my extremely private playlist name"
     with pytest.raises(InterpretError) as exc:
-        await LlmIntentInterpreter(_Http(_Resp(500, {})), "sk", "m").interpret(secret)
+        await LlmIntentInterpreter(http, "sk", "m").interpret(secret)
     assert secret not in str(exc.value)
+    assert secret not in str(exc.value.__cause__ or "")

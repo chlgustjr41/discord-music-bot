@@ -1172,6 +1172,25 @@ async def test_voice_caps_the_action_list_at_the_route(
     assert len(service.repo.command_log) - before == MAX_ACTIONS
 
 
+async def test_voice_interpretation_failure_names_the_exception_type(
+    client, service, guild_id, auth, transcriber, interpreter, caplog
+):
+    """A fixed string made every interpretation failure look alike: OpenAI
+    rejecting the request (the feature silently degrading to the fallback
+    forever) was indistinguishable from a network partition, while the key
+    kept appearing to work. The type and message are transcript-safe —
+    test_interpreter_errors_never_carry_the_transcript pins that at the
+    source, for every failure mode LlmIntentInterpreter has."""
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "pause"
+    interpreter.error = InterpretError("interpretation failed: 401")
+    with caplog.at_level(0):
+        resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 200, "must still degrade to the fallback parser"
+    assert "InterpretError" in caplog.text
+    assert "401" in caplog.text
+
+
 async def test_voice_transcript_never_reaches_stdout(
     client, service, guild_id, auth, transcriber, interpreter, caplog
 ):
