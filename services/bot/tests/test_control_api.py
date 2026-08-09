@@ -1205,7 +1205,7 @@ async def test_voice_transcript_never_reaches_stdout(
     assert secret not in caplog.text
 
 
-async def test_voice_response_carries_client_directives_in_order(
+async def test_voice_response_carries_only_the_real_client_directives(
     client, service, guild_id, sid, auth, transcriber, interpreter
 ):
     put_user_in_voice(service, guild_id)
