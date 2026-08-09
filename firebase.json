@@ -3,6 +3,7 @@
     "public": "frontend/dist",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [
+      { "source": "/api/searchYouTube", "function": "searchYouTube" },
       { "source": "**", "destination": "/index.html" }
     ]
   },

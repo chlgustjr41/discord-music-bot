@@ -41,6 +41,19 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
 
+    // Ephemeral dashboard presence and cursors. Deliberately NOT under
+    // /servers, whose subcollection rule is `allow read, write: if true` —
+    // rules are OR'd across matches, so anything placed there could never
+    // restrict access no matter how it was written. Read requires auth so
+    // anonymous visitors cannot enumerate who is in a session; write is
+    // uid-scoped so nobody can move someone else's cursor or impersonate
+    // them. This is the one place in this app where per-user write rules are
+    // both meaningful and achievable.
+    match /presence/{sessionCode}/participants/{uid} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == uid;
+    }
+
     // Default deny
     match /{document=**} {
       allow read, write: if false;
