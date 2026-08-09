@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { useServerState } from "../hooks/useServerState";
 import { useActivityToasts } from "../hooks/useActivityToasts.js";
+import { useAuth } from "../hooks/useAuth";
+import { usePresence } from "../hooks/usePresence";
+import type { ViewMode } from "../lib/presence";
 import { NowPlaying } from "./NowPlaying";
 import { Queue } from "./Queue";
 import { PlaybackControls } from "./PlaybackControls";
@@ -14,6 +17,10 @@ import { MusicHistory } from "./MusicHistory";
 import { StatsPanel } from "./StatsPanel";
 import { IdentityChip } from "./IdentityChip";
 import { PinServerButton } from "./PinServerButton";
+import { AccountMenu } from "./AccountMenu";
+import { PresenceBar } from "./PresenceBar";
+import { CursorLayer } from "./CursorLayer";
+import { SharedViewToggle } from "./SharedViewToggle";
 import { ActivityLog } from "./ActivityLog";
 import { NodeStatus } from "./NodeStatus";
 import { Button } from "@/components/ui/button";
@@ -21,13 +28,67 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Music, Loader2, WifiOff, AlertTriangle, LogOut, RotateCcw } from "lucide-react";
 
+const MODE_KEY = (code: string) => `jacky:view:${code}`;
+
+/** Anything that is not exactly one of the two modes is treated as shared:
+ *  a corrupted localStorage value must not become a third, invisible mode
+ *  that shouldPublish() silently reads as solo. */
+function storedMode(code: string | undefined): ViewMode {
+  if (!code) return "shared";
+  return localStorage.getItem(MODE_KEY(code)) === "solo" ? "solo" : "shared";
+}
+
 export function Dashboard() {
   const { sessionCode } = useParams<{ sessionCode: string }>();
   const { serverId, state, error, loading, sessionExpired } = useServerState(sessionCode);
   const navigate = useNavigate();
   const logEntries = useActivityToasts(state);
+  const { user } = useAuth();
   const [exiting, setExiting] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [mode, setMode] = useState<ViewMode>(() => storedMode(sessionCode));
+
+  useEffect(() => {
+    if (sessionCode) localStorage.setItem(MODE_KEY(sessionCode), mode);
+  }, [sessionCode, mode]);
+
+  const { participants, publishCursor } = usePresence(sessionCode, user, mode);
+
+  // Shared coordinate space for cursors: the dashboard column, not the
+  // viewport, so a 4K screen and a laptop agree on where a pointer is.
+  const [rect, setRect] = useState<DOMRect | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  // getBoundingClientRect() is viewport-relative, so it goes stale the moment
+  // the page scrolls. publishCursor reads the ref rather than the state so it
+  // normalises against the freshest measurement even between renders.
+  const rectRef = useRef<DOMRect | null>(null);
+
+  const measure = useCallback(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const next = el.getBoundingClientRect();
+    rectRef.current = next;
+    setRect(next);
+  }, []);
+
+  // A ref callback rather than a mount effect: it fires at commit, when the
+  // element genuinely exists, and does not tangle with the early returns below.
+  const attachContent = useCallback((node: HTMLDivElement | null) => {
+    contentRef.current = node;
+    if (!node) return;
+    const next = node.getBoundingClientRect();
+    rectRef.current = next;
+    setRect(next);
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", measure, { passive: true });
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", measure);
+    };
+  }, [measure]);
 
   const botConnected = !!state?.voiceChannelId;
 
@@ -124,10 +185,16 @@ export function Dashboard() {
           </button>
         </div>
       </header>
-      <div className="mx-auto max-w-3xl p-4 space-y-4">
+      <div
+        ref={attachContent}
+        onPointerMove={(e) =>
+          rectRef.current && publishCursor(e.clientX, e.clientY, rectRef.current)
+        }
+        className="mx-auto max-w-3xl p-4 space-y-4"
+      >
         {/* Header with server info */}
         <Card>
-        <CardContent className="flex items-center gap-4 p-4">
+        <CardContent className="flex flex-wrap items-center gap-4 p-4">
           {state.serverIcon ? (
             <img
               src={state.serverIcon}
@@ -161,7 +228,12 @@ export function Dashboard() {
               <NodeStatus serverId={serverId} />
             </div>
           </div>
+          {/* One wrapping cluster: at narrow widths the whole group drops to
+              its own line instead of squeezing (or clipping) the controls. */}
+          <div className="flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto sm:gap-2">
+          <PresenceBar participants={participants} />
           <IdentityChip />
+          <SharedViewToggle mode={mode} signedIn={!!user} onChange={setMode} />
           <PinServerButton serverId={serverId} serverName={state.serverName} />
           <Button
             variant="ghost"
@@ -193,6 +265,8 @@ export function Dashboard() {
             )}
             {exiting ? "Disconnecting…" : "Exit"}
           </Button>
+          <AccountMenu />
+          </div>
         </CardContent>
       </Card>
 
@@ -219,7 +293,7 @@ export function Dashboard() {
       <NowPlaying track={state.currentTrack} isPaused={state.isPaused || !botConnected} serverId={serverId} />
       <PlaybackControls state={state} serverId={serverId} disabled={!botConnected} />
       <Queue queue={state.queue} serverId={serverId} />
-      <SearchPanel serverId={serverId} searchResults={state.searchResults} searchQuery={state.searchQuery} searchPlaylistName={state.searchPlaylistName} />
+      <SearchPanel serverId={serverId} searchResults={state.searchResults} searchQuery={state.searchQuery} searchPlaylistName={state.searchPlaylistName} mode={mode} />
       <PlaylistManager
         serverId={serverId}
         currentQueue={state.queue}
@@ -233,6 +307,7 @@ export function Dashboard() {
       <CommandHistory serverId={serverId} />
       <ActivityLog entries={logEntries} />
       </div>
+      <CursorLayer participants={participants} rect={rect} />
     </>
   );
 }
