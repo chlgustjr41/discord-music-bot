@@ -10,7 +10,7 @@
  * The provider is mocked out; this is about the hook's contract, not Firestore.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useSharedInput } from "./useSharedInput";
@@ -40,12 +40,17 @@ const changes: { value: string; adopted: boolean }[] = [];
 function Field() {
   const [value, setValue] = useState("");
   const shared = useSharedInput("search", value, setValue);
+  const { consumeAdopted } = shared;
 
   // Stands in for SearchPanel's search-on-change effect, minus the network.
-  const last = changes[changes.length - 1];
-  if (!last || last.value !== value) {
-    changes.push({ value, adopted: shared.consumeAdopted() });
-  }
+  // In an EFFECT keyed on `value`, exactly as the real caller does it:
+  // consumeAdopted is read-and-clear, which the hook's own docstring forbids
+  // calling during render, and a stand-in that reads it there exercises an
+  // access pattern SearchPanel does not have — it would stay green against an
+  // implementation that is broken for the only real consumer.
+  useEffect(() => {
+    changes.push({ value, adopted: consumeAdopted() });
+  }, [value, consumeAdopted]);
 
   return (
     <div>

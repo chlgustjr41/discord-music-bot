@@ -67,10 +67,15 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
 
   // The query text itself is shared with the room — a different thing from the
   // `searchQuery`/`searchResults` fields above, which are the bot's ANSWER.
-  // Declared before the debounce effect on purpose: `consumeAdopted` is a
-  // read-and-clear flag about the most recent change, and React runs effects in
-  // declaration order, so the adoption effect inside this hook must have run
-  // before the effect that asks whether the change was adopted.
+  //
+  // The declaration order is NOT load-bearing, contrary to what this comment
+  // used to claim. Adoption sets the flag in the commit where `entry` changed
+  // and `query` did not, so the debounce effect (which depends on `query`)
+  // does not run in that commit at all; it consumes the flag in the NEXT one.
+  // Moving this below the debounce effect would behave identically. Order
+  // would only matter if a local change and an adoption could land in the same
+  // commit, and `focused` already rules that out — you cannot be typing into a
+  // field that is adopting.
   const shared = useSharedInput("search", query, setQuery);
   const { consumeAdopted } = shared;
 
