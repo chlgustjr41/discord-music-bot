@@ -29,7 +29,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { shouldAdoptInput, typistLabel } from "../lib/sharedView";
+import { shouldAdoptInput, typistLabel, type InputEntry } from "../lib/sharedView";
 import { useSharedViewContext } from "./useSharedView";
 
 export interface SharedInput {
@@ -61,8 +61,28 @@ export function useSharedInput(
 
   const entry = inputs[id];
 
+  // What the last run of the effect below saw. Adoption is a reaction to the
+  // ROOM changing (or to this user stopping typing), never to a local edit:
+  // publishing is asynchronous and throttled, so between a local change and
+  // its echo the shared document still holds the PREVIOUS value, and an
+  // effect that re-decided on every local change would push that stale value
+  // straight back over what the user just did. Clearing the field is where
+  // that bites — it is the one local edit made with the field unfocused, so
+  // nothing else stops the room's older text from reappearing a frame later.
+  const lastEntry = useRef<InputEntry | undefined>(undefined);
+  const wasFocused = useRef(false);
+
   useEffect(() => {
+    const arrived =
+      entry?.value !== lastEntry.current?.value || entry?.by !== lastEntry.current?.by;
+    // Blurring is the other trigger: a value that landed while this user was
+    // mid-word is deliberately held back until they stop typing.
+    const unblurred = wasFocused.current && !focused;
+    lastEntry.current = entry;
+    wasFocused.current = focused;
+
     if (!entry) return;
+    if (!arrived && !unblurred) return;
     if (
       !shouldAdoptInput({
         focused,

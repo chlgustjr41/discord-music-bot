@@ -59,6 +59,19 @@ function panel() {
   return <SearchPanel serverId="s1" mode="shared" />;
 }
 
+function panelWith(over: Partial<React.ComponentProps<typeof SearchPanel>>) {
+  return <SearchPanel serverId="s1" mode="shared" {...over} />;
+}
+
+const track = {
+  videoId: "v1",
+  title: "Creep",
+  artist: "Radiohead",
+  url: "https://youtu.be/v1",
+  thumbnail: "",
+  duration: 0,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.useFakeTimers();
@@ -100,6 +113,38 @@ describe("SearchPanel shared query", () => {
     // room either.
     expect(botSearches()).toEqual([]);
     expect(setInput).not.toHaveBeenCalled();
+  });
+
+  it("clears the field for the whole session, and it stays cleared", () => {
+    // Clear is a shared action on a shared box: it publishes an empty value
+    // rather than only blanking this browser. And it must STICK — the room's
+    // copy still holds the old query until that write lands, so an adoption
+    // that reacted to the local change would put the text straight back.
+    const view = render(panel());
+    const input = screen.getByRole("textbox");
+
+    // Search, so that there are results and therefore a Clear button.
+    act(() => {
+      input.focus();
+      fireEvent.change(input, { target: { value: "radiohead" } });
+    });
+    act(() => void vi.advanceTimersByTime(500));
+    act(() => input.blur());
+    act(() => view.rerender(panelWith({ searchQuery: null, searchResults: [track] })));
+    expect(screen.getByText("Creep")).toBeTruthy();
+
+    // Meanwhile the room's copy of the field is attributed to Ada.
+    vi.mocked(useSharedViewContext).mockReturnValue(
+      context({ inputs: { search: { value: "radiohead", by: "ada" } } }),
+    );
+    act(() => view.rerender(panelWith({ searchQuery: null, searchResults: [track] })));
+
+    setInput.mockClear();
+    act(() => screen.getByText("Clear").click());
+    act(() => void vi.advanceTimersByTime(500));
+
+    expect(setInput).toHaveBeenCalledWith("search", "", "bob");
+    expect(screen.getByRole("textbox")).toHaveValue("");
   });
 
   it("still searches normally once this user edits the adopted text", () => {

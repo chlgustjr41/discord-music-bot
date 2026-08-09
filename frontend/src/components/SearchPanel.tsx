@@ -214,6 +214,12 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
 
   const clearResults = () => {
     setQuery("");
+    // Clearing a SHARED field is a shared action, like typing in it: the box
+    // is one box for the whole room, so emptying it empties it for everyone,
+    // rather than leaving the room staring at text nobody can see the source
+    // of. Publishing is also what stops the text reappearing here a moment
+    // later — without it the room's copy is still the old query.
+    shared.publish("");
     setResults([]);
     setPlaylistName(null);
     setSelected(new Set());
