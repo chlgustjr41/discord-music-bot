@@ -98,6 +98,36 @@ export function movedEnough(
   return Math.hypot(dx, dy) >= minPx;
 }
 
+/**
+ * Hosts a participant avatar may be loaded from.
+ *
+ * `photoURL` is rendered as `<img src>` for everyone on the dashboard, so an
+ * arbitrary URL is a zero-interaction beacon: it collects the IP and
+ * User-Agent of every viewer, on every render. The rules enforce this too;
+ * this is the second layer, because rules can be changed from the console and
+ * the component is what actually issues the request.
+ *
+ * Matched by suffix rather than pinned to lh3: Google account photos have been
+ * served from lh3–lh6.googleusercontent.com over the years and the host is not
+ * contractual. The suffix check is deliberately written against the parsed
+ * hostname, so `evil-googleusercontent.com`, `googleusercontent.com.evil.tld`
+ * and `https://lh3.googleusercontent.com@evil.tld/` all fail.
+ */
+const PHOTO_HOST = "googleusercontent.com";
+
+export function isAllowedPhotoUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "https:") return false;
+  const host = parsed.hostname.toLowerCase();
+  return host === PHOTO_HOST || host.endsWith(`.${PHOTO_HOST}`);
+}
+
 /** The one place that answers "does this browser broadcast?", so the auth
  *  gate cannot be applied in one code path and forgotten in another. */
 export function shouldPublish(mode: ViewMode, signedIn: boolean): boolean {

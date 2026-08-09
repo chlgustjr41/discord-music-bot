@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   PRESENCE_TTL_MS,
   colorForUid,
+  isAllowedPhotoUrl,
   livingParticipants,
   movedEnough,
   shouldPublish,
@@ -126,5 +127,36 @@ describe("shouldPublish", () => {
   it("publishes only when signed in AND shared", () => {
     expect(shouldPublish("shared", true)).toBe(true);
     expect(shouldPublish("solo", true)).toBe(false);
+  });
+});
+
+describe("isAllowedPhotoUrl", () => {
+  it("accepts the Google account photo hosts", () => {
+    expect(isAllowedPhotoUrl("https://lh3.googleusercontent.com/a/ACg8ocK=s96-c")).toBe(true);
+    // Google has served avatars from lh4/lh5/lh6 as well, so the host is
+    // matched by suffix rather than pinned to lh3.
+    expect(isAllowedPhotoUrl("https://lh5.googleusercontent.com/a-/AOh14=s96-c")).toBe(true);
+  });
+
+  it("rejects an attacker-controlled beacon", () => {
+    // This is the whole point: photoURL is rendered as <img src> for every
+    // viewer, so an arbitrary host harvests everyone's IP and User-Agent on
+    // every render with no interaction.
+    expect(isAllowedPhotoUrl("https://evil.example/track.gif")).toBe(false);
+    expect(isAllowedPhotoUrl("http://lh3.googleusercontent.com/a/x")).toBe(false);
+  });
+
+  it("is not fooled by lookalike hosts", () => {
+    expect(isAllowedPhotoUrl("https://evil-googleusercontent.com/x")).toBe(false);
+    expect(isAllowedPhotoUrl("https://googleusercontent.com.evil.example/x")).toBe(false);
+    expect(isAllowedPhotoUrl("https://lh3.googleusercontent.com@evil.example/x")).toBe(false);
+  });
+
+  it("rejects non-http schemes and junk rather than throwing", () => {
+    expect(isAllowedPhotoUrl("javascript:alert(1)")).toBe(false);
+    expect(isAllowedPhotoUrl("data:image/svg+xml,<svg/>")).toBe(false);
+    expect(isAllowedPhotoUrl("not a url")).toBe(false);
+    expect(isAllowedPhotoUrl(null)).toBe(false);
+    expect(isAllowedPhotoUrl("")).toBe(false);
   });
 });

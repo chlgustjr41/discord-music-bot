@@ -1,4 +1,4 @@
-import type { Participant } from "../lib/presence";
+import { isAllowedPhotoUrl, type Participant } from "../lib/presence";
 
 interface Props {
   participants: Participant[];
@@ -27,8 +27,11 @@ export function PresenceBar({ participants }: Props) {
           className="h-6 w-6 shrink-0 overflow-hidden rounded-full bg-muted"
           style={{ boxShadow: `0 0 0 2px ${p.color}` }}
         >
-          {p.photoURL ? (
-            <img src={p.photoURL} alt="" className="h-full w-full object-cover" />
+          {/* Never issue a request to a host the participant chose: this
+              <img> fires for every viewer with no interaction. Falls back to
+              the initial, which is what a photo-less account already shows. */}
+          {isAllowedPhotoUrl(p.photoURL) ? (
+            <img src={p.photoURL!} alt="" className="h-full w-full object-cover" />
           ) : (
             <span className="flex h-full w-full items-center justify-center text-[10px] font-medium text-muted-foreground">
               {(p.name || "?").charAt(0).toUpperCase()}
