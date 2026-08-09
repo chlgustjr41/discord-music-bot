@@ -183,6 +183,22 @@ async def test_shuffle_and_clear_queue(dispatcher, service, guild_id, sid):
     assert (await service.repo.get_state(sid))["queue"] == []
 
 
+async def test_clear_queue_empties_the_queue_without_stopping_playback(
+    dispatcher, service, guild_id, sid
+):
+    """The spec's one permitted destructive action is bounded to the queue.
+    repo.clear_queue also nulls currentTrack, which makes listener.py's
+    web-skip rule stop playback — so the voice path must not use it."""
+    await service.repo.update_state(sid, {
+        "currentTrack": {"title": "Now"}, "isPlaying": True,
+        "queue": [{"title": "A"}, {"title": "B"}],
+    })
+    assert (await dispatcher.dispatch_all(guild_id, [Action("clear_queue")]))[0].ok
+    state = await service.repo.get_state(sid)
+    assert state["queue"] == []
+    assert state["currentTrack"] == {"title": "Now"}, "must not stop the track"
+
+
 async def test_absolute_volume_and_loop(dispatcher, service, guild_id, sid):
     result = (await dispatcher.dispatch_all(guild_id, [
         Action("volume", level=42)

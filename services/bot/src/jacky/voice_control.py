@@ -70,7 +70,13 @@ class VoiceIntentDispatcher:
             count = await self.repo.shuffle_queue(sid)
             return DispatchResult(True, f"Shuffled {count}")
         if kind == "clear_queue":
-            await self.repo.clear_queue(sid)
+            # NOT repo.clear_queue: that also nulls currentTrack, which is
+            # right for its teardown callers but wrong here. listener.py reads
+            # "currentTrack nulled while isPlaying stays true" as a web skip
+            # and skips, on_track_end then advances into the now-empty queue,
+            # and the music stops — while the key reports "Queue cleared".
+            # The spec bounds this action to the queue: the track keeps playing.
+            await self.repo.update_state(sid, {"queue": []})
             return DispatchResult(True, "Queue cleared")
         if kind == "loop":
             await self.repo.update_state(sid, {"loopMode": action.mode})
