@@ -3,10 +3,12 @@ server:
   address: 0.0.0.0
 
 lavalink:
+  # PLUGIN_BLOCK_START
   plugins:
     - dependency: "dev.lavalink.youtube:youtube-plugin:__YOUTUBE_PLUGIN_VERSION__"
       repository: "__YOUTUBE_PLUGIN_REPOSITORY__"
       snapshot: __YOUTUBE_PLUGIN_SNAPSHOT__
+  # PLUGIN_BLOCK_END
   server:
     password: "${LAVALINK_SERVER_PASSWORD}"
     sources:

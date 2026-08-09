@@ -15,6 +15,9 @@ services:
       _JAVA_OPTIONS: "-Xmx${LAVALINK_HEAP:-512m}"
       LAVALINK_SERVER_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
       YOUTUBE_PLUGIN_VERSION: ${YOUTUBE_PLUGIN_VERSION:?set in .env}
+      # Set -> local-jar mode: fetch from GitHub releases and verify, instead
+      # of resolving from maven.lavalink.dev. See services/lavalink/entrypoint.sh.
+      YOUTUBE_PLUGIN_SHA256: ${YOUTUBE_PLUGIN_SHA256:-}
       YOUTUBE_OAUTH_REFRESH_TOKEN: ${YOUTUBE_OAUTH_REFRESH_TOKEN:-}
       YOUTUBE_REMOTE_CIPHER_URL: ${YOUTUBE_REMOTE_CIPHER_URL:-http://cipher:8001}
       YOUTUBE_REMOTE_CIPHER_PASSWORD: ${YOUTUBE_REMOTE_CIPHER_PASSWORD:?set in .env}
@@ -22,6 +25,10 @@ services:
       - "2333"
     volumes:
       - tokens:/data/tokens:ro
+      # Persistent so a container recreate does not discard the plugin jar.
+      # It used to be ephemeral, which made every recreate depend on
+      # maven.lavalink.dev being reachable.
+      - lavalink_plugins:/opt/Lavalink/plugins
     # curl is present in the image (verified in ADR-0004). $$ escapes compose
     # interpolation; CMD-SHELL (not exec-form CMD) is required so the env var
     # actually expands inside the container.
@@ -199,3 +206,4 @@ networks:
 
 volumes:
   tokens: {}
+  lavalink_plugins: {}
