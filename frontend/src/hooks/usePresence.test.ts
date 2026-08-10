@@ -110,6 +110,40 @@ describe("usePresence auth gate", () => {
   });
 });
 
+describe("usePresence snapshot handling", () => {
+  /** Drive the snapshot callback the hook registered with onSnapshot. */
+  function emit(rows: { id: string; data: object; pending: boolean }[]) {
+    const [, next] = vi.mocked(onSnapshot).mock.calls[0] as unknown as [
+      unknown,
+      (s: unknown) => void,
+    ];
+    act(() =>
+      next({
+        docs: rows.map((r) => ({
+          id: r.id,
+          data: () => r.data,
+          metadata: { hasPendingWrites: r.pending },
+        })),
+      }),
+    );
+  }
+
+  it("keeps your own row while your write is unacknowledged", () => {
+    // The flicker bug, at the layer that actually reads the metadata:
+    // dropping `d.metadata.hasPendingWrites` here leaves every pure test
+    // green while your avatar still blinks out every 15 seconds.
+    const { result } = renderHook(() => usePresence("ABC123", signedIn));
+    emit([{ id: "u1", data: { name: "Ada", updatedAt: null }, pending: true }]);
+    expect(result.current.participants.map((p) => p.uid)).toEqual(["u1"]);
+  });
+
+  it("still drops an unresolved row that is nobody's pending write", () => {
+    const { result } = renderHook(() => usePresence("ABC123", signedIn));
+    emit([{ id: "u2", data: { name: "Bob", updatedAt: null }, pending: false }]);
+    expect(result.current.participants).toEqual([]);
+  });
+});
+
 describe("usePresence focus tracking", () => {
   // jsdom reports hasFocus() === false, so "the window has focus" has to be
   // stated explicitly. That it has to be stated at all is the point of the

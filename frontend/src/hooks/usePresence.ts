@@ -26,6 +26,7 @@ import {
   isFocused,
   livingParticipants,
   shouldPublish,
+  toParticipant,
 } from "../lib/presence";
 import { useIdentity } from "../lib/identity";
 
@@ -38,39 +39,6 @@ interface Snapshot {
 }
 
 const EMPTY: Participant[] = [];
-
-/**
- * Firestore hands `updatedAt` back as a Timestamp, and as `null` for a local
- * write the server has not acknowledged yet. Everything above this boundary —
- * livingParticipants and its tests — deals in plain milliseconds, so the
- * conversion happens here, once, and a pending write becomes NaN rather than
- * a number that would read as fresh.
- */
-function toMillis(value: unknown): number {
-  if (typeof value === "number") return value;
-  if (
-    value &&
-    typeof value === "object" &&
-    typeof (value as { toMillis?: unknown }).toMillis === "function"
-  ) {
-    return (value as { toMillis: () => number }).toMillis();
-  }
-  return NaN;
-}
-
-function toParticipant(uid: string, data: Record<string, unknown>): Participant {
-  return {
-    uid,
-    name: typeof data.name === "string" ? data.name : "",
-    photoURL: typeof data.photoURL === "string" ? data.photoURL : null,
-    color: typeof data.color === "string" ? data.color : "",
-    // Defaults to focused. A row written by a client from before this field
-    // existed says nothing about attention, and greying someone out on the
-    // strength of a missing field would be a lie about them.
-    focused: typeof data.focused === "boolean" ? data.focused : true,
-    updatedAt: toMillis(data.updatedAt),
-  };
-}
 
 export function usePresence(sessionCode: string | undefined, user: User | null) {
   const [snapshot, setSnapshot] = useState<Snapshot>({ key: "", rows: EMPTY });
@@ -152,7 +120,13 @@ export function usePresence(sessionCode: string | undefined, user: User | null) 
       (snap) => {
         setSnapshot({
           key,
-          rows: snap.docs.map((d) => toParticipant(d.id, d.data())),
+          // metadata.hasPendingWrites is per-DOCUMENT and true only for rows
+          // this browser has an unacknowledged write on — which is how
+          // toParticipant tells "my own write is in flight" (keep it) from
+          // "this row has no usable timestamp" (drop it).
+          rows: snap.docs.map((d) =>
+            toParticipant(d.id, d.data(), d.metadata.hasPendingWrites),
+          ),
         });
       },
       // Presence must never take the dashboard down with it.

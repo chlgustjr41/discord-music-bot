@@ -7,6 +7,7 @@ import {
   isFocused,
   livingParticipants,
   shouldPublish,
+  toParticipant,
   type Participant,
 } from "./presence";
 
@@ -104,6 +105,63 @@ describe("livingParticipants", () => {
     // slightly future-dated. Rejecting those would blank the bar for them.
     const all = [p("live", now + 3_000)];
     expect(livingParticipants(all, now).map((x) => x.uid)).toEqual(["live"]);
+  });
+});
+
+describe("toParticipant", () => {
+  const NOW = 1_700_000_000_000;
+  const stamp = (ms: number) => ({ toMillis: () => ms });
+
+  it("converts a server Timestamp to plain milliseconds", () => {
+    const row = toParticipant("u1", { updatedAt: stamp(NOW - 1_000) }, false);
+    expect(row.updatedAt).toBe(NOW - 1_000);
+  });
+
+  it("keeps a row alive while THIS browser's write is still in flight", () => {
+    // serverTimestamp() reads back as null in the local snapshot Firestore
+    // fires before the ack. Without this, your own avatar blinks out for the
+    // round trip on every heartbeat, nickname change and focus change.
+    const row = toParticipant("u1", { updatedAt: null }, true);
+    expect(livingParticipants([row], Date.now())).toHaveLength(1);
+  });
+
+  it("still filters an unresolved timestamp that is NOT our pending write", () => {
+    // The half that stops this becoming "NaN means fresh": only a document
+    // this browser has an unacknowledged write on gets the benefit of the
+    // doubt. Anything else with no usable timestamp is not a live row.
+    const row = toParticipant("u1", { updatedAt: null }, false);
+    expect(livingParticipants([row], Date.now())).toHaveLength(0);
+  });
+
+  it("prefers the acked server time over now, even while a write is pending", () => {
+    // hasPendingWrites is a fallback for the unresolved field, not a licence
+    // to overwrite a real timestamp with this browser's clock.
+    const row = toParticipant("u1", { updatedAt: stamp(NOW - 5_000) }, true);
+    expect(row.updatedAt).toBe(NOW - 5_000);
+  });
+
+  it("carries the document id and the published fields through", () => {
+    const row = toParticipant(
+      "u1",
+      { name: "Ada", photoURL: "https://x/y", color: "#abc", focused: false },
+      false,
+    );
+    expect(row).toMatchObject({
+      uid: "u1",
+      name: "Ada",
+      photoURL: "https://x/y",
+      color: "#abc",
+      focused: false,
+    });
+  });
+
+  it("defaults a row with no focus flag to focused rather than greying it out", () => {
+    expect(toParticipant("u1", {}, false).focused).toBe(true);
+  });
+
+  it("defaults missing or wrongly typed fields rather than trusting them", () => {
+    const row = toParticipant("u1", { name: 7, photoURL: 7, color: 7 }, false);
+    expect(row).toMatchObject({ name: "", photoURL: null, color: "" });
   });
 });
 

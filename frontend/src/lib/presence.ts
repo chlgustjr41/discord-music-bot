@@ -7,6 +7,7 @@
  */
 
 export interface Participant {
+  /** The presence DOCUMENT id: an account uid, or `anon_<browserId>`. */
   uid: string;
   name: string;
   photoURL: string | null;
@@ -67,6 +68,61 @@ export function livingParticipants(all: Participant[], now: number): Participant
     const age = now - p.updatedAt;
     return age <= PRESENCE_TTL_MS && age >= -PRESENCE_TTL_MS;
   });
+}
+
+/**
+ * Firestore hands `updatedAt` back as a Timestamp, and as `null` for a local
+ * write the server has not acknowledged yet. Everything above this boundary
+ * deals in plain milliseconds, so the conversion happens here, once, and an
+ * unresolved field becomes NaN rather than a number that would read as fresh.
+ *
+ * Duck-typed on `toMillis` rather than imported from firebase/firestore, so
+ * this file stays free of Firebase and testable without an emulator.
+ */
+function toMillis(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (
+    value &&
+    typeof value === "object" &&
+    typeof (value as { toMillis?: unknown }).toMillis === "function"
+  ) {
+    return (value as { toMillis: () => number }).toMillis();
+  }
+  return NaN;
+}
+
+/**
+ * One presence document, as the UI needs it.
+ *
+ * `hasPendingWrites` comes straight off the snapshot's metadata and is true
+ * exactly when THIS browser has an unacknowledged write on this document. That
+ * is the one case where an unresolved `updatedAt` is not a reason to doubt the
+ * row: it is our own write, in flight, and the person is demonstrably here.
+ * Resolving it to now keeps your avatar on screen for the round trip instead of
+ * blinking it out every heartbeat.
+ *
+ * It is deliberately NOT a general "NaN means fresh" rule — livingParticipants
+ * keeps its guard, and an unresolved stamp on anyone else's row still filters
+ * it out, because a malformed row must not become immortal.
+ */
+export function toParticipant(
+  uid: string,
+  data: Record<string, unknown>,
+  hasPendingWrites: boolean,
+): Participant {
+  const updatedAt = toMillis(data.updatedAt);
+  return {
+    uid,
+    name: typeof data.name === "string" ? data.name : "",
+    photoURL: typeof data.photoURL === "string" ? data.photoURL : null,
+    color: typeof data.color === "string" ? data.color : "",
+    // Defaults to focused. A row written by a client from before this field
+    // existed says nothing about attention, and greying someone out on the
+    // strength of a missing field would be a lie about them.
+    focused: typeof data.focused === "boolean" ? data.focused : true,
+    updatedAt:
+      hasPendingWrites && !Number.isFinite(updatedAt) ? Date.now() : updatedAt,
+  };
 }
 
 /**
