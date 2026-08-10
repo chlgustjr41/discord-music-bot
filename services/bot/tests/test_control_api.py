@@ -65,9 +65,11 @@ def auth(token):
 class FakeTranscriber:
     def __init__(self):
         self.text, self.error, self.calls = "skip", None, []
+        self.languages: list[str] = []
 
-    async def transcribe(self, wav: bytes) -> str:
+    async def transcribe(self, wav: bytes, language: str = "en") -> str:
         self.calls.append(wav)
+        self.languages.append(language)
         if self.error:
             raise self.error
         return self.text
@@ -82,11 +84,28 @@ class FakeInterpreter:
     def __init__(self):
         self.actions, self.error, self.calls = None, None, []
 
-    async def interpret(self, transcript):
-        self.calls.append(transcript)
+    async def interpret(self, transcript, keywords=()):
+        # (transcript, keywords) rather than the transcript alone: the hints
+        # are part of the contract the route has to honour, and `calls == []`
+        # is how the grammar-first win is asserted.
+        self.calls.append((transcript, list(keywords)))
         if self.error:
             raise self.error
         return self.actions if self.actions is not None else [Action("skip")]
+
+
+class RecordingDispatcher:
+    """Captures exactly what reached dispatch — the only place the ENFORCED
+    action is visible, since the response reports the verb but not placement."""
+
+    def __init__(self):
+        self.dispatched: list[list[Action]] = []
+
+    async def dispatch_all(self, guild_id, actions):
+        from jacky.voice_control import DispatchResult
+
+        self.dispatched.append(list(actions))
+        return [DispatchResult(ok=True, detail="ok") for _ in actions]
 
 
 @pytest.fixture
@@ -1007,6 +1026,12 @@ async def test_listings_still_exclude_true_outsiders(
 
 WAV = b"RIFF" + b"\x00" * 200
 
+# Speech the deterministic grammar declines, so the reasoning layer is what
+# answers. Tests about the INTERPRETER's output must use it: a transcript the
+# grammar resolves never reaches the interpreter at all, which would make them
+# assert against the fake's actions while the grammar's were what ran.
+UNINTERPRETABLE = "hey can you do a thing"
+
 
 async def test_voice_requires_a_live_session_before_transcribing(
     client, service, auth, transcriber
@@ -1144,6 +1169,106 @@ async def test_voice_volume_logs_the_resulting_level(
     assert entry[5] == "louder"
 
 
+# ── grammar first: the interpreter only fills the gap ────────────────────
+
+
+async def test_grammar_resolved_speech_never_reaches_the_interpreter(
+    client, service, guild_id, sid, auth, transcriber, interpreter
+):
+    """The main win, and the one worth a dedicated assertion: a command the
+    deterministic grammar understood costs no LLM call, no latency, and gives
+    no model the chance to override it. "next song" is the case that used to
+    become a SEARCH for the word "song"."""
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "next song"
+    interpreter.actions = [Action("play", query="song", placement="now")]
+    body = await (await client.post("/control/voice", data=WAV, headers=auth)).json()
+    assert [a["action"] for a in body["actions"]] == ["skip"]
+    assert interpreter.calls == [], "the grammar had already decided"
+    assert service.node.updates[-1] == (guild_id, {"track": {"encoded": None}})
+
+
+async def test_unresolved_speech_reaches_the_interpreter_with_the_keywords(
+    client, service, guild_id, sid, auth, transcriber, interpreter
+):
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "could you maybe play something upbeat"
+    interpreter.actions = [Action("pause")]
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 200
+    assert interpreter.calls == [
+        ("could you maybe play something upbeat", ["play"])
+    ]
+
+
+async def test_nothing_resolvable_is_422_and_dispatches_nothing(
+    service, store, guild_id, auth, transcriber, interpreter
+):
+    """The unknown case: the grammar declined, the model declined, so nothing
+    runs. There is no longer any path from an unrecognised utterance to a
+    search."""
+    dispatcher = RecordingDispatcher()
+    tc = build_client(
+        service, store, transcriber=transcriber, interpreter=interpreter,
+        voice_dispatcher=dispatcher,
+    )
+    await tc.start_server()
+    try:
+        put_user_in_voice(service, guild_id)
+        transcriber.text = "mmm hmm yeah whatever"
+        interpreter.actions = []
+        before = len(service.repo.command_log)
+        resp = await tc.post("/control/voice", data=WAV, headers=auth)
+        assert resp.status == 422
+        assert (await resp.json())["error"] == "no-speech"
+        assert dispatcher.dispatched == []
+        assert len(service.repo.command_log) == before
+    finally:
+        await tc.close()
+
+
+async def test_interpreter_output_is_run_through_enforce_intent(
+    service, store, guild_id, auth, transcriber, interpreter
+):
+    """The model asked to interrupt what is playing, but the user never said
+    "play" — so the action reaches the dispatcher appended, not immediate."""
+    dispatcher = RecordingDispatcher()
+    tc = build_client(
+        service, store, transcriber=transcriber, interpreter=interpreter,
+        voice_dispatcher=dispatcher,
+    )
+    await tc.start_server()
+    try:
+        put_user_in_voice(service, guild_id)
+        transcriber.text = "how about some jazz"
+        interpreter.actions = [Action("play", query="jazz", placement="now")]
+        resp = await tc.post("/control/voice", data=WAV, headers=auth)
+        assert resp.status == 200
+        assert dispatcher.dispatched == [
+            [Action("play", query="jazz", placement="end")]
+        ]
+    finally:
+        await tc.close()
+
+
+async def test_the_language_query_parameter_reaches_the_transcriber(
+    client, service, guild_id, auth, transcriber, interpreter
+):
+    put_user_in_voice(service, guild_id)
+    await client.post("/control/voice?language=ko", data=WAV, headers=auth)
+    assert transcriber.languages == ["ko"]
+
+
+async def test_an_unknown_or_absent_language_becomes_english(
+    client, service, guild_id, auth, transcriber, interpreter
+):
+    """A bad key setting must degrade, not break the key."""
+    put_user_in_voice(service, guild_id)
+    await client.post("/control/voice?language=klingon", data=WAV, headers=auth)
+    await client.post("/control/voice", data=WAV, headers=auth)
+    assert transcriber.languages == ["en", "en"]
+
+
 # ── LLM interpretation: action lists, fallback, partial results ──────────
 
 
@@ -1171,29 +1296,31 @@ async def test_voice_logs_one_history_row_per_action_sharing_the_transcript(
     assert all(r[4] == "voice" and r[5] == "skip then pause" for r in rows)
 
 
-async def test_voice_falls_back_to_the_parser_when_the_llm_fails(
+async def test_an_llm_outage_costs_reasoning_not_the_key(
     client, service, guild_id, sid, auth, transcriber, interpreter
 ):
-    """An OpenAI outage must degrade to basic commands, not break the key."""
+    """The grammar IS the fallback now, so it runs whether or not OpenAI is
+    up — an outage costs the reasoning layer, not the closed vocabulary."""
     put_user_in_voice(service, guild_id)
     interpreter.error = InterpretError("down")
     transcriber.text = "skip"
     resp = await client.post("/control/voice", data=WAV, headers=auth)
     assert resp.status == 200
     assert (await resp.json())["actions"][0]["action"] == "skip"
+    assert interpreter.calls == []
 
 
-async def test_voice_falls_back_when_the_interpreter_raises_anything_at_all(
+async def test_an_unresolvable_utterance_during_an_outage_does_nothing(
     client, service, guild_id, auth, transcriber, interpreter
 ):
-    """The route must not trust InterpretError to be the only thing that can
-    come out of the interpreter — an unexpected fault still degrades."""
+    """Degrade to NO actions, not to a search. The route must also not trust
+    InterpretError to be the only thing the interpreter can raise."""
     put_user_in_voice(service, guild_id)
     interpreter.error = RuntimeError("boom")
-    transcriber.text = "pause"
+    transcriber.text = "something the grammar has never heard of"
     resp = await client.post("/control/voice", data=WAV, headers=auth)
-    assert resp.status == 200
-    assert (await resp.json())["actions"][0]["action"] == "pause"
+    assert resp.status == 422
+    assert interpreter.calls, "the grammar could not resolve it, so it was asked"
 
 
 async def test_voice_reports_a_partial_summary(
@@ -1204,6 +1331,7 @@ async def test_voice_reports_a_partial_summary(
     put_user_in_voice(service, guild_id)
     service.node.load_results["ytsearch:nothing"] = LoadResult(kind="empty", tracks=[])
     await service.repo.update_state(sid, {"currentTrack": {"title": "Now"}})
+    transcriber.text = UNINTERPRETABLE
     interpreter.actions = [
         Action("play", query="nothing", placement="end"),
         Action("pause"),
@@ -1249,11 +1377,11 @@ async def test_voice_interpretation_failure_names_the_exception_type(
     test_interpreter_errors_never_carry_the_transcript pins that at the
     source, for every failure mode LlmIntentInterpreter has."""
     put_user_in_voice(service, guild_id)
-    transcriber.text = "pause"
+    transcriber.text = UNINTERPRETABLE
     interpreter.error = InterpretError("interpretation failed: 401")
     with caplog.at_level(0):
         resp = await client.post("/control/voice", data=WAV, headers=auth)
-    assert resp.status == 200, "must still degrade to the fallback parser"
+    assert resp.status == 422, "nothing resolved it, so nothing runs"
     assert "InterpretError" in caplog.text
     assert "401" in caplog.text
 
@@ -1264,7 +1392,10 @@ async def test_voice_transcript_never_reaches_stdout(
     """Transcripts are persisted only to the session's command history.
     Container stdout has different retention and different readers."""
     put_user_in_voice(service, guild_id)
-    secret = "play my deeply private playlist name"
+    # Deliberately NOT grammar-resolvable: this must exercise the branch that
+    # logs an interpreter failure, which is the one place a transcript could
+    # plausibly leak into a log line.
+    secret = "my deeply private thoughts about someone"
     transcriber.text = secret
     interpreter.error = InterpretError("down")
     with caplog.at_level(0):
@@ -1277,6 +1408,7 @@ async def test_voice_response_carries_only_the_real_client_directives(
 ):
     put_user_in_voice(service, guild_id)
     await service.repo.update_state(sid, {"sessionCode": "CODE1234"})
+    transcriber.text = UNINTERPRETABLE
     interpreter.actions = [Action("pause"), Action("open_dashboard")]
     body = await (await client.post("/control/voice", data=WAV, headers=auth)).json()
     assert body["client"] == [
@@ -1288,6 +1420,7 @@ async def test_voice_response_has_an_empty_client_list_when_there_are_none(
     client, service, guild_id, auth, transcriber, interpreter
 ):
     put_user_in_voice(service, guild_id)
+    transcriber.text = UNINTERPRETABLE
     interpreter.actions = [Action("pause")]
     body = await (await client.post("/control/voice", data=WAV, headers=auth)).json()
     assert body["client"] == []
@@ -1299,6 +1432,7 @@ async def test_announce_actions_log_under_their_j_command_names(
     """So the dashboard's history retrigger reaches the matching j! command."""
     put_user_in_voice(service, guild_id)
     await service.repo.update_state(sid, {"currentTrack": {"title": "Song"}})
+    transcriber.text = UNINTERPRETABLE
     interpreter.actions = [Action("now_playing")]
     await client.post("/control/voice", data=WAV, headers=auth)
     assert service.repo.command_log[-1][1] == "nowplaying"
@@ -1309,6 +1443,7 @@ async def test_open_dashboard_logs_under_its_own_name(
 ):
     """It has no j! equivalent — a bot cannot open your browser."""
     put_user_in_voice(service, guild_id)
+    transcriber.text = UNINTERPRETABLE
     interpreter.actions = [Action("open_dashboard")]
     await client.post("/control/voice", data=WAV, headers=auth)
     assert service.repo.command_log[-1][1] == "open_dashboard"

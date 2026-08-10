@@ -72,13 +72,57 @@ async def test_model_output_still_goes_through_validation():
     assert got == [Action("pause")]
 
 
+async def test_an_empty_action_list_is_an_answer_not_a_failure():
+    """"I could not classify this" is a CORRECT classification now. Raising
+    made the caller treat it as an outage and reach for a fallback — which is
+    how an unclear utterance used to end up as a search."""
+    from jacky.api.voice_llm import LlmIntentInterpreter
+
+    http = _Http(_Resp(200, _completion([])))
+    assert await LlmIntentInterpreter(http, "sk", "m").interpret("mumble") == []
+
+
+async def test_request_carries_the_grammar_keyword_hints():
+    """Structure informs reasoning instead of competing with it: the model is
+    told which vocabulary words the deterministic pass recognized."""
+    from jacky.api.voice_llm import LlmIntentInterpreter
+
+    http = _Http(_Resp(200, _completion([{"action": "skip"}])))
+    await LlmIntentInterpreter(http, "sk", "m").interpret(
+        "uh next one please", keywords=["next", "song"]
+    )
+    user = http.calls[0][1]["json"]["messages"][-1]["content"]
+    assert "uh next one please" in user
+    assert "next" in user and "song" in user
+
+
+async def test_no_keywords_still_sends_the_transcript():
+    from jacky.api.voice_llm import LlmIntentInterpreter
+
+    http = _Http(_Resp(200, _completion([{"action": "pause"}])))
+    await LlmIntentInterpreter(http, "sk", "m").interpret("hmm")
+    assert "hmm" in http.calls[0][1]["json"]["messages"][-1]["content"]
+
+
+def test_the_prompt_no_longer_tells_the_model_to_search_when_unsure():
+    """THE regression. "If the user simply names music with no verb, treat it
+    as play 'now'" is half of why a misheard phrase interrupted the music, so
+    it is pinned as prompt text, not as behaviour a model might rediscover."""
+    from jacky.api.voice_llm import SYSTEM_PROMPT
+
+    lowered = SYSTEM_PROMPT.lower()
+    assert "treat it as play" not in lowered
+    assert "no verb" in lowered, "the rule must be stated — inverted"
+    # ...and the inversion must be explicit: returning nothing is allowed.
+    assert "empty" in lowered or "no actions" in lowered
+
+
 @pytest.mark.parametrize(
     "payload",
     [
         {"choices": [{"message": {"content": "not json"}}]},
         {"choices": []},
         {},
-        {"choices": [{"message": {"content": json.dumps({"actions": []})}}]},
     ],
 )
 async def test_unusable_responses_raise_interpret_error(payload):
@@ -132,13 +176,14 @@ class _BoomHttp:
     _Http(_Resp(500, {})),                                    # non-200
     _BoomHttp(),                                              # transport fault
     _Http(_Resp(200, {"choices": [{"message": {"content": "not json"}}]})),
-    _Http(_Resp(200, _completion([]))),                       # no usable actions
+    # An empty action list is no longer here because it no longer raises — it
+    # is a valid answer. The remaining three are the real failure modes.
 ])
 async def test_interpreter_errors_never_carry_the_transcript(http):
     """Transcripts must not reach stdout, and control.py logs this exception's
     message — so every failure mode must be transcript-free at the SOURCE.
     The transcript travels in the POST body, which no aiohttp error echoes.
-    Parametrized over all four: a new failure path must be checked here too."""
+    Parametrized over all three: a new failure path must be checked here too."""
     from jacky.api.voice_llm import InterpretError, LlmIntentInterpreter
 
     secret = "play my extremely private playlist name"
