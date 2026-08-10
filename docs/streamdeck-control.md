@@ -82,24 +82,50 @@ Once signed in, their authentication persists across restarts and key changes.
   configured on that specific key.)
 - **Voice Command** key: hold it, speak, release. Wait for "Listening…" before
   speaking — opening the microphone takes about a second, so anything said
-  before that is lost. Speech is interpreted by an LLM, so phrasing is
-  flexible and several instructions in one breath work ("skip this, then add
-  two songs by Radiohead").
+  before that is lost.
+
+  **Structure decides first.** The vocabulary below is recognised *directly*
+  by a deterministic grammar — no model involved, so those commands are
+  instant, free, and give the same answer every time. Anything the grammar
+  does not recognise goes on to a reasoning layer, which maps natural
+  phrasings ("turn this thing down a bit", "skip this, then add two songs by
+  Radiohead") onto exactly the same closed set of commands. It cannot invent
+  a command that is not in that set.
 
   | Say | Result |
   |---|---|
-  | `play <song>` — or just say the song | **Interrupts** and plays it now |
+  | `play <song>` | **Interrupts** and plays it now |
   | `play <song> next` | Front of the queue, without interrupting |
   | `add <song>` / `queue <song>` | Appends to the end |
-  | `play` / `add playlist <name>` | Same three placements, for a saved playlist |
-  | `skip`, `skip two` | Skip one or several |
-  | `pause`, `resume`, `stop the music` | Stop-like speech **pauses** |
-  | `louder` / `quieter`, `volume 40` | Relative or absolute |
-  | `shuffle`, `clear the queue` | Queue controls |
-  | `repeat this song` | Loop mode |
-  | `what's playing` | Posts the current track to the Discord channel |
-  | `post the session code` | Posts the code + dashboard link to Discord |
+  | `play playlist <name>`, `add playlist <name>`, `<…> next` | Same three placements, for a **saved** playlist |
+  | `skip`, `next`, `next song`, `skip two` | Skip one or several |
+  | `pause`, `resume`, `continue`, `stop` | Stop-like speech **pauses** |
+  | `louder` / `quieter`, `volume up` / `down`, `volume 40` | Relative or absolute |
+  | `shuffle`, `clear`, `clear the queue` | Queue controls |
+  | `repeat`, `loop track`, `loop queue`, `loop off` | Loop mode |
+  | `what's playing`, `now playing` | Posts the current track to the Discord channel |
+  | `session code`, `post the session code` | Posts the code + dashboard link to Discord |
   | `open the dashboard` | Opens the dashboard in your browser |
+
+  Three rules are worth knowing because they are what the key's behaviour
+  turns on:
+
+  - **A phrase it cannot place does nothing.** It is not searched. The key
+    says "Didn't catch that" and nothing is dispatched. This is a change: a
+    misheard phrase used to become a YouTube search that also *replaced what
+    was playing*, so the cost of a mumble was losing your track. Silence is
+    the safer default, and it is the behaviour you will notice first.
+  - **The current track is only replaced when you say "play"** (or ask for a
+    skip). Anything else that resolves to adding music goes to the end of the
+    queue instead of interrupting — enforced server-side, after the model,
+    not merely requested of it.
+  - **"playlist" always means a saved session playlist**, never a YouTube
+    search. Say `play playlist chill` and you get the playlist you saved with
+    `j!playlist save`, never a search for the words "playlist chill".
+
+  Note that "next" means two different things and position settles it:
+  *leading* "next" is a skip (`next song` skips), *trailing* "next" is
+  placement (`play X next` queues it first).
 
   The two posting commands write to the session's own text channel — the same
   place `j!nowplaying` and `j!session` post, using the same embeds, so the
@@ -117,9 +143,10 @@ Once signed in, their authentication persists across restarts and key changes.
   `javascript:` or `file:` target.
 
   Search terms are taken literally — it will not invent music you didn't
-  name; "play something chill" searches for "something chill". Up to 5
-  actions run per utterance, in order; if one fails the rest still run and
-  the key reports "2 of 3 done".
+  name; "play something chill" searches for "something chill". A bare noun
+  phrase with no verb is *not* a search: say "play" if you want something
+  played. Up to 5 actions run per utterance, in order; if one fails the rest
+  still run and the key reports "2 of 3 done".
 
   **Nothing can be deleted by voice.** The action vocabulary the model is
   constrained to has no verb for removing a playlist, history, or a session,
@@ -130,10 +157,20 @@ Once signed in, their authentication persists across restarts and key changes.
   excluded before: one misrecognition should not be able to end a session
   with no undo. Use the Stop key for that.
 
-  If OpenAI is unreachable the key falls back to a deterministic parser with
-  the same semantics, so an outage degrades to basic single commands instead
-  of breaking the key. Recording caps at 15 seconds. The microphone is chosen
-  per key in its settings and is open only while the key is held.
+  The grammar *is* the fallback now, so if the reasoning layer is unreachable
+  every command in the table above still works exactly as it always does — an
+  outage costs you the flexible phrasings, not the key. (Transcription still
+  needs OpenAI; without it the key cannot hear you at all.)
+
+  Two per-key settings in the Property Inspector:
+
+  - **Microphone** — which input device to record from. Open only while the
+    key is held. Recording caps at 15 seconds.
+  - **Language** — the language you speak, **English by default**. Naming it
+    beats autodetect by a wide margin on clips this short, so set it if you
+    give commands in Korean, Japanese, Spanish, French, German, or Chinese.
+    It is per key, so one deck can carry an English key and a Korean one. An
+    unrecognised code degrades to English rather than breaking the key.
 - Voice commands appear in the dashboard's Command History with a Voice badge,
   showing both what was heard and the action it ran — one row per action, all
   carrying the same utterance. **Transcripts are stored in Firestore** and
@@ -143,8 +180,9 @@ Once signed in, their authentication persists across restarts and key changes.
 - Voice needs `OPENAI_API_KEY` on the bot. Without it the key reports
   "Voice off" (the route answers 503) — everything else keeps working. The
   same key covers both transcription and interpretation; no second credential.
-  `OPENAI_INTENT_MODEL` overrides the interpretation model (default
-  `gpt-4o-mini`, roughly $0.0001 and half a second per command).
+  `OPENAI_INTENT_MODEL` overrides the reasoning model (default `gpt-4o-mini`,
+  roughly $0.0001 and half a second) — charged only for utterances the
+  grammar could not resolve, which is why the table above costs nothing.
 - **Play/Pause** key: presses toggle playback, and two per-key options in the
   Property Inspector turn it into the display as well — this is the old Now
   Playing key merged in, so one key does both jobs.

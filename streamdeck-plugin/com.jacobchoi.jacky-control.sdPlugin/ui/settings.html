@@ -57,10 +57,26 @@
     <div id="playlist-error" style="display: none; padding-left: 4px; font-size: 9pt; color: #e94560"></div>
   </div>
 
-  <!-- Voice key only: which microphone to record from. -->
+  <!-- Voice key only: which microphone to record from, and which language to
+       transcribe as. The language list must stay in step with LANGUAGES in
+       services/bot/src/jacky/api/transcribe.py — a code the server does not
+       know degrades to English, which looks like a bad microphone.
+       `default="en"` makes English the stored value for a key nobody
+       configured, so no key ever sends an empty code. -->
   <div id="voice-settings" style="display: none">
     <sdpi-item label="Microphone">
       <sdpi-select id="mic-select" setting="inputDevice" placeholder="System default"></sdpi-select>
+    </sdpi-item>
+    <sdpi-item label="Language">
+      <sdpi-select id="language-select" setting="language" default="en">
+        <option value="en">English</option>
+        <option value="ko">한국어 / Korean</option>
+        <option value="ja">日本語 / Japanese</option>
+        <option value="es">Español</option>
+        <option value="fr">Français</option>
+        <option value="de">Deutsch</option>
+        <option value="zh">中文</option>
+      </sdpi-select>
     </sdpi-item>
     <div id="voice-error" style="display: none; padding-left: 4px; font-size: 9pt; color: #e94560"></div>
   </div>

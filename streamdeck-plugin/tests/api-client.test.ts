@@ -146,6 +146,38 @@ describe("JackyClient", () => {
     expect(result.inserted).toBe(2);
   });
 
+  it("POSTs voice audio with the chosen transcription language", async () => {
+    const f = fetchStub(200, { transcript: "", actions: [], ok: true, detail: null });
+    await new JackyClient(CONFIG, f).voiceCommand(new Uint8Array([1, 2]), "ko");
+    const [url, init] = (f as any).mock.calls[0];
+    expect(url).toBe("https://control.example.com/control/voice?language=ko");
+    expect(init.method).toBe("POST");
+    expect(init.headers["Content-Type"]).toBe("audio/wav");
+  });
+
+  it("omits the language parameter entirely when none is chosen", async () => {
+    // Omitted, not sent empty: the server treats a missing code as English,
+    // and `?language=` would be a value it has to guess about.
+    const f = fetchStub(200, { transcript: "", actions: [], ok: true, detail: null });
+    await new JackyClient(CONFIG, f).voiceCommand(new Uint8Array([1, 2]));
+    const [url] = (f as any).mock.calls[0];
+    expect(url).toBe("https://control.example.com/control/voice");
+    expect(url).not.toContain("language");
+  });
+
+  it("omits the language parameter for a blank stored setting", async () => {
+    const f = fetchStub(200, { transcript: "", actions: [], ok: true, detail: null });
+    await new JackyClient(CONFIG, f).voiceCommand(new Uint8Array([1, 2]), "");
+    expect((f as any).mock.calls[0][0]).toBe("https://control.example.com/control/voice");
+  });
+
+  it("voiceCommand throws ControlApiError carrying 422 so the key can tell them apart", async () => {
+    const client = new JackyClient(CONFIG, fetchStub(422, { error: "no-speech" }));
+    await expect(client.voiceCommand(new Uint8Array([1]))).rejects.toMatchObject({
+      status: 422,
+    });
+  });
+
   it("GETs the dashboard url", async () => {
     const f = fetchStub(200, { active: true, url: "https://web/dashboard/ABC123" });
     const result = await new JackyClient(CONFIG, f).dashboardUrl();
