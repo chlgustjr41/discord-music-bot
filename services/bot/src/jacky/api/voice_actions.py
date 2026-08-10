@@ -125,15 +125,23 @@ def validate_actions(raw) -> list[Action]:
 _WORD = re.compile(r"[a-z0-9]+")
 
 
+# Verbs that REPLACE what is currently playing when placement is "now".
+# `playlist` belongs here as much as `play` does: VoiceIntentDispatcher's
+# _playlist_action calls skip() when placement is "now" and something is
+# playing, so it interrupts just as hard. The rule this module enforces is
+# about interruption, not about which verb happens to carry it.
+_INTERRUPTING = ("play", "playlist")
+
+
 def enforce_intent(actions: list[Action], transcript: str) -> list[Action]:
     """A second, purely structural pass, applied AFTER validate_actions.
 
     Two guarantees that do not depend on the model having cooperated:
 
-    - a `play` action with placement "now" is downgraded to "end" unless the
-      transcript actually contains the word "play". The currently playing
-      track is only overridden by an explicit "play" (or by a skip, which
-      this function does not touch);
+    - an INTERRUPTING action (`play` or `playlist`) with placement "now" is
+      downgraded to "end" unless the transcript actually contains the word
+      "play". The currently playing track is only overridden by an explicit
+      "play" (or by a skip, which this function does not touch);
     - a `play` action becomes a `playlist` action when the transcript
       contains "playlist" — a saved playlist must never reach a YouTube
       search.
@@ -147,13 +155,13 @@ def enforce_intent(actions: list[Action], transcript: str) -> list[Action]:
 
     out: list[Action] = []
     for action in actions:
-        if action.action != "play":
+        if action.action not in _INTERRUPTING:
             out.append(action)
             continue
         placement = action.placement
         if placement == "now" and not said_play:
             placement = "end"
-        if said_playlist:
+        if action.action == "play" and said_playlist:
             out.append(Action(
                 "playlist", name=action.query, placement=placement,
             ))

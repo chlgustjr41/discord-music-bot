@@ -182,9 +182,38 @@ def test_playlist_conversion_still_obeys_the_play_downgrade():
 
 
 def test_other_actions_pass_through_untouched():
+    """Verbs that cannot replace the current track are never rewritten.
+
+    `playlist` is deliberately NOT in this list: with placement "now" it is a
+    second interrupting action (the dispatcher skips the current track), so it
+    is subject to the same downgrade as `play` — see the tests below. This
+    test now protects only the genuinely inert verbs.
+    """
     actions = [
         Action("skip", count=3),
         Action("volume", level=50),
-        Action("playlist", name="chill", placement="now"),
+        Action("playlist", name="chill", placement="end"),
+        Action("playlist", name="chill", placement="next"),
+        Action("now_playing"),
     ]
     assert enforce_intent(actions, "whatever was said") == actions
+
+
+def test_a_playlist_cannot_interrupt_without_an_explicit_play():
+    """The rule is about INTERRUPTION, not about the verb.
+
+    `playlist` with placement "now" makes voice_control skip the playing
+    track, so a model returning it for a bare noun phrase ("my chill
+    playlist") would drop the current song with no "play" ever spoken.
+    """
+    got = enforce_intent(
+        [Action("playlist", name="chill", placement="now")], "my chill playlist"
+    )
+    assert got == [Action("playlist", name="chill", placement="end")]
+
+
+def test_a_playlist_may_interrupt_when_the_transcript_said_play():
+    got = enforce_intent(
+        [Action("playlist", name="chill", placement="now")], "play playlist chill"
+    )
+    assert got == [Action("playlist", name="chill", placement="now")]
