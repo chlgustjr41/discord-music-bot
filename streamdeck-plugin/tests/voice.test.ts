@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ControlApiError } from "../src/api-client";
 
 const h = vi.hoisted(() => ({
   spawnMock: vi.fn(),
@@ -53,8 +54,8 @@ function fakeKey(id: string) {
     down: ev as DownEv,
     up: ev as UpEv,
     gone: ev as GoneEv,
-    /** Let the nth pending getSettings() resolve. */
-    settle: (n = 0) => waiting[n]({}),
+    /** Let the nth pending getSettings() resolve, optionally with settings. */
+    settle: (n = 0, settings: Record<string, unknown> = {}) => waiting[n](settings),
   };
 }
 
@@ -295,5 +296,57 @@ describe("Voice client directives", () => {
       { type: "open_url", url: "https://web.test/ok" },
     ]);
     expect(h.openUrl).toHaveBeenCalledWith("https://web.test/ok");
+  });
+});
+
+describe("Voice language and failure reporting", () => {
+  /** One complete hold-and-release that reaches the server round-trip, with
+   *  the given per-key settings answering getSettings(). */
+  async function speakWith(settings: Record<string, unknown>) {
+    const v = new Voice();
+    const k = fakeKey("key-1");
+    const down = v.onKeyDown(k.down);
+    k.settle(0, settings);
+    await down;
+    procs[0].stdout.emit("data", Buffer.alloc(2000, 1));
+    const up = v.onKeyUp(k.up);
+    procs[0].emit("close");
+    await up;
+    return k;
+  }
+
+  it("sends the key's language setting with the recording", async () => {
+    await speakWith({ inputDevice: "Mic", language: "ko" });
+    expect(h.voiceCommand).toHaveBeenCalledWith(expect.anything(), "ko");
+  });
+
+  it("sends no language when the key has none stored", async () => {
+    // An older key predates the setting; it must not send an empty code.
+    await speakWith({});
+    expect(h.voiceCommand).toHaveBeenCalledWith(expect.anything(), undefined);
+  });
+
+  it("says it did not catch the words rather than that it failed, on 422", async () => {
+    // 422 is the server saying "nothing was resolvable, nothing ran" — the one
+    // failure the user fixes by speaking again rather than by checking the bot.
+    h.voiceCommand.mockRejectedValue(new ControlApiError(422));
+    const k = await speakWith({});
+    expect(k.action.setTitle).toHaveBeenCalledWith("Didn't\ncatch that");
+    expect(k.action.setTitle).not.toHaveBeenCalledWith("Failed");
+    expect(k.action.showAlert).toHaveBeenCalled();
+  });
+
+  it("still reports a plain failure for a server error", async () => {
+    h.voiceCommand.mockRejectedValue(new ControlApiError(500));
+    const k = await speakWith({});
+    expect(k.action.setTitle).toHaveBeenCalledWith("Failed");
+    expect(k.action.setTitle).not.toHaveBeenCalledWith("Didn't\ncatch that");
+  });
+
+  it("reports a plain failure when the request never reached the server", async () => {
+    h.voiceCommand.mockRejectedValue(new Error("network down"));
+    const k = await speakWith({});
+    expect(k.action.setTitle).toHaveBeenCalledWith("Failed");
+    expect(k.action.setTitle).not.toHaveBeenCalledWith("Didn't\ncatch that");
   });
 });

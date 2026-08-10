@@ -21,8 +21,9 @@ import discord
 from aiohttp import web
 
 from jacky.api.dashboard_link import entry_url, session_url
-from jacky.api.voice_actions import MAX_ACTIONS
-from jacky.api.voice_intent import parse_fallback
+from jacky.api.transcribe import normalize_language
+from jacky.api.voice_actions import MAX_ACTIONS, enforce_intent
+from jacky.api.voice_grammar import parse_structured
 
 log = logging.getLogger("jacky.control")
 
@@ -378,38 +379,75 @@ def register_control_routes(
         if not audio:
             return web.json_response({"error": "no-speech"}, status=422)
 
+        # An unknown or absent code degrades to English rather than erroring:
+        # a stale key setting must not break the key.
+        language = normalize_language(request.query.get("language"))
         try:
-            transcript = await transcriber.transcribe(audio)
+            transcript = await transcriber.transcribe(audio, language)
         except Exception:  # noqa: BLE001 — any STT fault is one failure mode
             log.exception("voice transcription failed")
             return web.json_response({"error": "stt-failed"}, status=502)
 
-        try:
-            actions = await interpreter.interpret(transcript) if interpreter else []
-        except Exception as exc:  # noqa: BLE001 — degrade to the offline parser
-            # Type AND message: a fixed string made "OpenAI rejected the key,
-            # so the feature has silently degraded to the fallback forever"
-            # look identical to a transient network partition, while the key
-            # still appeared to work. Transcript-safe by construction —
-            # LlmIntentInterpreter's messages carry a status, an aiohttp
-            # transport error (host/URL, never the request body), or a fixed
-            # string; test_interpreter_errors_never_carry_the_transcript pins
-            # that for every one of its failure modes. No exc_info: a
-            # traceback is not needed here and this reaches container stdout,
-            # where the transcript must never appear (see the INVARIANT below).
-            log.warning(
-                "voice interpretation failed (%s: %s); using the fallback parser",
-                type(exc).__name__, exc,
+        # STRUCTURE FIRST. What the grammar understood is final: no LLM call,
+        # no latency, no cost, and no chance of a model overriding a command
+        # that was already unambiguous.
+        parsed = parse_structured(transcript)
+        if parsed.resolved:
+            actions = parsed.actions
+            # Verbs only — the closed vocabulary is safe to log, the
+            # transcript is not (see the INVARIANT below).
+            log.info(
+                "voice resolved by grammar (%s); interpreter not called",
+                ",".join(a.action for a in actions),
             )
-            actions = []
-        if not actions:
-            actions = parse_fallback(transcript)
+        else:
+            try:
+                actions = await interpreter.interpret(
+                    transcript, keywords=parsed.keywords
+                ) if interpreter else []
+            except Exception as exc:  # noqa: BLE001 — degrade to NO actions
+                # Type AND message: a fixed string made "OpenAI rejected the
+                # key, so the feature has silently degraded forever" look
+                # identical to a transient network partition, while the key
+                # still appeared to work. Transcript-safe by construction —
+                # LlmIntentInterpreter's messages carry a status, an aiohttp
+                # transport error (host/URL, never the request body), or a
+                # fixed string; test_interpreter_errors_never_carry_the_
+                # transcript pins that for every one of its failure modes. No
+                # exc_info: a traceback is not needed here and this reaches
+                # container stdout, where the transcript must never appear.
+                #
+                # There is nothing to fall back TO: the grammar already ran
+                # and declined. An outage therefore costs the reasoning
+                # layer, not the closed vocabulary.
+                log.warning(
+                    "voice interpretation failed (%s: %s); nothing will run",
+                    type(exc).__name__, exc,
+                )
+                actions = []
+        # Applied to BOTH paths for defence in depth. The grammar is already
+        # self-consistent, so this is a no-op for everything it resolves —
+        # except "add my playlist chill", which it reads as a search because
+        # only the literal "add playlist X" form is in its table. Running the
+        # rule uniformly makes "the word 'playlist' never reaches a YouTube
+        # search" a property of the ROUTE rather than of whichever component
+        # happened to produce the actions.
+        # Same `language` that was sent to the transcriber, so the play-verb
+        # check reads the transcript in the language it was produced in.
+        actions = enforce_intent(actions, transcript, language)
         # Defence in depth: LlmIntentInterpreter runs validate_actions, which
         # already truncates, but `interpreter` is an injected Any and the cap
         # is this route's own blast-radius bound — one dispatch and one history
         # row per action. It must not depend on a collaborator to enforce it.
         actions = actions[:MAX_ACTIONS]
         if not actions:
+            # "Didn't catch that": neither layer recognized a command, so
+            # NOTHING runs — there is no longer any path from an unrecognised
+            # utterance to a search. The same 422/"no-speech" pair the empty
+            # upload returns, deliberately: the plugin reports both as a
+            # failed press today (it renders the status, not the body), and
+            # splitting the code would change nothing on the key while
+            # inventing a distinction the client cannot see.
             return web.json_response({"error": "no-speech"}, status=422)
 
         try:

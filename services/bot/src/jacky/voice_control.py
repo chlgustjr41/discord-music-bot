@@ -14,7 +14,7 @@ from typing import Any
 
 from jacky.api.dashboard_link import entry_url, session_url
 from jacky.api.voice_actions import Action
-from jacky.api.voice_intent import normalize_playlist_name
+from jacky.api.voice_grammar import normalize_playlist_name
 from jacky.audio.models import to_track_data
 from jacky.commands.embeds import now_playing_embed, session_embed
 
@@ -177,9 +177,11 @@ class VoiceIntentDispatcher:
             # the exception MESSAGE: node.py raises
             # NodeError("GET /loadtracks?identifier=... -> HTTP ...") with the
             # query URL-encoded into the path, and URL-encoding is not
-            # redaction. The fallback parser routes any unrecognized utterance
-            # to `play` with the whole transcript as the query, so during an
-            # OpenAI outage that message is the entire spoken sentence.
+            # redaction. A query is always words the user spoke — the grammar
+            # and the interpreter both extract it literally from the
+            # transcript — so logging the message would put speech on
+            # container stdout, which has different retention and readers
+            # than the command history. Same INVARIANT as dispatch_all's.
             log.warning("voice search failed: %s", type(exc).__name__)
             return DispatchResult(False, "Search failed")
         if not result.tracks:

@@ -133,9 +133,15 @@ export class JackyClient {
     return (await res.json()) as SummonResult;
   }
 
-  /** 30 s, not the usual 10 s: this request includes a transcription round-trip. */
-  async voiceCommand(wav: Uint8Array): Promise<VoiceResult> {
-    const res = await this.fetchFn(this.url("/control/voice"), {
+  /** 30 s, not the usual 10 s: this request includes a transcription round-trip.
+   *
+   *  `language` fixes the transcription language, which beats autodetect on
+   *  clips this short. An unset setting OMITS the parameter rather than
+   *  sending an empty one: the server's own default is English, and
+   *  `?language=` would be a value it has to normalize away. */
+  async voiceCommand(wav: Uint8Array, language?: string): Promise<VoiceResult> {
+    const query = language ? `?language=${encodeURIComponent(language)}` : "";
+    const res = await this.fetchFn(this.url("/control/voice" + query), {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.cfg.authToken}`,
