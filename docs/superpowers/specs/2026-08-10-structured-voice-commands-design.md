@@ -118,6 +118,24 @@ The Voice key's Property Inspector gains a **Language** dropdown, English by def
 - **Transcriber:** the language field is sent; an unknown language becomes `en`.
 - **Manual:** "next song" skips; "session code" posts; "volume 50" sets 50; "play playlist chill" loads the saved playlist; "add X" appends without interrupting; a mumble does nothing.
 
+## Known limitation: the grammar is English-only
+
+The deterministic grammar's tables — media control, volume, session code, the
+`play`/`add`/`queue` prefixes — are English strings. So the "resolved instantly,
+no model, no cost" path exists **only in English**. Every utterance in the other
+six offered languages falls through to the reasoning layer, which means latency
+and an API call on every press, plus full exposure to the interpreter's failure
+modes.
+
+`enforce_intent` understands play verbs in all seven languages, so a
+non-English speaker is not silently prevented from replacing the current track
+— that bug existed and is fixed. But they do not get the deterministic path,
+and pretending otherwise would misrepresent what the language setting buys:
+today it buys **transcription accuracy**, not grammar coverage.
+
+Translating the grammar tables is the obvious next step if non-English use
+turns out to be common.
+
 ## Out of scope
 
 Wake words, multi-language autodetect, per-user language, and any change to the action vocabulary itself.
