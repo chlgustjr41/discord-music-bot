@@ -317,13 +317,35 @@ describe("Voice language and failure reporting", () => {
 
   it("sends the key's language setting with the recording", async () => {
     await speakWith({ inputDevice: "Mic", language: "ko" });
-    expect(h.voiceCommand).toHaveBeenCalledWith(expect.anything(), "ko");
+    expect(h.voiceCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ language: "ko" }),
+    );
   });
 
   it("sends no language when the key has none stored", async () => {
     // An older key predates the setting; it must not send an empty code.
     await speakWith({});
-    expect(h.voiceCommand).toHaveBeenCalledWith(expect.anything(), undefined);
+    expect(h.voiceCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ language: undefined }),
+    );
+  });
+
+  it("passes the key's debug option through to the request", async () => {
+    await speakWith({ language: "ko", debug: true });
+    expect(h.voiceCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ language: "ko", debug: true }),
+    );
+  });
+
+  it("asks for no debug echo when the key never enabled it", async () => {
+    // Default off: the echo publishes the transcript to a channel other people
+    // can read, so an unconfigured key must not opt itself in.
+    await speakWith({ language: "ko" });
+    const opts = h.voiceCommand.mock.calls.at(-1)?.[1] as { debug?: boolean };
+    expect(opts.debug).toBeFalsy();
   });
 
   it("says it did not catch the words rather than that it failed, on 422", async () => {

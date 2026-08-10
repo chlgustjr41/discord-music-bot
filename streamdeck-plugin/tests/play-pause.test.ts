@@ -19,11 +19,23 @@ vi.mock("../src/runtime", () => ({
   },
 }));
 // The real module opens a websocket to the Stream Deck host on import.
-vi.mock("@elgato/streamdeck", () => ({
-  default: {},
-  action: () => (target: unknown) => target,
-  SingletonAction: class {},
-}));
+// `logger` is stubbed because the artwork path writes to it — a bare `{}`
+// default would throw at import time on createScope.
+vi.mock("@elgato/streamdeck", () => {
+  const logger = {
+    createScope: () => logger,
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+  return {
+    default: { logger },
+    action: () => (target: unknown) => target,
+    SingletonAction: class {},
+  };
+});
 
 const { PlayPause } = await import("../src/actions/play-pause");
 type Settings = { showTitle?: boolean; showArtwork?: boolean };
@@ -208,6 +220,64 @@ describe("Play/Pause key with showArtwork", () => {
     await flush();
     k.setImage.mockClear();
     release!("data:image/png;base64,SLOW");
+    await flush();
+
+    expect(k.setImage).not.toHaveBeenCalled();
+  });
+
+  it("re-applies the cached cover on a poll where the url did not change", async () => {
+    // The bug this fixes: applying the image only on change assumes nothing
+    // else ever repaints the key. A state change, a profile switch or a host
+    // redraw would leave the manifest glyph there permanently. Re-applying is
+    // a cheap local call, so the key converges within one poll — but the fetch
+    // must NOT repeat, or every key hammers the artwork host every 5 seconds.
+    const pp = new PlayPause();
+    const k = fakeKey("key-1");
+    mount(pp, [[k, { showArtwork: true }]]);
+
+    emit(playing("Track", "https://img.test/a.jpg"));
+    await flush();
+    const applied = k.setImage.mock.calls.at(-1)?.[0] as string;
+    expect(applied).toContain("https://img.test/a.jpg");
+    k.setImage.mockClear();
+    h.loadThumbnail.mockClear();
+
+    emit(playing("Track", "https://img.test/a.jpg"));
+    await flush();
+
+    expect(k.setImage).toHaveBeenCalledTimes(1);
+    expect(k.setImage).toHaveBeenCalledWith(applied);
+    expect(h.loadThumbnail).not.toHaveBeenCalled();
+  });
+
+  it("refetches exactly once when the url changes", async () => {
+    const pp = new PlayPause();
+    const k = fakeKey("key-1");
+    mount(pp, [[k, { showArtwork: true }]]);
+
+    emit(playing("Track", "https://img.test/a.jpg"));
+    await flush();
+    emit(playing("Other", "https://img.test/b.jpg"));
+    await flush();
+    emit(playing("Other", "https://img.test/b.jpg"));
+    await flush();
+
+    expect(h.loadThumbnail).toHaveBeenCalledTimes(2);
+    expect(h.loadThumbnail).toHaveBeenLastCalledWith("https://img.test/b.jpg");
+    expect(k.setImage.mock.calls.at(-1)?.[0]).toContain("https://img.test/b.jpg");
+  });
+
+  it("re-applies nothing when the fetch produced no image", async () => {
+    // Nothing was cached, so there is nothing to re-apply; the key keeps the
+    // manifest glyph rather than being handed an empty setImage every poll.
+    h.loadThumbnail.mockResolvedValue(null);
+    const pp = new PlayPause();
+    const k = fakeKey("key-1");
+    mount(pp, [[k, { showArtwork: true }]]);
+
+    emit(playing("Track", "https://img.test/a.jpg"));
+    await flush();
+    emit(playing("Track", "https://img.test/a.jpg"));
     await flush();
 
     expect(k.setImage).not.toHaveBeenCalled();

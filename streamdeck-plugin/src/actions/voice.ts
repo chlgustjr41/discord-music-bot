@@ -13,7 +13,7 @@ import { handlePiEvent } from "../pi-bridge";
 import { getClient } from "../runtime";
 import { openableUrl } from "../url-guard";
 
-type VoiceSettings = { inputDevice?: string; language?: string };
+type VoiceSettings = { inputDevice?: string; language?: string; debug?: boolean };
 
 const SHOW_RESULT_MS = 4000;
 
@@ -32,6 +32,9 @@ type KeyState = {
   /** Captured on key-down from the same getSettings() read as the microphone,
    *  so the whole press uses one consistent snapshot of the key's settings. */
   language?: string;
+  /** Same snapshot: asks the server to post what it heard and how it resolved
+   *  into the session's Discord channel. Off unless the key opted in. */
+  debug?: boolean;
 };
 
 @action({ UUID: "com.jacobchoi.jacky-control.voice" })
@@ -57,7 +60,7 @@ export class Voice extends SingletonAction<VoiceSettings> {
   override async onKeyDown(ev: KeyDownEvent<VoiceSettings>): Promise<void> {
     const st = this.stateFor(ev.action.id);
     const press = ++st.downs;
-    const { inputDevice, language } = await ev.action.getSettings<VoiceSettings>();
+    const { inputDevice, language, debug } = await ev.action.getSettings<VoiceSettings>();
     // The SDK does not await handlers, so a tap shorter than that round-trip
     // delivers onKeyUp first. Without this check we would spawn ffmpeg with no
     // key left to stop it, holding the mic open until the 15 s cap — breaking
@@ -74,6 +77,7 @@ export class Voice extends SingletonAction<VoiceSettings> {
 
     st.heardAudio = false;
     st.language = language;
+    st.debug = debug;
     const recorder = new MicRecorder();
     const started = recorder.start(inputDevice, () => {
       // Only now is the device actually delivering audio.
@@ -121,7 +125,10 @@ export class Voice extends SingletonAction<VoiceSettings> {
     }
     await ev.action.setTitle("Thinking…");
     try {
-      const result = await client.voiceCommand(wav, st.language);
+      const result = await client.voiceCommand(wav, {
+        language: st.language,
+        debug: st.debug,
+      });
       await ev.action.setTitle(result.detail || result.transcript);
       if (result.ok) await ev.action.showOk();
       else await ev.action.showAlert();

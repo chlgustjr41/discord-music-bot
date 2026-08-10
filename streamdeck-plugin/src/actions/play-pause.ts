@@ -1,4 +1,4 @@
-import {
+import streamDeck, {
   action,
   SingletonAction,
   type DidReceiveSettingsEvent,
@@ -17,6 +17,16 @@ import { loadThumbnail } from "../thumbnail";
 
 const TITLE_WIDTH = 9;
 
+/** The artwork path is the one thing on this key that cannot be diagnosed from
+ *  its behaviour: "no cover" looks identical whether the option never arrived,
+ *  the fetch failed, or the image was applied and something repainted over it.
+ *  Everything that distinguishes those three is written at INFO, because the
+ *  SDK's default level outside a debugger is INFO and a log nobody can read is
+ *  no better than the empty `logs/` this was added to fill. Per-poll repeats
+ *  stay at DEBUG so a key does not write a line every 5 seconds forever.
+ *  Nothing here logs a track title — logging stays on URLs and flags. */
+const log = streamDeck.logger.createScope("artwork");
+
 export type PlayPauseSettings = { showTitle?: boolean; showArtwork?: boolean };
 
 /** Per-key display state. Now Playing kept title/offset/thumb as single
@@ -32,6 +42,11 @@ type KeyState = {
   // artwork". Conflating them either lets a stale cover survive a track that
   // has none, or makes an options-off key call setImage it never needed to.
   lastThumbUrl: string | null | undefined;
+  // The encoded image last applied for `lastThumbUrl`, kept so an unchanged
+  // track can be re-applied without refetching. null while no image is in
+  // force — before the first fetch lands, after one fails, and after a track
+  // with no artwork.
+  lastThumbData: string | null;
 };
 
 @action({ UUID: "com.jacobchoi.jacky-control.play-pause" })
@@ -85,23 +100,44 @@ export class PlayPause extends SingletonAction<PlayPauseSettings> {
       if (st.settings.showArtwork) {
         if (thumb !== st.lastThumbUrl) {
           st.lastThumbUrl = thumb;
+          st.lastThumbData = null;
+          log.info(`${a.id}: thumbnail url is now ${thumb ?? "(none)"}`);
           // Only refetch when the track actually changes, never per poll tick.
           if (thumb) {
             void loadThumbnail(thumb).then((uri) => {
               // A slow fetch may land after another track change — drop it.
-              if (uri && st.lastThumbUrl === thumb) {
-                void a.setImage(letterboxSvg(uri)).catch(() => {});
+              if (!uri) {
+                log.warn(`${a.id}: no image came back for ${thumb}`);
+                return;
               }
+              if (st.lastThumbUrl !== thumb) {
+                log.debug(`${a.id}: dropping a fetch that lost its track`);
+                return;
+              }
+              st.lastThumbData = letterboxSvg(uri);
+              log.info(`${a.id}: applying artwork (${uri.length} chars encoded)`);
+              void a.setImage(st.lastThumbData).catch(() => {});
             });
           } else {
+            log.info(`${a.id}: no artwork on this track, back to the glyph`);
             void a.setImage().catch(() => {});
           }
+        } else if (st.lastThumbData) {
+          // The fix for "the key still shows the glyph": re-apply the cached
+          // image every poll rather than trusting that nothing else repaints
+          // the key. A state change, a profile switch or a host redraw is then
+          // corrected within one tick instead of permanently. Cheap — this is
+          // a local call and the fetch above is deliberately not repeated.
+          log.debug(`${a.id}: re-applying the cached artwork`);
+          void a.setImage(st.lastThumbData).catch(() => {});
         }
       } else if (st.lastThumbUrl !== undefined) {
         // Back to the manifest image for the current state. Guarded on
         // "undefined" so a key with the option never enabled issues no
         // setImage at all.
         st.lastThumbUrl = undefined;
+        st.lastThumbData = null;
+        log.info(`${a.id}: artwork switched off, back to the glyph`);
         void a.setImage().catch(() => {});
       }
     }
@@ -153,12 +189,17 @@ export class PlayPause extends SingletonAction<PlayPauseSettings> {
 
   override onWillAppear(ev: WillAppearEvent<PlayPauseSettings>): void {
     const first = this.keys.size === 0;
+    const settings = ev.payload.settings ?? {};
     this.keys.set(ev.action.id, {
-      settings: ev.payload.settings ?? {},
+      settings,
       offset: 0,
       lastTitle: null,
       lastThumbUrl: undefined,
+      lastThumbData: null,
     });
+    // What the key actually received, which is the half of "the artwork never
+    // shows" that cannot be inferred from anywhere else.
+    log.info(`${ev.action.id}: appeared with showArtwork=${settings.showArtwork === true}`);
     if (first) poller.subscribe(this.onPoll);
   }
 
@@ -174,7 +215,9 @@ export class PlayPause extends SingletonAction<PlayPauseSettings> {
     const st = this.keys.get(ev.action.id);
     // Only the settings change; the title offset and the thumbnail identity
     // belong to the track, not to the checkbox that was just toggled.
-    if (st) st.settings = ev.payload.settings ?? {};
+    if (!st) return;
+    st.settings = ev.payload.settings ?? {};
+    log.info(`${ev.action.id}: settings now showArtwork=${st.settings.showArtwork === true}`);
   }
 
   override onSendToPlugin(ev: SendToPluginEvent<JsonValue, PlayPauseSettings>): Promise<void> {
