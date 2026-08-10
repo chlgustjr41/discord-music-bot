@@ -14,7 +14,7 @@ from typing import Any
 
 from jacky.api.dashboard_link import entry_url, session_url
 from jacky.api.voice_actions import Action
-from jacky.api.voice_intent import normalize_playlist_name
+from jacky.api.voice_grammar import normalize_playlist_name
 from jacky.audio.models import to_track_data
 from jacky.commands.embeds import now_playing_embed, session_embed
 

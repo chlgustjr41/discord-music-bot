@@ -22,7 +22,7 @@ from aiohttp import web
 
 from jacky.api.dashboard_link import entry_url, session_url
 from jacky.api.voice_actions import MAX_ACTIONS
-from jacky.api.voice_intent import parse_fallback
+from jacky.api.voice_grammar import parse_structured
 
 log = logging.getLogger("jacky.control")
 
@@ -403,7 +403,7 @@ def register_control_routes(
             )
             actions = []
         if not actions:
-            actions = parse_fallback(transcript)
+            actions = parse_structured(transcript).actions
         # Defence in depth: LlmIntentInterpreter runs validate_actions, which
         # already truncates, but `interpreter` is an injected Any and the cap
         # is this route's own blast-radius bound — one dispatch and one history

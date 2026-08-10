@@ -1,6 +1,13 @@
 """The security boundary: model output is untrusted and re-validated here."""
 
-from jacky.api.voice_actions import ACTION_SCHEMA, Action, validate_actions
+import pytest
+
+from jacky.api.voice_actions import (
+    ACTION_SCHEMA,
+    Action,
+    enforce_intent,
+    validate_actions,
+)
 
 
 def test_valid_actions_pass_through():
@@ -121,3 +128,63 @@ def test_new_verbs_need_no_arguments():
     assert validate_actions([{"action": "now_playing", "query": ""}]) == [
         Action("now_playing")
     ]
+
+
+# ── enforce_intent: structural guarantees the model cannot opt out of ────
+
+
+def test_now_is_downgraded_when_the_transcript_never_said_play():
+    """The guarantee: the current track is only overridden if the command
+    actually contains "play". A model that decided to interrupt anyway is
+    corrected here, not asked nicely in a prompt."""
+    got = enforce_intent(
+        [Action("play", query="bohemian rhapsody", placement="now")],
+        "bohemian rhapsody",
+    )
+    assert got == [Action("play", query="bohemian rhapsody", placement="end")]
+
+
+def test_now_survives_when_the_transcript_said_play():
+    got = enforce_intent(
+        [Action("play", query="bohemian rhapsody", placement="now")],
+        "play bohemian rhapsody",
+    )
+    assert got == [Action("play", query="bohemian rhapsody", placement="now")]
+
+
+def test_play_is_matched_as_a_whole_word_not_a_substring():
+    """"displayed" contains "play" but is not the verb."""
+    got = enforce_intent(
+        [Action("play", query="the sign", placement="now")],
+        "displayed the sign",
+    )
+    assert got[0].placement == "end"
+
+
+@pytest.mark.parametrize("placement", ["now", "next", "end"])
+def test_playlist_in_the_transcript_can_never_become_a_search(placement):
+    """"playlist" must never reach a YouTube search; the placement the model
+    chose is preserved (after any "play"-less downgrade)."""
+    got = enforce_intent(
+        [Action("play", query="chill", placement=placement)],
+        "play playlist chill",
+    )
+    assert got == [Action("playlist", name="chill", placement=placement)]
+
+
+def test_playlist_conversion_still_obeys_the_play_downgrade():
+    """No "play" word, so "now" is downgraded first and the conversion keeps
+    the downgraded placement."""
+    got = enforce_intent(
+        [Action("play", query="chill", placement="now")], "the chill playlist"
+    )
+    assert got == [Action("playlist", name="chill", placement="end")]
+
+
+def test_other_actions_pass_through_untouched():
+    actions = [
+        Action("skip", count=3),
+        Action("volume", level=50),
+        Action("playlist", name="chill", placement="now"),
+    ]
+    assert enforce_intent(actions, "whatever was said") == actions

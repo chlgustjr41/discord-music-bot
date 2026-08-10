@@ -9,7 +9,8 @@ That is the guarantee — not a prompt instruction the model might ignore.
 `clear_queue` is the only destructive action and empties only the queue.
 """
 
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 
 MAX_ACTIONS = 5
 MAX_SKIP = 10
@@ -114,4 +115,48 @@ def validate_actions(raw) -> list[Action]:
         ))
         if len(out) == MAX_ACTIONS:
             break
+    return out
+
+
+# Whole words only: "displayed" contains "play" but is not the verb, and
+# "playlists" is not "playlist". Tokenizing beats a substring test or a
+# hand-written \b regex per word, and it treats punctuation the same way the
+# grammar's normalizer does.
+_WORD = re.compile(r"[a-z0-9]+")
+
+
+def enforce_intent(actions: list[Action], transcript: str) -> list[Action]:
+    """A second, purely structural pass, applied AFTER validate_actions.
+
+    Two guarantees that do not depend on the model having cooperated:
+
+    - a `play` action with placement "now" is downgraded to "end" unless the
+      transcript actually contains the word "play". The currently playing
+      track is only overridden by an explicit "play" (or by a skip, which
+      this function does not touch);
+    - a `play` action becomes a `playlist` action when the transcript
+      contains "playlist" — a saved playlist must never reach a YouTube
+      search.
+
+    The downgrade runs first, so the conversion carries the enforced
+    placement rather than reinstating the one the model asked for.
+    """
+    words = set(_WORD.findall(transcript.lower()))
+    said_play = "play" in words
+    said_playlist = "playlist" in words
+
+    out: list[Action] = []
+    for action in actions:
+        if action.action != "play":
+            out.append(action)
+            continue
+        placement = action.placement
+        if placement == "now" and not said_play:
+            placement = "end"
+        if said_playlist:
+            out.append(Action(
+                "playlist", name=action.query, placement=placement,
+            ))
+        else:
+            out.append(replace(action, placement=placement))
     return out
