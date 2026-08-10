@@ -1,8 +1,4 @@
-// Defaults to a same-origin path served by the hosting rewrite in
-// firebase.json, so solo search needs no env var and no CORS. The rewrite
-// targets the `searchYouTube` function, which is NOT deployed today — callers
-// must handle failure (see lib/searchMode.ts, which falls back to the bot).
-const FUNCTIONS_BASE = import.meta.env.VITE_FUNCTIONS_URL || "/api";
+const FUNCTIONS_BASE = import.meta.env.VITE_FUNCTIONS_URL || "";
 
 export interface SearchResult {
   videoId: string;

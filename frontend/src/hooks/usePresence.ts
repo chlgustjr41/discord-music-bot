@@ -1,13 +1,14 @@
 /**
- * Publishes this browser's presence and cursor, and subscribes to everyone
- * else's, for one session dashboard.
+ * Publishes this browser's presence, and subscribes to everyone else's, for
+ * one session dashboard.
  *
  * Every rule lives in lib/presence.ts; this file is I/O only. It writes
  * nothing at all unless shouldPublish() says so, which is what keeps
- * anonymous visitors invisible.
+ * anonymous visitors invisible — while still SUBSCRIBING for them, because
+ * seeing who is here and appearing in the list are separate permissions.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   collection,
   deleteDoc,
@@ -19,18 +20,14 @@ import {
 import type { User } from "firebase/auth";
 import { db } from "../firebase";
 import {
-  CURSOR_MIN_PX,
-  CURSOR_THROTTLE_MS,
   HEARTBEAT_MS,
   type Participant,
-  type Point,
-  type ViewMode,
   colorForUid,
+  isFocused,
   livingParticipants,
-  movedEnough,
   shouldPublish,
-  toNormalized,
 } from "../lib/presence";
+import { useIdentity } from "../lib/identity";
 
 /** What the last snapshot was for. Stored alongside the rows so a session
  *  or account switch shows nothing rather than the previous room's people
@@ -67,41 +64,82 @@ function toParticipant(uid: string, data: Record<string, unknown>): Participant 
     name: typeof data.name === "string" ? data.name : "",
     photoURL: typeof data.photoURL === "string" ? data.photoURL : null,
     color: typeof data.color === "string" ? data.color : "",
-    cursor: (data.cursor as Participant["cursor"]) ?? null,
+    // Defaults to focused. A row written by a client from before this field
+    // existed says nothing about attention, and greying someone out on the
+    // strength of a missing field would be a lie about them.
+    focused: typeof data.focused === "boolean" ? data.focused : true,
     updatedAt: toMillis(data.updatedAt),
   };
 }
 
-export function usePresence(
-  sessionCode: string | undefined,
-  user: User | null,
-  mode: ViewMode,
-) {
+export function usePresence(sessionCode: string | undefined, user: User | null) {
   const [snapshot, setSnapshot] = useState<Snapshot>({ key: "", rows: EMPTY });
   const [now, setNow] = useState(() => Date.now());
-  const lastPoint = useRef<Point | null>(null);
-  const lastWrite = useRef(0);
 
-  const publishing = shouldPublish(mode, !!user);
+  // Computed, not assumed: a dashboard opened in a background tab must
+  // publish focused:false from its very first write rather than claim an
+  // attention it does not have until the first event arrives.
+  const [focused, setFocused] = useState(() =>
+    isFocused(document.visibilityState, document.hasFocus()),
+  );
+  // The EFFECTIVE name (nickname first), so setting a nickname republishes
+  // and everyone else sees it without a reload.
+  const identityName = useIdentity().name;
+
+  const publishing = shouldPublish(!!user);
   const selfUid = user?.uid ?? null;
-  // Solo is symmetric, per the spec's error table: no doc written, own doc
-  // deleted, OTHERS' CURSORS HIDDEN. So the same gate that stops us
-  // broadcasting also stops us subscribing — a solo user does not even read
-  // the collection. The key carries the mode so flipping the toggle tears the
-  // old subscription down rather than leaving it running.
-  //
-  // Empty while auth is still loading (user is null), which is exactly the
-  // anonymous case: no subscription, no writes, no UI.
-  const key =
-    sessionCode && selfUid && publishing ? `${sessionCode}\u0000${selfUid}\u0000${mode}` : "";
+  // Subscribing is gated on the session code ALONE, not on auth: seeing who
+  // is here and appearing in the list are separate permissions, and a
+  // signed-out visitor gets the first without the second. The uid stays in
+  // the key so an account switch shows nothing rather than the previous
+  // subscription's rows while the new one's first snapshot is in flight.
+  const key = sessionCode ? `${sessionCode}\u0000${selfUid ?? ""}` : "";
 
   const selfRef = useCallback(() => {
     if (!sessionCode || !selfUid) return null;
     return doc(db, "presence", sessionCode, "participants", selfUid);
   }, [sessionCode, selfUid]);
 
-  // Subscribe. Reading requires auth (see firestore.rules), so anonymous
-  // visitors get nothing and the UI shows nothing.
+  // Track "is this person looking at the page?".
+  //
+  // hasFocus is carried in a closure driven by the focus/blur events rather
+  // than re-read from document.hasFocus() on every event, because those two
+  // ARE the transitions — and jsdom (plus a couple of real browsers during
+  // window-switch animations) reports the pre-transition value if you ask.
+  //
+  // The write is driven by the VALUE (it is a dependency of the publish
+  // effect), never by the event. alt-tab fires visibilitychange and blur
+  // together, and a real window switch fires several; React bails out of an
+  // update to an Object.is-equal state, so that burst collapses to one state
+  // change and therefore one Firestore write instead of a storm for a
+  // boolean. The updater form below says so out loud — React would bail out
+  // of a plain setFocused(next) identically, so this is documentation of the
+  // intent rather than the thing that enforces it.
+  useEffect(() => {
+    let hasFocus = document.hasFocus();
+    const apply = () => {
+      const next = isFocused(document.visibilityState, hasFocus);
+      setFocused((prev) => (prev === next ? prev : next));
+    };
+    const onFocus = () => {
+      hasFocus = true;
+      apply();
+    };
+    const onBlur = () => {
+      hasFocus = false;
+      apply();
+    };
+    document.addEventListener("visibilitychange", apply);
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      document.removeEventListener("visibilitychange", apply);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+
+  // Subscribe whenever there is a session code, signed in or not.
   //
   // Nothing is cleared here on the way out: setState in an effect body is a
   // cascading render (and a lint error in this codebase). Instead the render
@@ -126,72 +164,63 @@ export function usePresence(
   // Re-evaluate staleness on a timer: a participant who stops heartbeating
   // produces no snapshot, so nothing would otherwise re-render them away.
   //
-  // Only while subscribed. Signed-out and solo dashboards have no presence UI
-  // at all, so this was a 5s wake-up (and re-render) for nothing.
+  // Only while subscribed — with no session code there is no presence UI, so
+  // this was a 5s wake-up (and re-render) for nothing.
   useEffect(() => {
     if (!key) return;
     const id = setInterval(() => setNow(Date.now()), 5_000);
     return () => clearInterval(id);
   }, [key]);
 
-  // Publish + heartbeat, and remove ourselves the moment we stop publishing.
+  // Publish + heartbeat. Re-runs whenever a published FIELD changes (name,
+  // focus), which is what makes a nickname or an alt-tab reach everyone else.
+  //
+  // `publishing` is now exactly `!!user`, so the early return above already
+  // covers the not-publishing case; it stays in the dependency list because it
+  // is still the gate this effect is expressing.
   useEffect(() => {
     const ref = selfRef();
-    if (!ref || !user) return;
-    if (!publishing) {
-      void deleteDoc(ref).catch(() => {});
-      return;
-    }
-    const write = (cursor: Point | null) =>
+    if (!ref || !user || !publishing) return;
+    const write = () =>
       setDoc(
         ref,
         {
-          name: user.displayName || "Guest",
+          name: identityName || "Guest",
           photoURL: user.photoURL ?? null,
           color: colorForUid(user.uid),
-          cursor,
+          focused,
           updatedAt: serverTimestamp(),
         },
         { merge: true },
       ).catch(() => {});
 
-    void write(null);
-    const id = setInterval(() => void write(lastPoint.current), HEARTBEAT_MS);
+    void write();
+    const id = setInterval(() => void write(), HEARTBEAT_MS);
+    return () => clearInterval(id);
+  }, [selfRef, publishing, user, identityName, focused]);
+
+  // Leaving is a SEPARATE lifecycle from publishing, and deliberately so.
+  //
+  // Folded into the effect above, its cleanup would fire on every field
+  // change: each alt-tab would delete the participant document and then race
+  // a write to re-create it, so everyone else would watch the avatar blink
+  // out. This effect only re-runs when the identity of the document itself
+  // changes, which is the only time "leave" actually means anything.
+  useEffect(() => {
+    const ref = selfRef();
+    if (!ref || !publishing) return;
     const leave = () => void deleteDoc(ref).catch(() => {});
     window.addEventListener("pagehide", leave);
     return () => {
-      clearInterval(id);
       window.removeEventListener("pagehide", leave);
       leave();
     };
-  }, [selfRef, publishing, user]);
-
-  const publishCursor = useCallback(
-    (clientX: number, clientY: number, rect: DOMRect) => {
-      const ref = selfRef();
-      if (!ref || !publishing || document.visibilityState !== "visible") return;
-      const point = toNormalized(clientX, clientY, rect);
-      if (!point) return;
-      if (!movedEnough(lastPoint.current, point, CURSOR_MIN_PX, rect)) return;
-      const t = Date.now();
-      if (t - lastWrite.current < CURSOR_THROTTLE_MS) return;
-      lastWrite.current = t;
-      lastPoint.current = point;
-      // Date.now() throttles the write; only the server stamps the document.
-      void setDoc(
-        ref,
-        { cursor: point, updatedAt: serverTimestamp() },
-        { merge: true },
-      ).catch(() => {});
-    },
-    [selfRef, publishing],
-  );
+  }, [selfRef, publishing]);
 
   const rows = key && snapshot.key === key ? snapshot.rows : EMPTY;
 
   return {
-    participants: livingParticipants(rows, selfUid, now),
-    publishCursor,
+    participants: livingParticipants(rows, now),
     publishing,
   };
 }

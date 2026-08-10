@@ -1,22 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { doc, updateDoc, getDoc } from "firebase/firestore";
-import { toast } from "sonner";
 import { db } from "../firebase";
 import { getIdentityName } from "../lib/identity";
 import { bumpMemberStat } from "../lib/social";
-import { searchYouTube } from "../services/api";
-import type { ViewMode } from "../lib/presence";
-import {
-  IDLE_OWN_SEARCH,
-  nextOwnSearchState,
-  runSearch,
-  shouldAdoptSharedResults,
-  type OwnSearchState,
-} from "../lib/searchMode";
-import { shouldScheduleSearch } from "../lib/sharedView";
-import { useSharedInput } from "../hooks/useSharedInput";
-import { TypistChip } from "./TypistChip";
 import type { SearchResult, Track } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -40,12 +27,11 @@ interface Props {
   searchResults?: SearchResult[];
   searchQuery?: string | null;
   searchPlaylistName?: string | null;
-  mode: ViewMode;
 }
 
 const DEBOUNCE_MS = 200;
 
-export function SearchPanel({ serverId, searchResults, searchQuery, searchPlaylistName, mode }: Props) {
+export function SearchPanel({ serverId, searchResults, searchQuery, searchPlaylistName }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [playlistName, setPlaylistName] = useState<string | null>(null);
@@ -57,50 +43,13 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
   const [infoPos, setInfoPos] = useState({ top: 0, right: 0 });
   const infoButtonRef = useRef<HTMLButtonElement>(null);
   const waitingForResults = useRef(false);
-  // WHICH query this panel handed to the bot, not merely that it handed over
-  // one. `searchQuery`/`searchResults` are single shared fields, so a flag
-  // cannot tell our answer from a shared user's answer that overwrote ours.
-  const ownSearch = useRef<OwnSearchState>(IDLE_OWN_SEARCH);
-  const fallbackToasted = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSentQuery = useRef("");
 
-  // The query text itself is shared with the room — a different thing from the
-  // `searchQuery`/`searchResults` fields above, which are the bot's ANSWER.
-  //
-  // The declaration order is NOT load-bearing, contrary to what this comment
-  // used to claim. Adoption sets the flag in the commit where `entry` changed
-  // and `query` did not, so the debounce effect (which depends on `query`)
-  // does not run in that commit at all; it consumes the flag in the NEXT one.
-  // Moving this below the debounce effect would behave identically. Order
-  // would only matter if a local change and an adoption could land in the same
-  // commit, and `focused` already rules that out — you cannot be typing into a
-  // field that is adopting.
-  const shared = useSharedInput("search", query, setQuery);
-  const { consumeAdopted } = shared;
-
   // Watch for bot search results coming back via Firestore
   useEffect(() => {
-    // Track first, unconditionally: seeing our query land — and seeing it
-    // clobbered — are both observations that only this snapshot carries.
-    ownSearch.current = nextOwnSearchState(ownSearch.current, searchQuery);
-
-    // Solo dashboards do not follow the session's shared search — somebody
-    // else typing must not replace what you are looking at. The exception is
-    // our own bot fallback (searchYouTube is not deployed yet): those results
-    // can only come back through this same shared field, so they are adopted
-    // only when they answer the query we watched land there.
-    if (
-      !shouldAdoptSharedResults({
-        mode,
-        waiting: waitingForResults.current,
-        ownQuery: ownSearch.current.ownQuery,
-        observedOwnQuery: ownSearch.current.observed,
-        incomingQuery: searchQuery,
-      })
-    ) {
-      return;
-    }
+    if (!waitingForResults.current) return;
+    if (searchQuery) return; // bot still processing
 
     if (searchResults && searchResults.length > 0) {
       const isPlaylist = !!searchPlaylistName;
@@ -110,16 +59,14 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
       setSelected(isPlaylist ? new Set(searchResults.map((r) => r.videoId)) : new Set());
       setLoading(false);
       waitingForResults.current = false;
-      ownSearch.current = IDLE_OWN_SEARCH;
     } else {
       setResults([]);
       setPlaylistName(null);
       setLoading(false);
       setError("No results found.");
       waitingForResults.current = false;
-      ownSearch.current = IDLE_OWN_SEARCH;
     }
-  }, [searchResults, searchQuery, searchPlaylistName, mode]);
+  }, [searchResults, searchQuery, searchPlaylistName]);
 
   // Timeout — if bot doesn't respond within 15s, stop loading
   useEffect(() => {
@@ -129,14 +76,12 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
         setLoading(false);
         setError("Search timed out. Make sure the bot is connected.");
         waitingForResults.current = false;
-        ownSearch.current = IDLE_OWN_SEARCH;
       }
     }, 15000);
     return () => clearTimeout(timeout);
   }, [loading]);
 
-  // Shared mode searches through the bot (and is therefore visible to the
-  // whole session); solo mode tries the client-side endpoint first.
+  // Send search request to Firestore for the bot to pick up
   const fireSearch = async (q: string) => {
     if (q === lastSentQuery.current) return;
     lastSentQuery.current = q;
@@ -146,42 +91,18 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
     setResults([]);
     setSelected(new Set());
     setAddedMsg("");
-    waitingForResults.current = false;
-    ownSearch.current = IDLE_OWN_SEARCH;
+    waitingForResults.current = true;
 
     try {
-      const outcome = await runSearch(mode, q, {
-        local: (query) => searchYouTube(query),
-        bot: async (query) => {
-          // Set before the write: the bot can answer as soon as it lands.
-          waitingForResults.current = true;
-          ownSearch.current = { ownQuery: query, observed: false };
-          await updateDoc(doc(db, "servers", serverId), {
-            searchQuery: query,
-            searchResults: [],
-          });
-          bumpMemberStat(serverId, "searches");
-        },
+      await updateDoc(doc(db, "servers", serverId), {
+        searchQuery: q,
+        searchResults: [],
       });
-
-      if (outcome.via === "local") {
-        setResults(outcome.results ?? []);
-        setPlaylistName(null);
-        setLoading(false);
-        if ((outcome.results ?? []).length === 0) setError("No results found.");
-        return;
-      }
-
-      // "bot" and "bot-fallback" both wait for Firestore, as before.
-      if (outcome.via === "bot-fallback" && !fallbackToasted.current) {
-        fallbackToasted.current = true;
-        toast("Search runs through the bot, so results are visible to others in this session.");
-      }
+      bumpMemberStat(serverId, "searches");
     } catch {
       setError("Search failed.");
       setLoading(false);
       waitingForResults.current = false;
-      ownSearch.current = IDLE_OWN_SEARCH;
     }
   };
 
@@ -189,30 +110,14 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
 
-    // Read unconditionally, so the flag never outlives the change it describes
-    // and cannot suppress a later, genuinely local search.
-    const adopted = consumeAdopted();
     const trimmed = query.trim();
     if (!trimmed) {
-      // An emptied box tears this panel's request state down — but only when
-      // THIS user emptied it. Someone else backspacing to empty must not
-      // cancel a search you are waiting on: the shared field is the text, not
-      // your spinner, and `waitingForResults` still has to describe a request
-      // that is genuinely still out there.
-      if (!adopted || !(loading || waitingForResults.current)) {
-        setResults([]);
-        setLoading(false);
-        setError("");
-        lastSentQuery.current = "";
-      }
+      setResults([]);
+      setLoading(false);
+      setError("");
+      lastSentQuery.current = "";
       return;
     }
-
-    // The loop guard. An adopted value updates what everyone SEES in the box
-    // and stops there: it is not republished (publish() is called only from
-    // onChange, i.e. local typing) and it does not schedule a search, so Ada's
-    // keystrokes cost one bot search rather than one per viewer.
-    if (!shouldScheduleSearch({ adopted, query })) return;
 
     debounceRef.current = setTimeout(() => {
       fireSearch(trimmed);
@@ -226,12 +131,6 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
 
   const clearResults = () => {
     setQuery("");
-    // Clearing a SHARED field is a shared action, like typing in it: the box
-    // is one box for the whole room, so emptying it empties it for everyone,
-    // rather than leaving the room staring at text nobody can see the source
-    // of. Publishing is also what stops the text reappearing here a moment
-    // later — without it the room's copy is still the old query.
-    shared.publish("");
     setResults([]);
     setPlaylistName(null);
     setSelected(new Set());
@@ -323,13 +222,8 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
             <Input
               type="text"
               value={query}
-              onFocus={shared.onFocus}
-              onBlur={shared.onBlur}
               onChange={(e) => {
                 setQuery(e.target.value);
-                // LOCAL typing only. Publishing from the adoption path would
-                // echo the room's own value back at it forever.
-                shared.publish(e.target.value);
                 setAddedMsg("");
               }}
               placeholder="Search or paste a YouTube / SoundCloud / Bandcamp link…"
@@ -339,7 +233,6 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
               <Loader2 className="absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-muted-foreground" />
             )}
           </div>
-          <TypistChip typist={shared.typist} />
           {/* Supported formats info */}
           <div className="shrink-0">
             <button

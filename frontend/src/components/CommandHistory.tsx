@@ -11,7 +11,6 @@ import {
   getDocs,
 } from "firebase/firestore";
 import { db } from "../firebase";
-import { useSharedSection } from "../hooks/useSharedSection";
 import type { CommandHistoryEntry } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -38,7 +37,7 @@ interface Props {
 
 export function CommandHistory({ serverId }: Props) {
   const [commands, setCommands] = useState<CommandHistoryEntry[]>([]);
-  const [expanded, setExpanded] = useSharedSection("commands", false);
+  const [expanded, setExpanded] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {

@@ -1,18 +1,17 @@
 /**
  * The auth gate, at the only layer that can actually leak.
  *
- * lib/presence.ts already proves shouldPublish() returns the right booleans.
+ * lib/presence.ts already proves shouldPublish() returns the right boolean.
  * That is not the same claim as "this hook never writes when it must not":
- * replacing `shouldPublish(mode, !!user)` with `true`, or deleting the guard
- * inside publishCursor, leaves every pure test green while an anonymous
- * visitor broadcasts their cursor to the whole session. Only the Firestore
- * rule would stand between that and production.
+ * replacing `shouldPublish(!!user)` with `true` leaves every pure test green
+ * while an anonymous visitor broadcasts their name and photo to the whole
+ * session. Only the Firestore rule would stand between that and production.
  *
  * Firestore is mocked rather than emulated: the assertion is about which calls
  * are made, not what the server does with them.
  */
 
-import { renderHook, act } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { User } from "firebase/auth";
 import {
@@ -27,6 +26,18 @@ import { usePresence } from "./usePresence";
 
 vi.mock("../firebase", () => ({ db: {} }));
 
+// identity.ts reads localStorage and subscribes to Firebase auth at import
+// time; the hook only needs the effective name out of it.
+vi.mock("../lib/identity", () => ({
+  useIdentity: () => ({
+    name: "Ada",
+    named: true,
+    viaAccount: true,
+    signedIn: true,
+    nickname: "",
+  }),
+}));
+
 vi.mock("firebase/firestore", () => ({
   collection: vi.fn(() => ({ __type: "collection" })),
   doc: vi.fn((...path: unknown[]) => ({ __type: "doc", path })),
@@ -37,7 +48,6 @@ vi.mock("firebase/firestore", () => ({
 }));
 
 const signedIn = { uid: "u1", displayName: "Ada", photoURL: null } as User;
-const rect = { left: 0, top: 0, width: 1000, height: 500 } as DOMRect;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -49,40 +59,30 @@ afterEach(() => {
 
 describe("usePresence auth gate", () => {
   it("writes nothing at all for an anonymous visitor", () => {
-    const { result } = renderHook(() => usePresence("ABC123", null, "shared"));
-
-    act(() => result.current.publishCursor(500, 250, rect));
+    const { result } = renderHook(() => usePresence("ABC123", null));
 
     expect(setDoc).not.toHaveBeenCalled();
     expect(deleteDoc).not.toHaveBeenCalled();
     expect(result.current.publishing).toBe(false);
   });
 
-  it("does not even subscribe for an anonymous visitor", () => {
-    renderHook(() => usePresence("ABC123", null, "shared"));
-    expect(onSnapshot).not.toHaveBeenCalled();
-    expect(collection).not.toHaveBeenCalled();
-  });
-
-  it("writes nothing in solo mode, and removes any doc left behind", () => {
-    const { result } = renderHook(() => usePresence("ABC123", signedIn, "solo"));
-
-    act(() => result.current.publishCursor(500, 250, rect));
-
+  it("still subscribes for an anonymous visitor, who is allowed to SEE the bar", () => {
+    // Seeing who is here and appearing in the list are separate permissions:
+    // reading presence is public (the session code is already the capability),
+    // appearing needs a uid to attribute the avatar to.
+    renderHook(() => usePresence("ABC123", null));
+    expect(onSnapshot).toHaveBeenCalled();
+    expect(collection).toHaveBeenCalledWith({}, "presence", "ABC123", "participants");
     expect(setDoc).not.toHaveBeenCalled();
-    expect(result.current.publishing).toBe(false);
-    // Going solo must not merely stop writing: the doc already published has
-    // to go, or the participant stays in everyone's bar until the TTL.
-    expect(deleteDoc).toHaveBeenCalled();
   });
 
-  it("does not subscribe in solo mode either — solo hides others too", () => {
-    renderHook(() => usePresence("ABC123", signedIn, "solo"));
+  it("subscribes to nothing without a session code", () => {
+    renderHook(() => usePresence(undefined, null));
     expect(onSnapshot).not.toHaveBeenCalled();
   });
 
-  it("publishes when signed in and shared", () => {
-    const { result } = renderHook(() => usePresence("ABC123", signedIn, "shared"));
+  it("publishes when signed in", () => {
+    const { result } = renderHook(() => usePresence("ABC123", signedIn));
 
     expect(result.current.publishing).toBe(true);
     expect(onSnapshot).toHaveBeenCalled();
@@ -91,7 +91,7 @@ describe("usePresence auth gate", () => {
   });
 
   it("stamps presence with the server clock, never the browser's", () => {
-    renderHook(() => usePresence("ABC123", signedIn, "shared"));
+    renderHook(() => usePresence("ABC123", signedIn));
 
     expect(serverTimestamp).toHaveBeenCalled();
     const [, payload] = vi.mocked(setDoc).mock.calls[0];
@@ -100,23 +100,83 @@ describe("usePresence auth gate", () => {
     });
   });
 
-  it("publishes a cursor when signed in and shared", () => {
-    const { result } = renderHook(() => usePresence("ABC123", signedIn, "shared"));
-    vi.mocked(setDoc).mockClear();
-
-    act(() => result.current.publishCursor(500, 250, rect));
-
-    expect(setDoc).toHaveBeenCalledTimes(1);
+  it("publishes the effective identity name, not the raw Google name", () => {
+    // Otherwise setting a nickname would need a reload to be seen by anyone.
+    renderHook(() =>
+      usePresence("ABC123", { ...signedIn, displayName: "Ada Lovelace" } as User),
+    );
     const [, payload] = vi.mocked(setDoc).mock.calls[0];
-    expect((payload as { cursor: unknown }).cursor).toEqual({ x: 0.5, y: 0.5 });
+    expect((payload as { name: string }).name).toBe("Ada");
+  });
+});
+
+describe("usePresence focus tracking", () => {
+  // jsdom reports hasFocus() === false, so "the window has focus" has to be
+  // stated explicitly. That it has to be stated at all is the point of the
+  // background-tab test below: the initial value is read, not assumed.
+  beforeEach(() => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
   });
 
-  it("ignores a pointer outside the shared area rather than pinning it", () => {
-    const { result } = renderHook(() => usePresence("ABC123", signedIn, "shared"));
-    vi.mocked(setDoc).mockClear();
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
-    act(() => result.current.publishCursor(5000, 250, rect));
+  it("publishes focused:false from the FIRST write in a background tab", () => {
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    renderHook(() => usePresence("ABC123", signedIn));
+    const [, payload] = vi.mocked(setDoc).mock.calls[0];
+    expect((payload as { focused: boolean }).focused).toBe(false);
+  });
 
-    expect(setDoc).not.toHaveBeenCalled();
+  it("starts focused when the tab is visible and the window has focus", () => {
+    renderHook(() => usePresence("ABC123", signedIn));
+    const [, payload] = vi.mocked(setDoc).mock.calls[0];
+    expect((payload as { focused: boolean }).focused).toBe(true);
+  });
+
+  it("writes exactly once when the window is blurred", () => {
+    renderHook(() => usePresence("ABC123", signedIn));
+    const before = vi.mocked(setDoc).mock.calls.length;
+
+    act(() => window.dispatchEvent(new Event("blur")));
+
+    const calls = vi.mocked(setDoc).mock.calls.slice(before);
+    expect(calls).toHaveLength(1);
+    expect((calls[0][1] as { focused: boolean }).focused).toBe(false);
+  });
+
+  it("writes nothing for a second blur with no intervening focus", () => {
+    // alt-tab fires blur and visibilitychange in a burst; a write per event
+    // is a write storm for a boolean that did not change.
+    renderHook(() => usePresence("ABC123", signedIn));
+    act(() => window.dispatchEvent(new Event("blur")));
+    const after = vi.mocked(setDoc).mock.calls.length;
+
+    act(() => window.dispatchEvent(new Event("blur")));
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+
+    expect(vi.mocked(setDoc).mock.calls).toHaveLength(after);
+  });
+
+  it("writes again when focus comes back", () => {
+    renderHook(() => usePresence("ABC123", signedIn));
+    act(() => window.dispatchEvent(new Event("blur")));
+    const after = vi.mocked(setDoc).mock.calls.length;
+
+    act(() => window.dispatchEvent(new Event("focus")));
+
+    const calls = vi.mocked(setDoc).mock.calls.slice(after);
+    expect(calls).toHaveLength(1);
+    expect((calls[0][1] as { focused: boolean }).focused).toBe(true);
+  });
+
+  it("does not delete and re-create the participant document on a focus change", () => {
+    // Focus is a field update. If it re-ran the join/leave lifecycle instead,
+    // every alt-tab would race a delete against the following write and the
+    // avatar could vanish for everyone.
+    renderHook(() => usePresence("ABC123", signedIn));
+    act(() => window.dispatchEvent(new Event("blur")));
+    expect(deleteDoc).not.toHaveBeenCalled();
   });
 });

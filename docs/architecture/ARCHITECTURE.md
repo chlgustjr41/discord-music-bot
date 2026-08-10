@@ -75,37 +75,20 @@ The supervisor, outside every failure domain it watches. Four duties, one module
 - `guardian` restarts → Docker `restart: unless-stopped`; it is stateless
 - `token-minter` fails → previous token remains valid (token validity windows overlap)
 
-## Web app: collaborative dashboard
+## Web app: dashboard presence
 
-The session dashboard (`/dashboard/:sessionCode`) is multi-user by construction — everyone with the code reads one Firestore document, so queue and playback are shared whether or not anyone signs in. Layered on top of that is an **opt-in shared view** for signed-in users: who else is here, and where their pointer is.
+The session dashboard (`/dashboard/:sessionCode`) is multi-user by construction — everyone with the code reads one Firestore document, so queue and playback are shared whether or not anyone signs in. On top of that sits one small collaborative feature: **an avatar row showing who is looking at this dashboard right now.**
 
-**Where presence lives.** `presence/{sessionCode}/participants/{uid}` — a **new top-level collection**, deliberately not under `servers/`. Firestore rules are OR'd across matches, and `servers/{id}/{subcollection}/{doc}` is `allow read, write: if true`; anything placed there could never be restricted no matter how its own rule was written. At the top level the rules mean something: read requires auth, writes are uid-scoped, the document shape is constrained, and `updatedAt` must equal `request.time`.
+Live cursors and shared view state (synced panel expand/collapse and text inputs) were built and then **deliberately removed** — on a screen whose job is controlling music they were noise, and the shared/solo toggle existed only to switch that noise off. Presence alone is what earned its keep. Their removal also took a whole write surface with it, including the impersonation and force-collapse holes that surface had needed rules to close.
 
-**Why the server stamps the timestamp.** A client-supplied `updatedAt` lets any signed-in user write one far-future value and remain in everyone's presence bar forever — and because writes are uid-scoped, nobody else can delete them. Clock skew alone would also make honest users flicker in and out. The client keeps a two-sided sanity window (`|age| <= TTL`) because `updatedAt` is the server's clock while `now` is the browser's.
+**Where it lives.** `presence/{sessionCode}/participants/{uid}` — a **top-level collection**, deliberately not under `servers/`. Firestore rules are OR'd across matches, and `servers/{id}/{subcollection}/{doc}` is `allow read, write: if true`; anything placed there could never be restricted however carefully its own rule was written.
 
-**Liveness.** Firestore has no server-side disconnect hook, so a heartbeat every 15 s plus a 45 s staleness filter — not `onDisconnect` — is what removes someone whose laptop lid closed. Docs are also deleted on unload and on switching to solo. Crashed clients leave a document behind that nothing sweeps; a Firestore TTL policy on `updatedAt` would clean those up if it ever matters.
+**Read is public; write is uid-scoped.** The session code is already the capability for queue, playback and history, so who is looking is no more sensitive than what is playing — and a signed-out visitor is meant to see the row. You can watch without signing in; you can only put *yourself* on the list, and only you can refresh or remove you. Appearing requires a uid, which is what the write rule is built on, so anonymous visitors see the bar without joining it.
 
-**Modes.**
+**Why the server stamps the timestamp.** A client-supplied `updatedAt` lets any signed-in user write one far-future value and stay in everyone's avatar row forever — and because writes are uid-scoped, nobody else could delete them. Clock skew alone would make honest users flicker in and out. The client keeps a two-sided sanity window (`|age| <= TTL`), because `updatedAt` is the server's clock while `now` is the browser's; a one-sided clamp makes any viewer with a slow clock see nobody at all.
 
-| | Anonymous | Signed in, solo | Signed in, shared |
-|---|---|---|---|
-| Publishes presence/cursor | never | no | yes |
-| Sees others | no | no | yes |
-| Follows others' searches | n/a | no | yes |
+**Liveness and focus.** Firestore has no server-side disconnect hook, so a 15 s heartbeat plus a 45 s staleness filter — not `onDisconnect` — is what removes someone whose laptop lid closed. Documents are also deleted on unload. A `focused` boolean (visible tab **and** focused window) greys out people who are present but not looking; it is written only when the value actually changes, since alt-tab fires several events per switch.
 
-Solo is symmetric on purpose: opting out of being watched also stops you watching. `shouldPublish(mode, signedIn)` in `src/lib/presence.ts` is the single gate, so the auth check cannot be applied on one path and forgotten on another.
-
-**Cost.** Cursor writes are throttled to 100 ms, suppressed below 8 px of movement, and skipped when the tab is hidden — bursty ~3 writes/s per active user. Presence updates re-render only `PresenceLayer`, not the dashboard panels, which is why `usePresence` lives there rather than in `Dashboard`.
-
-**Search is a bot capability, and that limits solo mode.** `SearchPanel` writes `searchQuery` to `servers/{id}` and the *bot* writes results back, so a shared-mode search is visible to everyone by construction. Solo mode therefore (a) stops following other people's searches and (b) tries a client-side endpoint first, falling back to the bot when it is unavailable. `functions/searchYouTube` is **not deployed** today, so that fallback is the live path — solo search works, it is just not yet private, and the panel toasts once to say so. Deploying the function with a `YOUTUBE_API_KEY` makes solo search private with no frontend change; the `/api/searchYouTube` hosting rewrite is already in place.
-
-**Shared view state.** Beyond presence, shared mode also syncs *what the dashboard looks like*: which panels are expanded and what is in the shared text fields. That lives in one collective document, `presence/{sessionCode}/shared/view` — deliberately **not** uid-scoped, because it is a shared control surface like the queue rather than something one person owns. Writes are shape-constrained and `updatedAt` is server-stamped, for the same reason as presence.
-
-Two rules make it usable rather than a fight:
-
-- **A focused input is never overwritten.** You adopt someone else's text only when you are not typing in that field; two people typing at once each keep their own until they blur. `shouldAdoptInput` in `src/lib/sharedView.ts` is the single place that decides.
-- **Adoption is inert.** Setting an input from a remote update must not schedule a search and must not republish. Without that, Ada typing would make *Bob's* debounce fire a search, which writes `searchQuery` to the shared server document, which the bot answers — a search-per-keystroke-per-viewer amplification. `consumeAdopted()` is read before the debounce effect can act, and the effect order in `SearchPanel` is load-bearing: the adoption effect must be declared first, or the flag is consumed by the previous render's debounce.
-
-Sharing text is also why the toggle matters: **in shared mode what you type is visible before you submit it.**
+**Names.** `identity.ts` resolves `nickname || accountName || "Web User"` — nickname first, so a signed-in user can rename themselves by clicking their badge, and presence republishes immediately. `photoURL` is restricted to `*.googleusercontent.com` in both the rules and the component: it is an `<img src>` rendered for every viewer, so an arbitrary host would be an IP/User-Agent beacon.
 
 **Idle sign-out** is app-wide (`src/lib/idleSignOut.ts`): 30 minutes, warning at 60 s, cross-tab via `localStorage`, timestamp-based so a sleeping laptop signs out on wake rather than resuming a stale timer.
