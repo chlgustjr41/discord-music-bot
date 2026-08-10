@@ -64,6 +64,22 @@ describe("JackyClient", () => {
     ]);
   });
 
+  it("POSTs shuffle to its own route, not skip's", async () => {
+    const f = fetchStub(200, { ok: true, count: 3 });
+    await new JackyClient(CONFIG, f).shuffle();
+    const [url, init] = (f as any).mock.calls[0];
+    expect(url).toBe("https://control.example.com/control/shuffle");
+    expect(url).not.toContain("/control/skip");
+    expect(init.method).toBe("POST");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+  });
+
+  it("shuffle throws ControlApiError carrying the status with no live session", async () => {
+    const client = new JackyClient(CONFIG, fetchStub(409));
+    await expect(client.shuffle()).rejects.toMatchObject({ status: 409 });
+    await expect(client.shuffle()).rejects.toBeInstanceOf(ControlApiError);
+  });
+
   it("GETs channels with auth header and returns the list", async () => {
     const data: ChannelList = [
       {

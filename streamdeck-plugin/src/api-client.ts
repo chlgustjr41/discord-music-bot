@@ -88,6 +88,10 @@ export class JackyClient {
     await this.post("/control/skip");
   }
 
+  async shuffle(): Promise<void> {
+    await this.post("/control/shuffle");
+  }
+
   async stop(): Promise<void> {
     await this.post("/control/stop");
   }

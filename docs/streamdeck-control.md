@@ -145,9 +145,30 @@ Once signed in, their authentication persists across restarts and key changes.
   same key covers both transcription and interpretation; no second credential.
   `OPENAI_INTENT_MODEL` overrides the interpretation model (default
   `gpt-4o-mini`, roughly $0.0001 and half a second per command).
-- Now Playing polls every 5 s, backing off to 30 s while unreachable. It also
-  shows the current track's artwork, clearing back to the default icon when
-  the track has none or the session ends.
+- **Play/Pause** key: presses toggle playback, and two per-key options in the
+  Property Inspector turn it into the display as well — this is the old Now
+  Playing key merged in, so one key does both jobs.
+  - **Show track title** marquees the current track (400 ms scroll clock, not
+    the 5 s poll, so it actually reads as scrolling) with a `⏸` suffix while
+    paused.
+  - **Show artwork** replaces the play/pause glyph with the track thumbnail,
+    letterboxed — the original aspect ratio is preserved and the whole image
+    fits inside the key, never stretched or cropped. It falls back to the
+    glyph when the track has no artwork, when the session ends, or when the
+    option is switched back off, so a stale cover never outlives its track.
+
+  Both default **off**, so a Play/Pause key you never reconfigured behaves
+  exactly as before. Settings are per key: two Play/Pause keys can be
+  configured differently. Polling is every 5 s, backing off to 30 s while
+  unreachable.
+
+  > **The separate Now Playing key is gone.** If you had one on your deck it
+  > will show as an unknown key after this update — drop a Play/Pause key in
+  > its place and switch both options on to get the same display, plus
+  > press-to-toggle.
+- **Shuffle** key: shuffles the current queue in place; the track that is
+  playing keeps playing. Needs a live session — ⚠ otherwise. An empty queue
+  is not an error. Shuffles appear in the dashboard's Command History.
 - **Play Playlist** key: configured per key with a server + saved playlist
   (create them with `j!playlist save`). Pressing it inserts that playlist at
   the front of the queue and jumps to it; whatever was already queued stays
@@ -176,9 +197,9 @@ Once signed in, their authentication persists across restarts and key changes.
   security patches ever matter.
 - Play/Pause key keeps its last icon while offline / session-less (presses
   still flash ⚠ honestly).
-- The Now Playing `⏸` glyph may render as a missing-glyph box on some
-  Stream Deck firmware fonts — swap for `||` in
-  `streamdeck-plugin/src/actions/now-playing.ts` if it looks wrong.
+- The Play/Pause key's `⏸` glyph (shown with **Show track title** on) may
+  render as a missing-glyph box on some Stream Deck firmware fonts — swap for
+  `||` in `streamdeck-plugin/src/actions/play-pause.ts` if it looks wrong.
 - The marquee advances 2 characters per poll tick (every 5 s) — slow scroll
   is by design (poll-driven), not a bug.
 - Plugin tests are not wired into `make test` (services/ only); run them with

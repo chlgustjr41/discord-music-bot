@@ -226,6 +226,25 @@ def register_control_routes(
         await service.teardown_session(guild.id, clear_queue=True)
         return web.json_response({"ok": True})
 
+    async def shuffle(request: web.Request, user_id: str) -> web.Response:
+        guild, _body, err = await action_target(request, user_id)
+        if err:
+            return err
+        # repo.shuffle_queue, not a local reorder: the voice dispatcher and
+        # j!shuffle already go through it, and a second implementation here
+        # is a second thing to keep correct.
+        count = await service.repo.shuffle_queue(str(guild.id))
+        # An empty queue is a successful shuffle of nothing (count 0), so the
+        # row is logged unconditionally — the press happened either way.
+        # "shuffle" is the j! command name, so history reads like a typed one;
+        # source keeps deck presses from merging into the j!shuffle row (see
+        # ServerRepository._log_command's per-source dedupe).
+        await service.repo.log_command(
+            str(guild.id), "shuffle", "", "Stream Deck", user_id,
+            source="streamdeck",
+        )
+        return web.json_response({"ok": True, "count": count})
+
     async def volume(request: web.Request, user_id: str) -> web.Response:
         guild, body, err = await action_target(request, user_id)
         if err:
@@ -483,6 +502,7 @@ def register_control_routes(
         web.post("/control/play-pause", guarded(play_pause)),
         web.post("/control/skip", guarded(skip)),
         web.post("/control/stop", guarded(stop)),
+        web.post("/control/shuffle", guarded(shuffle)),
         web.post("/control/volume", guarded(volume)),
         web.get("/control/channels", guarded(channels)),
         web.get("/control/playlists", guarded(playlists)),

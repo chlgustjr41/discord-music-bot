@@ -24,6 +24,17 @@
     <sdpi-textfield global setting="apiUrl" placeholder="https://control.jacky-music-bot.com"></sdpi-textfield>
   </sdpi-item>
 
+  <!-- Play/Pause key only: what this key displays. Both default off, so a key
+       nobody reconfigured keeps showing only its play/pause glyph. -->
+  <div id="play-pause-settings" style="display: none">
+    <sdpi-item label="Display">
+      <sdpi-checkbox setting="showTitle" label="Show track title"></sdpi-checkbox>
+    </sdpi-item>
+    <sdpi-item>
+      <sdpi-checkbox setting="showArtwork" label="Show artwork"></sdpi-checkbox>
+    </sdpi-item>
+  </div>
+
   <!-- Summon key only: which voice channel this key joins/leaves. -->
   <div id="summon-settings" style="display: none">
     <sdpi-item label="Server">
@@ -65,6 +76,7 @@
     const client = SDPIComponents.streamDeckClient;
     const statusEl = document.getElementById("auth-status");
     const signInBtn = document.getElementById("sign-in");
+    const playPauseDiv = document.getElementById("play-pause-settings");
     const summonDiv = document.getElementById("summon-settings");
     const guildSelect = document.getElementById("guild-select");
     const channelSelect = document.getElementById("channel-select");
@@ -172,6 +184,9 @@
 
     (async () => {
       const { actionInfo } = await client.getConnectionInfo();
+      // Nothing to fetch: both are plain per-key booleans the components
+      // persist themselves.
+      if (actionInfo.action.endsWith(".play-pause")) playPauseDiv.style.display = "";
       isSummon = actionInfo.action.endsWith(".summon");
       if (isSummon) {
         summonDiv.style.display = "";

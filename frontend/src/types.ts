@@ -71,7 +71,7 @@ export interface CommandHistoryEntry {
   userId: string;
   timestamp: unknown; // Firestore Timestamp
   callCount: number;
-  source?: string; // "voice" | "discord" (absent = discord)
+  source?: string; // "voice" | "streamdeck" | "discord" (absent = discord)
   transcript?: string; // recognized speech, voice entries only
 }
 
