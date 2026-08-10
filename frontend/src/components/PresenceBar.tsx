@@ -11,14 +11,36 @@ interface Props {
   selfId?: string | null;
 }
 
-const MAX_SHOWN = 4;
+const MAX_SHOWN = 6;
 
 /**
  * Who is on this dashboard right now — including you.
  *
- * The ring colour is derived from the uid (see colorForUid), so a person looks
- * the same to everyone and across reloads; it is drawn as an explicit box-shadow
- * rather than a utility class whose colour could drift.
+ * The ring colour is derived from the id (see colorForUid), so a person looks
+ * the same to everyone and across reloads; it is drawn as an explicit
+ * box-shadow rather than a utility class whose colour could drift.
+ *
+ * ## Why nothing here is translucent
+ *
+ * The avatars overlap when collapsed, and a translucent avatar in a stack
+ * shows the one behind it straight through — two half-visible faces sharing
+ * the same pixels, which reads as a rendering fault rather than as depth.
+ * Everything is opaque, and the two things previously expressed with alpha are
+ * expressed some other way:
+ *
+ * - **Depth** is an outer ring painted in the CARD colour, so each avatar cuts
+ *   a clean silhouette out of the one behind it, plus a descending z-index so
+ *   the overlap runs in one consistent direction instead of looking shuffled.
+ * - **Away** is drained colour — greyscale on the photo and a muted ring
+ *   instead of the person's own — not a fade. The ring colour is the identity
+ *   signal, so removing it is what "not here" should look like.
+ *
+ * ## Hover
+ *
+ * Hovering the group spreads the avatars apart until none overlap, and leaving
+ * collapses them back. It is a CSS transition on margin driven by
+ * `group-hover`, deliberately not React state: the stack should not have to
+ * re-render to animate, and a pointer that leaves the window still resolves.
  */
 export function PresenceBar({ participants, selfId = null }: Props) {
   const [tip, setTip] = useState<(Anchor & { uid: string }) | null>(null);
@@ -38,8 +60,8 @@ export function PresenceBar({ participants, selfId = null }: Props) {
   const tipped = tip ? participants.find((p) => p.uid === tip.uid) : undefined;
 
   return (
-    <div className="flex items-center -space-x-2">
-      {shown.map((p) => {
+    <div className="group flex items-center justify-end">
+      {shown.map((p, i) => {
         const isSelf = !!selfId && p.uid === selfId;
         const label = isSelf
           ? `${p.name || "You"} (you) — click to change your name`
@@ -47,39 +69,48 @@ export function PresenceBar({ participants, selfId = null }: Props) {
             ? p.name
             : `${p.name} (away)`;
 
-        const inner = (
-          <>
-            {/* Never issue a request to a host the participant chose: this
-                <img> fires for every viewer with no interaction. Falls back to
-                the initial, which is what a photo-less account already shows. */}
-            {isAllowedPhotoUrl(p.photoURL) ? (
-              <img src={p.photoURL!} alt="" className="h-full w-full object-cover" />
-            ) : (
-              <span className="flex h-full w-full items-center justify-center text-[10px] font-medium text-muted-foreground">
-                {(p.name || "?").charAt(0).toUpperCase()}
-              </span>
-            )}
-          </>
+        const inner = isAllowedPhotoUrl(p.photoURL) ? (
+          /* Never issue a request to a host the participant chose: this <img>
+             fires for every viewer with no interaction. Falls back to the
+             initial, which is what a photo-less account already shows. */
+          <img
+            src={p.photoURL!}
+            alt=""
+            className={`h-full w-full object-cover${p.focused ? "" : " grayscale"}`}
+          />
+        ) : (
+          <span className="flex h-full w-full items-center justify-center text-[11px] font-semibold text-foreground/70">
+            {(p.name || "?").charAt(0).toUpperCase()}
+          </span>
         );
 
-        // Greying is two signals on purpose. Opacity alone is easy to miss
-        // against a busy header; desaturation alone does nothing to a letter
-        // avatar, which has no colour to drain.
-        const away = p.focused ? "" : " opacity-40 grayscale";
-        const self = isSelf
-          ? " cursor-pointer ring-2 ring-primary ring-offset-2 ring-offset-background"
-          : "";
-        const className =
-          "h-6 w-6 shrink-0 overflow-hidden rounded-full bg-muted transition-opacity" +
-          away +
-          self;
+        const ring = p.focused ? p.color : "var(--muted-foreground)";
+        // Inner ring is identity; outer ring is the card colour and is what
+        // separates overlapping avatars. Self adds a third, in the primary
+        // colour, rather than a Tailwind `ring-*` that would fight this
+        // box-shadow for the same property.
+        const boxShadow = isSelf
+          ? `0 0 0 2px ${ring}, 0 0 0 4px var(--card), 0 0 0 6px var(--primary)`
+          : `0 0 0 2px ${ring}, 0 0 0 4px var(--card)`;
 
         const common = {
           "data-uid": p.uid,
           "data-focused": String(p.focused),
           "aria-label": label,
-          className,
-          style: { boxShadow: `0 0 0 2px ${p.color}` },
+          // -ml-2 collapses the stack; group-hover releases it to a real gap.
+          // Every avatar including the first carries the margin, so the row
+          // grows leftwards and stays pinned to its right-hand edge.
+          className:
+            "relative h-7 w-7 shrink-0 overflow-hidden rounded-full bg-card" +
+            " -ml-2 transition-[margin-left] duration-200 ease-out" +
+            " group-hover:ml-1.5 group-focus-within:ml-1.5" +
+            (isSelf ? " cursor-pointer" : ""),
+          style: {
+            boxShadow,
+            // Descending: the leftmost sits on top, so the overlap has one
+            // direction instead of looking shuffled.
+            zIndex: shown.length - i,
+          },
           onMouseEnter: show(p.uid),
           onMouseLeave: hide,
           onFocus: show(p.uid),
@@ -105,8 +136,10 @@ export function PresenceBar({ participants, selfId = null }: Props) {
 
       {overflow > 0 && (
         <span
+          data-overflow="true"
           title={participants.slice(MAX_SHOWN).map((p) => p.name).join(", ")}
-          className="flex h-6 shrink-0 items-center rounded-full border bg-muted px-1.5 text-[10px] font-medium text-muted-foreground"
+          className="relative -ml-2 flex h-7 shrink-0 items-center rounded-full bg-muted pl-4 pr-2.5 text-[10px] font-semibold text-muted-foreground transition-[margin-left,padding-left] duration-200 ease-out group-hover:ml-1.5 group-hover:pl-2.5 group-focus-within:ml-1.5 group-focus-within:pl-2.5"
+          style={{ boxShadow: "0 0 0 4px var(--card)", zIndex: 0 }}
         >
           +{overflow}
         </span>

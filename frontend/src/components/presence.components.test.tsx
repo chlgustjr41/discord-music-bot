@@ -85,12 +85,12 @@ describe("PresenceBar", () => {
     expect(screen.getByText("M")).toBeDefined();
   });
 
-  it("collapses past four into a +N chip rather than overflowing the header", () => {
-    const many = Array.from({ length: 7 }, (_, i) =>
+  it("collapses past six into a +N chip rather than overflowing the row", () => {
+    const many = Array.from({ length: 9 }, (_, i) =>
       participant({ uid: `u${i}`, name: `User ${i}` }),
     );
     render(<PresenceBar participants={many} />);
-    expect(screen.getByText("+3")).toBeDefined();
+    expect(screen.getByText("+3")).toBeDefined();  // 9 shown-capped at 6
   });
 });
 
@@ -111,12 +111,17 @@ describe("PresenceBar focus state", () => {
 
     expect(away.getAttribute("data-focused")).toBe("false");
     expect(here.getAttribute("data-focused")).toBe("true");
-    // Two independent signals, because opacity alone is easy to miss against
-    // a busy header and desaturation alone is invisible on a letter avatar.
-    expect(away.className).toMatch(/grayscale/);
-    expect(away.className).toMatch(/opacity-/);
-    expect(here.className).not.toMatch(/grayscale/);
+    // Away is DRAINED COLOUR, never alpha: these avatars overlap, and a
+    // translucent one shows the avatar behind it straight through, which
+    // reads as a rendering fault rather than as absence.
+    expect(away.className).not.toMatch(/opacity-/);
     expect(here.className).not.toMatch(/opacity-/);
+    // The ring colour is the identity signal, so an away row loses it.
+    expect(away.style.boxShadow).toContain("var(--muted-foreground)");
+    expect(here.style.boxShadow).not.toContain("var(--muted-foreground)");
+    // A photo is greyscaled; a letter avatar has no colour to drain, which is
+    // why the ring carries the signal instead.
+    expect(away.querySelector("img")?.className ?? "grayscale").toMatch(/grayscale/);
   });
 
   it("does not grey anyone out merely for lacking the flag", () => {
@@ -229,5 +234,59 @@ describe("PresenceBar self", () => {
     );
     fireEvent.click(container.querySelector('[data-uid="u2"]') as HTMLElement);
     expect(screen.queryByText("Who are you?")).toBeNull();
+  });
+});
+
+describe("PresenceBar stacking and hover", () => {
+  const three = [
+    participant({ uid: "a", name: "A" }),
+    participant({ uid: "b", name: "B" }),
+    participant({ uid: "c", name: "C" }),
+  ];
+
+  it("is fully opaque so the overlap reads as depth, not as a glitch", () => {
+    const { container } = render(<PresenceBar participants={three} />);
+    for (const el of container.querySelectorAll<HTMLElement>("[data-uid]")) {
+      expect(el.className).not.toMatch(/opacity-/);
+      // The outer ring is painted in the card colour: that is what cuts one
+      // avatar cleanly out of the one behind it.
+      expect(el.style.boxShadow).toContain("var(--card)");
+    }
+  });
+
+  it("stacks in one consistent direction", () => {
+    // Ascending z-index would make the overlap look shuffled rather than
+    // ordered, which is most of why the collapsed state looked wrong.
+    const { container } = render(<PresenceBar participants={three} />);
+    const z = [...container.querySelectorAll<HTMLElement>("[data-uid]")].map((e) =>
+      Number(e.style.zIndex),
+    );
+    expect(z).toEqual([...z].sort((x, y) => y - x));
+    expect(new Set(z).size).toBe(z.length);
+  });
+
+  it("expands on hover and on keyboard focus anywhere in the group", () => {
+    const { container } = render(<PresenceBar participants={three} />);
+    for (const el of container.querySelectorAll<HTMLElement>("[data-uid]")) {
+      expect(el.className).toMatch(/-ml-2/);            // collapsed
+      expect(el.className).toMatch(/group-hover:ml-/);  // spread on hover
+      // Tabbing to one avatar must open the whole stack; expanding only the
+      // focused one would make it jump out of a still-collapsed row.
+      expect(el.className).toMatch(/group-focus-within:ml-/);
+      expect(el.className).toMatch(/transition-\[margin-left\]/);
+    }
+  });
+
+  it("keeps the overflow chip legible while collapsed", () => {
+    // It sits UNDER the last avatar to keep the stacking direction, so its
+    // label needs padding to clear it until the group expands.
+    const many = Array.from({ length: 9 }, (_, i) =>
+      participant({ uid: `u${i}`, name: `User ${i}` }),
+    );
+    const { container } = render(<PresenceBar participants={many} />);
+    const chip = container.querySelector<HTMLElement>('[data-overflow="true"]')!;
+    expect(chip).not.toBeNull();
+    expect(chip.className).toMatch(/pl-4/);
+    expect(chip.className).toMatch(/group-hover:pl-/);
   });
 });
