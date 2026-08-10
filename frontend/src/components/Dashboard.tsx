@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
 import { useServerState } from "../hooks/useServerState";
 import { useActivityToasts } from "../hooks/useActivityToasts.js";
 import { useAuth } from "../hooks/useAuth";
-import type { ViewMode } from "../lib/presence";
+import { usePresence } from "../hooks/usePresence";
 import { NowPlaying } from "./NowPlaying";
 import { Queue } from "./Queue";
 import { PlaybackControls } from "./PlaybackControls";
@@ -17,8 +17,7 @@ import { StatsPanel } from "./StatsPanel";
 import { IdentityChip } from "./IdentityChip";
 import { PinServerButton } from "./PinServerButton";
 import { AccountMenu } from "./AccountMenu";
-import { PresenceLayer, type PublishCursor } from "./PresenceLayer";
-import { SharedViewToggle } from "./SharedViewToggle";
+import { PresenceBar } from "./PresenceBar";
 import { ActivityLog } from "./ActivityLog";
 import { NodeStatus } from "./NodeStatus";
 import { Button } from "@/components/ui/button";
@@ -26,29 +25,13 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Music, Loader2, WifiOff, AlertTriangle, LogOut, RotateCcw } from "lucide-react";
 
-const MODE_KEY = (code: string) => `jacky:view:${code}`;
-
-/** Anything that is not exactly one of the two modes is treated as shared:
- *  a corrupted localStorage value must not become a third, invisible mode
- *  that shouldPublish() silently reads as solo. */
-function storedMode(code: string | undefined): ViewMode {
-  if (!code) return "shared";
-  return localStorage.getItem(MODE_KEY(code)) === "solo" ? "solo" : "shared";
-}
-
 /**
  * The session code is this screen's IDENTITY, not merely an input to it.
  *
- * `mode` is per-session and lives in localStorage under a per-session key, but
  * React Router reuses one component instance when only the param changes, so
- * the lazy initializer runs once per mount. Without a remount, navigating from
- * a session left on shared into one the user had set to solo would keep
- * "shared" AND overwrite the new session's stored preference with it —
- * publishing their name, photo, colour, and cursor into a session they had
- * explicitly opted out of. Keying on the code makes every per-session
- * initializer honest, which is why this is a remount rather than a
- * re-read-on-change effect: an effect can only correct the state after a
- * render (and after the persist effect) has already used the stale value.
+ * every per-session initializer inside DashboardView would otherwise run once
+ * per mount and carry the previous session's state into the next one. Keying
+ * on the code makes the whole screen re-initialise instead.
  */
 export function Dashboard() {
   const { sessionCode } = useParams<{ sessionCode: string }>();
@@ -62,22 +45,10 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
   const { user } = useAuth();
   const [exiting, setExiting] = useState(false);
   const [resetting, setResetting] = useState(false);
-  const [mode, setMode] = useState<ViewMode>(() => storedMode(sessionCode));
-
-  useEffect(() => {
-    if (sessionCode) localStorage.setItem(MODE_KEY(sessionCode), mode);
-  }, [sessionCode, mode]);
-
-  // Presence state deliberately does NOT live here: see PresenceLayer. This
-  // component holds `mode` and nothing else that changes at cursor rate, so a
-  // remote pointer moving cannot re-render the panels below.
-  const contentRef = useRef<HTMLDivElement | null>(null);
-  const cursorRef = useRef<PublishCursor | null>(null);
-  // The presence bar's place in the header. State rather than a ref because
-  // PresenceLayer portals into it and must re-render once it exists; a plain
-  // state setter as the ref callback is stable, so this settles on mount and
-  // never fires again.
-  const [barSlot, setBarSlot] = useState<HTMLDivElement | null>(null);
+  // Presence changes on join, leave and heartbeat only — a handful of events
+  // per session — so it lives here with everything else rather than behind an
+  // isolating wrapper.
+  const { participants } = usePresence(sessionCode, user);
 
   const botConnected = !!state?.voiceChannelId;
 
@@ -174,11 +145,7 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
           </button>
         </div>
       </header>
-      <div
-        ref={contentRef}
-        onPointerMove={(e) => cursorRef.current?.(e.clientX, e.clientY)}
-        className="mx-auto max-w-3xl p-4 space-y-4"
-      >
+      <div className="mx-auto max-w-3xl p-4 space-y-4">
         {/* Header with server info */}
         <Card>
         <CardContent className="flex flex-wrap items-center gap-4 p-4">
@@ -218,15 +185,8 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
           {/* One wrapping cluster: at narrow widths the whole group drops to
               its own line instead of squeezing (or clipping) the controls. */}
           <div className="flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto sm:gap-2">
-          {/* Solo hides other people as well as hiding you: no bar, no cursor
-              layer, and usePresence does not even subscribe — all of which is
-              decided inside PresenceLayer now, because it also wraps the
-              panels and unmounting it on a mode toggle would reset every one
-              of them. `display:contents` keeps the bar a direct flex item of
-              this cluster. */}
-          <div ref={setBarSlot} className="contents" />
+          <PresenceBar participants={participants} />
           <IdentityChip />
-          <SharedViewToggle mode={mode} signedIn={!!user} onChange={setMode} />
           <PinServerButton serverId={serverId} serverName={state.serverName} />
           <Button
             variant="ghost"
@@ -283,35 +243,22 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
         </Card>
       )}
 
-      {/* Everything below reads the collective view state, so it is mounted
-          inside PresenceLayer's provider. These children are created here, in
-          a component that does not re-render on a cursor tick — which is what
-          keeps the panels out of the cursor render path. */}
-      <PresenceLayer
-        sessionCode={sessionCode}
-        user={user}
-        mode={mode}
-        containerRef={contentRef}
-        cursorRef={cursorRef}
-        barSlot={barSlot}
-      >
-        <NowPlaying track={state.currentTrack} isPaused={state.isPaused || !botConnected} serverId={serverId} />
-        <PlaybackControls state={state} serverId={serverId} disabled={!botConnected} />
-        <Queue queue={state.queue} serverId={serverId} />
-        <SearchPanel serverId={serverId} searchResults={state.searchResults} searchQuery={state.searchQuery} searchPlaylistName={state.searchPlaylistName} mode={mode} />
-        <PlaylistManager
-          serverId={serverId}
-          currentQueue={state.queue}
-          currentTrack={state.currentTrack}
-          searchResults={state.searchResults}
-          searchQuery={state.searchQuery}
-          searchPlaylistName={state.searchPlaylistName}
-        />
-        <StatsPanel serverId={serverId} />
-        <MusicHistory serverId={serverId} />
-        <CommandHistory serverId={serverId} />
-        <ActivityLog entries={logEntries} />
-      </PresenceLayer>
+      <NowPlaying track={state.currentTrack} isPaused={state.isPaused || !botConnected} serverId={serverId} />
+      <PlaybackControls state={state} serverId={serverId} disabled={!botConnected} />
+      <Queue queue={state.queue} serverId={serverId} />
+      <SearchPanel serverId={serverId} searchResults={state.searchResults} searchQuery={state.searchQuery} searchPlaylistName={state.searchPlaylistName} />
+      <PlaylistManager
+        serverId={serverId}
+        currentQueue={state.queue}
+        currentTrack={state.currentTrack}
+        searchResults={state.searchResults}
+        searchQuery={state.searchQuery}
+        searchPlaylistName={state.searchPlaylistName}
+      />
+      <StatsPanel serverId={serverId} />
+      <MusicHistory serverId={serverId} />
+      <CommandHistory serverId={serverId} />
+      <ActivityLog entries={logEntries} />
       </div>
     </>
   );

@@ -7,10 +7,10 @@ interface Props {
 const MAX_SHOWN = 4;
 
 /**
- * Who else is on this dashboard right now. The ring colour is the whole
- * point of the component: it is the only thing tying a face up here to a
- * cursor moving around down there, so it is drawn as an explicit 2px
- * box-shadow rather than a utility class whose colour could drift.
+ * Who is on this dashboard right now. The ring colour is derived from the uid
+ * (see colorForUid), so a person looks the same to everyone and across
+ * reloads; it is drawn as an explicit 2px box-shadow rather than a utility
+ * class whose colour could drift.
  */
 export function PresenceBar({ participants }: Props) {
   if (participants.length === 0) return null;

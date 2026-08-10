@@ -1,13 +1,13 @@
 /**
- * Publishes this browser's presence and cursor, and subscribes to everyone
- * else's, for one session dashboard.
+ * Publishes this browser's presence, and subscribes to everyone else's, for
+ * one session dashboard.
  *
  * Every rule lives in lib/presence.ts; this file is I/O only. It writes
  * nothing at all unless shouldPublish() says so, which is what keeps
  * anonymous visitors invisible.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   collection,
   deleteDoc,
@@ -19,17 +19,11 @@ import {
 import type { User } from "firebase/auth";
 import { db } from "../firebase";
 import {
-  CURSOR_MIN_PX,
-  CURSOR_THROTTLE_MS,
   HEARTBEAT_MS,
   type Participant,
-  type Point,
-  type ViewMode,
   colorForUid,
   livingParticipants,
-  movedEnough,
   shouldPublish,
-  toNormalized,
 } from "../lib/presence";
 
 /** What the last snapshot was for. Stored alongside the rows so a session
@@ -67,33 +61,23 @@ function toParticipant(uid: string, data: Record<string, unknown>): Participant 
     name: typeof data.name === "string" ? data.name : "",
     photoURL: typeof data.photoURL === "string" ? data.photoURL : null,
     color: typeof data.color === "string" ? data.color : "",
-    cursor: (data.cursor as Participant["cursor"]) ?? null,
     updatedAt: toMillis(data.updatedAt),
   };
 }
 
-export function usePresence(
-  sessionCode: string | undefined,
-  user: User | null,
-  mode: ViewMode,
-) {
+export function usePresence(sessionCode: string | undefined, user: User | null) {
   const [snapshot, setSnapshot] = useState<Snapshot>({ key: "", rows: EMPTY });
   const [now, setNow] = useState(() => Date.now());
-  const lastPoint = useRef<Point | null>(null);
-  const lastWrite = useRef(0);
 
-  const publishing = shouldPublish(mode, !!user);
+  const publishing = shouldPublish(!!user);
   const selfUid = user?.uid ?? null;
-  // Solo is symmetric, per the spec's error table: no doc written, own doc
-  // deleted, OTHERS' CURSORS HIDDEN. So the same gate that stops us
-  // broadcasting also stops us subscribing — a solo user does not even read
-  // the collection. The key carries the mode so flipping the toggle tears the
-  // old subscription down rather than leaving it running.
+  // Reading presence requires auth (see firestore.rules), so the same gate
+  // that stops us broadcasting also stops us subscribing.
   //
   // Empty while auth is still loading (user is null), which is exactly the
   // anonymous case: no subscription, no writes, no UI.
   const key =
-    sessionCode && selfUid && publishing ? `${sessionCode}\u0000${selfUid}\u0000${mode}` : "";
+    sessionCode && selfUid && publishing ? `${sessionCode}\u0000${selfUid}` : "";
 
   const selfRef = useCallback(() => {
     if (!sessionCode || !selfUid) return null;
@@ -126,37 +110,36 @@ export function usePresence(
   // Re-evaluate staleness on a timer: a participant who stops heartbeating
   // produces no snapshot, so nothing would otherwise re-render them away.
   //
-  // Only while subscribed. Signed-out and solo dashboards have no presence UI
-  // at all, so this was a 5s wake-up (and re-render) for nothing.
+  // Only while subscribed. A signed-out dashboard has no presence UI at all,
+  // so this was a 5s wake-up (and re-render) for nothing.
   useEffect(() => {
     if (!key) return;
     const id = setInterval(() => setNow(Date.now()), 5_000);
     return () => clearInterval(id);
   }, [key]);
 
-  // Publish + heartbeat, and remove ourselves the moment we stop publishing.
+  // Publish + heartbeat, and remove ourselves on the way out.
+  //
+  // `publishing` is now exactly `!!user`, so the early return above already
+  // covers the not-publishing case; it stays in the dependency list because it
+  // is still the gate this effect is expressing.
   useEffect(() => {
     const ref = selfRef();
-    if (!ref || !user) return;
-    if (!publishing) {
-      void deleteDoc(ref).catch(() => {});
-      return;
-    }
-    const write = (cursor: Point | null) =>
+    if (!ref || !user || !publishing) return;
+    const write = () =>
       setDoc(
         ref,
         {
           name: user.displayName || "Guest",
           photoURL: user.photoURL ?? null,
           color: colorForUid(user.uid),
-          cursor,
           updatedAt: serverTimestamp(),
         },
         { merge: true },
       ).catch(() => {});
 
-    void write(null);
-    const id = setInterval(() => void write(lastPoint.current), HEARTBEAT_MS);
+    void write();
+    const id = setInterval(() => void write(), HEARTBEAT_MS);
     const leave = () => void deleteDoc(ref).catch(() => {});
     window.addEventListener("pagehide", leave);
     return () => {
@@ -166,32 +149,10 @@ export function usePresence(
     };
   }, [selfRef, publishing, user]);
 
-  const publishCursor = useCallback(
-    (clientX: number, clientY: number, rect: DOMRect) => {
-      const ref = selfRef();
-      if (!ref || !publishing || document.visibilityState !== "visible") return;
-      const point = toNormalized(clientX, clientY, rect);
-      if (!point) return;
-      if (!movedEnough(lastPoint.current, point, CURSOR_MIN_PX, rect)) return;
-      const t = Date.now();
-      if (t - lastWrite.current < CURSOR_THROTTLE_MS) return;
-      lastWrite.current = t;
-      lastPoint.current = point;
-      // Date.now() throttles the write; only the server stamps the document.
-      void setDoc(
-        ref,
-        { cursor: point, updatedAt: serverTimestamp() },
-        { merge: true },
-      ).catch(() => {});
-    },
-    [selfRef, publishing],
-  );
-
   const rows = key && snapshot.key === key ? snapshot.rows : EMPTY;
 
   return {
-    participants: livingParticipants(rows, selfUid, now),
-    publishCursor,
+    participants: livingParticipants(rows, now),
     publishing,
   };
 }

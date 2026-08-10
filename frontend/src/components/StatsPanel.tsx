@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import { db } from "../firebase";
 import { addTracksToQueue } from "../lib/social";
-import { useSharedSection } from "../hooks/useSharedSection";
 import type { MusicHistoryEntry, Track } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -62,7 +61,7 @@ const MEDALS = ["🥇", "🥈", "🥉"];
  * and the most dragged-around queue tracks (dragStats, written by Queue).
  */
 export function StatsPanel({ serverId }: Props) {
-  const [expanded, setExpanded] = useSharedSection("stats", false);
+  const [expanded, setExpanded] = useState(false);
   const [tab, setTab] = useState<Tab>("tracks");
   const [tracks, setTracks] = useState<MusicHistoryEntry[]>([]);
   const [drags, setDrags] = useState<DragStat[]>([]);
