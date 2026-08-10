@@ -1373,7 +1373,7 @@ async def test_voice_422_when_nothing_survives_interpretation(
 ):
     put_user_in_voice(service, guild_id)
     interpreter.error = InterpretError("down")
-    transcriber.text = "..."      # fallback parser yields nothing
+    transcriber.text = "..."      # grammar declines it; there is no fallback
     resp = await client.post("/control/voice", data=WAV, headers=auth)
     assert resp.status == 422
 
