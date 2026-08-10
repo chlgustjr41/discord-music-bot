@@ -17,6 +17,7 @@ import type { User } from "firebase/auth";
 import { auth } from "../firebase";
 
 const NICKNAME_KEY = "jacky:nickname";
+const BROWSER_ID_KEY = "jacky:browserId";
 export const ANONYMOUS_NAME = "Web User";
 
 let authUser: User | null = null;
@@ -72,6 +73,31 @@ export function setNickname(nickname: string) {
 
 export function getIdentity(): Identity {
   return snapshot;
+}
+
+/**
+ * A stable, opaque id for whoever is using this browser — the account uid when
+ * signed in, otherwise a random per-browser id.
+ *
+ * Exists because per-member stats used to be keyed by DISPLAY NAME, so setting
+ * a nickname started a fresh leaderboard row instead of renaming the old one,
+ * and two people who happened to share a name shared a row. A key that never
+ * changes when the name does is the whole point, so this must not be derived
+ * from the name in any way.
+ *
+ * The anonymous id is per-browser, so the same person on a phone and a laptop
+ * is two rows — acceptable for someone who has not signed in, and strictly
+ * better than the previous behaviour, where they were one row that either of
+ * them could rename out from under the other.
+ */
+export function getMemberKey(): string {
+  if (authUser) return authUser.uid;
+  let id = localStorage.getItem(BROWSER_ID_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(BROWSER_ID_KEY, id);
+  }
+  return id;
 }
 
 export function getIdentityName(): string {

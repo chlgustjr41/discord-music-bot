@@ -91,4 +91,6 @@ Live cursors and shared view state (synced panel expand/collapse and text inputs
 
 **Names.** `identity.ts` resolves `nickname || accountName || "Web User"` — nickname first, so a signed-in user can rename themselves by clicking their badge, and presence republishes immediately. `photoURL` is restricted to `*.googleusercontent.com` in both the rules and the component: it is an `<img src>` rendered for every viewer, so an arbitrary host would be an IP/User-Agent beacon.
 
+**Leaderboard identity.** Per-member stats (`servers/{id}/memberStats`) are keyed on a **stable id** — the account uid, or a random per-browser id for someone who has only set a nickname — never on the display name. Name-keying meant renaming yourself started a fresh row and left the old one frozen beside it in the leaderboard, and two people who happened to share a display name silently shared a row. The name still travels with the document so the leaderboard can render it; it is data, not identity. A one-time transactional migration folds a legacy name-keyed row into the stable-keyed one on first write, so nobody appears twice.
+
 **Idle sign-out** is app-wide (`src/lib/idleSignOut.ts`): 30 minutes, warning at 60 s, cross-tab via `localStorage`, timestamp-based so a sleeping laptop signs out on wake rather than resuming a stale timer.
