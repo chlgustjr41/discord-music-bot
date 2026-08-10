@@ -111,6 +111,31 @@ def test_play_next_song_is_a_title_not_a_placement():
     ]
 
 
+@pytest.mark.parametrize("said", ["play next", "add next", "queue next"])
+def test_a_verb_plus_a_bare_next_is_never_a_search_for_next(said):
+    """A verb with "next" as its ENTIRE argument has no argument.
+
+    "play next" almost certainly means skip, but the grammar does not guess:
+    resolving it would search YouTube for the literal string "next" and (for
+    "play") replace the current track, and the reasoning layer would never
+    see it. Unresolved, so reasoning gets a chance.
+    """
+    parsed = parse_structured(said)
+    assert parsed.resolved is False
+    assert parsed.actions == []
+
+
+@pytest.mark.parametrize("said", ["next next", "skip next"])
+def test_a_doubled_next_is_unresolved_not_a_search(said):
+    """"skip" and "next" are not play verbs, so these never reached the
+    prefix branch: _SKIP declines them (its optional noun is only
+    "song"/"track") and they were already unresolved. Pinned so the new
+    guard is not credited with behaviour it does not provide."""
+    parsed = parse_structured(said)
+    assert parsed.resolved is False
+    assert parsed.actions == []
+
+
 # ── volume ───────────────────────────────────────────────────────────────
 
 

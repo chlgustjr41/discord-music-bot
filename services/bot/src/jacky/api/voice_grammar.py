@@ -204,8 +204,20 @@ def parse_structured(transcript: str) -> "StructuredParse":
         if lowered.startswith(prefix):
             query, trailing_next = _split_trailing_next(text[len(prefix):].strip())
             # "play playlist" with no name is an incomplete playlist command,
-            # not a song search for the literal word "playlist".
-            if query and query.lower() != "playlist":
+            # not a song search for the literal word "playlist". "play next"
+            # is the same shape: _split_trailing_next needs a LEADING space,
+            # so a bare trailing "next" is not stripped as placement and
+            # would become a YouTube search for the literal word "next" —
+            # with placement "now", replacing the track, since "play" really
+            # was said and enforce_intent allows it.
+            #
+            # DECISION — unresolved, not skip. "play next" most likely means
+            # skip, but this module does not guess (see the docstring), and
+            # resolving it here is what makes it unfixable: the reasoning
+            # layer only ever sees what the grammar declined. Unresolved, it
+            # reaches the LLM with keywords ["play", "next"] and can be read
+            # as a skip, an incomplete "play X next", or nothing at all.
+            if query and query.lower() not in ("playlist", "next"):
                 # DECISION — "play next song": "next" here neither leads the
                 # transcript (media control) nor trails it (placement), so it
                 # is treated as part of the TITLE: play "next song" now. A
