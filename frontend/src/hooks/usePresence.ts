@@ -2,10 +2,10 @@
  * Publishes this browser's presence, and subscribes to everyone else's, for
  * one session dashboard.
  *
- * Every rule lives in lib/presence.ts; this file is I/O only. It writes
- * nothing at all unless shouldPublish() says so, which is what keeps
- * anonymous visitors invisible — while still SUBSCRIBING for them, because
- * seeing who is here and appearing in the list are separate permissions.
+ * Every rule lives in lib/presence.ts; this file is I/O only. Everyone with
+ * the dashboard open publishes, signed in or not: presence is a property of
+ * having the page open, not of having an account. A signed-out visitor writes
+ * under `anon_<browserId>`, which is the shape the rules allow without auth.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -23,12 +23,14 @@ import {
   HEARTBEAT_MS,
   type Participant,
   colorForUid,
+  isAnonymousId,
   isFocused,
   livingParticipants,
-  shouldPublish,
+  presenceIdFor,
   toParticipant,
+  withDisplayNames,
 } from "../lib/presence";
-import { useIdentity } from "../lib/identity";
+import { getMemberKey, useIdentity } from "../lib/identity";
 
 /** What the last snapshot was for. Stored alongside the rows so a session
  *  or account switch shows nothing rather than the previous room's people
@@ -50,23 +52,34 @@ export function usePresence(sessionCode: string | undefined, user: User | null) 
   const [focused, setFocused] = useState(() =>
     isFocused(document.visibilityState, document.hasFocus()),
   );
-  // The EFFECTIVE name (nickname first), so setting a nickname republishes
-  // and everyone else sees it without a reload.
-  const identityName = useIdentity().name;
+  const identity = useIdentity();
 
-  const publishing = shouldPublish(!!user);
-  const selfUid = user?.uid ?? null;
-  // Subscribing is gated on the session code ALONE, not on auth: seeing who
-  // is here and appearing in the list are separate permissions, and a
-  // signed-out visitor gets the first without the second. The uid stays in
-  // the key so an account switch shows nothing rather than the previous
-  // subscription's rows while the new one's first snapshot is in flight.
-  const key = sessionCode ? `${sessionCode}\u0000${selfUid ?? ""}` : "";
+  // Which row is this browser's. Signed in that is the uid, so an account's
+  // avatar stays uid-scoped and unforgeable; signed out it is the same stable
+  // per-browser id the leaderboard already keys on, namespaced so the rules
+  // can tell the two apart by document id alone.
+  const selfId = presenceIdFor(user?.uid ?? null, getMemberKey());
+  const anonymous = isAnonymousId(selfId);
+
+  // The name to PUBLISH. Signed in: the effective name, nickname first, so
+  // setting a nickname republishes and everyone sees it without a reload.
+  // Signed out: the nickname or nothing at all. "Anonymous N" is assigned at
+  // render by withDisplayNames and deliberately never stored, so two browsers
+  // cannot fight over who is "Anonymous 1" — and the identity fallback
+  // ("Web User") must not be stored either, because a stored name reads as a
+  // chosen nickname and would suppress the number for everyone.
+  const publishedName = anonymous ? identity.nickname : identity.name || "Guest";
+
+  // Both subscribing and publishing are now gated on the session code ALONE.
+  // The presence id stays in the key so signing in or out shows nothing rather
+  // than the previous subscription's rows while the new one's first snapshot
+  // is in flight.
+  const key = sessionCode ? `${sessionCode}\u0000${selfId}` : "";
 
   const selfRef = useCallback(() => {
-    if (!sessionCode || !selfUid) return null;
-    return doc(db, "presence", sessionCode, "participants", selfUid);
-  }, [sessionCode, selfUid]);
+    if (!sessionCode) return null;
+    return doc(db, "presence", sessionCode, "participants", selfId);
+  }, [sessionCode, selfId]);
 
   // Track "is this person looking at the page?".
   //
@@ -149,19 +162,23 @@ export function usePresence(sessionCode: string | undefined, user: User | null) 
   // Publish + heartbeat. Re-runs whenever a published FIELD changes (name,
   // focus), which is what makes a nickname or an alt-tab reach everyone else.
   //
-  // `publishing` is now exactly `!!user`, so the early return above already
-  // covers the not-publishing case; it stays in the dependency list because it
-  // is still the gate this effect is expressing.
+  // The only gate left is the session code, via selfRef: there is no document
+  // to write without one.
   useEffect(() => {
     const ref = selfRef();
-    if (!ref || !user || !publishing) return;
+    if (!ref) return;
     const write = () =>
       setDoc(
         ref,
         {
-          name: identityName || "Guest",
-          photoURL: user.photoURL ?? null,
-          color: colorForUid(user.uid),
+          name: publishedName,
+          // photoURL is omitted entirely for an anonymous row, not sent as
+          // null: there is no account photo to send, and the rules reject the
+          // key outright on that branch.
+          ...(anonymous ? { anon: true } : { photoURL: user?.photoURL ?? null }),
+          // Keyed on the presence id, so an anonymous visitor's colour is
+          // stable per browser rather than re-rolled on every render.
+          color: colorForUid(selfId),
           focused,
           updatedAt: serverTimestamp(),
         },
@@ -171,7 +188,7 @@ export function usePresence(sessionCode: string | undefined, user: User | null) 
     void write();
     const id = setInterval(() => void write(), HEARTBEAT_MS);
     return () => clearInterval(id);
-  }, [selfRef, publishing, user, identityName, focused]);
+  }, [selfRef, selfId, anonymous, user, publishedName, focused]);
 
   // Leaving is a SEPARATE lifecycle from publishing, and deliberately so.
   //
@@ -182,19 +199,23 @@ export function usePresence(sessionCode: string | undefined, user: User | null) 
   // changes, which is the only time "leave" actually means anything.
   useEffect(() => {
     const ref = selfRef();
-    if (!ref || !publishing) return;
+    if (!ref) return;
     const leave = () => void deleteDoc(ref).catch(() => {});
     window.addEventListener("pagehide", leave);
     return () => {
       window.removeEventListener("pagehide", leave);
       leave();
     };
-  }, [selfRef, publishing]);
+  }, [selfRef]);
 
   const rows = key && snapshot.key === key ? snapshot.rows : EMPTY;
 
   return {
-    participants: livingParticipants(rows, now),
-    publishing,
+    // "Anonymous N" is resolved here rather than stored, over the LIVING set,
+    // so the numbering everyone sees is derived from the same rows everyone
+    // is looking at.
+    participants: withDisplayNames(livingParticipants(rows, now)),
+    /** Which row is you — a uid, or an anon_ id. The bar marks it. */
+    selfId,
   };
 }

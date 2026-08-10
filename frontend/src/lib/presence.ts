@@ -1,9 +1,10 @@
 /**
  * Pure logic behind dashboard presence.
  *
- * Deliberately free of Firebase imports so every rule here — who publishes,
- * who is still here — can be tested exhaustively without a network or an
- * emulator. The hook that owns the I/O makes no decisions of its own.
+ * Deliberately free of Firebase imports so every rule here — which row is
+ * yours, who is still here, what each row is called — can be tested
+ * exhaustively without a network or an emulator. The hook that owns the I/O
+ * makes no decisions of its own.
  */
 
 export interface Participant {
@@ -155,10 +156,62 @@ export function isAllowedPhotoUrl(url: string | null | undefined): boolean {
   return host === PHOTO_HOST || host.endsWith(`.${PHOTO_HOST}`);
 }
 
-/** The one place that answers "does this browser broadcast?", so the auth
- *  gate cannot be applied in one code path and forgotten in another. */
-export function shouldPublish(signedIn: boolean): boolean {
-  return signedIn;
+/**
+ * Anonymous presence ids, as both the client and the rules understand them.
+ *
+ * MUST stay identical to the pattern in firestore.rules: this decides who is
+ * shown as "Anonymous N", and the copy in the rules decides who may write
+ * without authenticating. If the two ever disagree, one of them is wrong about
+ * a security boundary. The alphabet covers a crypto.randomUUID() (hyphens) and
+ * the length bounds keep a document id sane.
+ */
+const ANON_ID = /^anon_[A-Za-z0-9_-]{8,64}$/;
+
+/**
+ * The document id for this browser's presence row.
+ *
+ * Namespaced so the rules can tell a signed-in row from an anonymous one by id
+ * alone — an anonymous row cannot be uid-scoped, because there is no uid to
+ * scope it to, so the id shape is the only thing left to key the rule on.
+ */
+export function presenceIdFor(uid: string | null, browserId: string): string {
+  return uid ? uid : `anon_${browserId}`;
+}
+
+export function isAnonymousId(id: string): boolean {
+  return ANON_ID.test(id);
+}
+
+/**
+ * Resolves the name each row should DISPLAY: an anonymous participant who has
+ * not set a nickname becomes "Anonymous N".
+ *
+ * The number is assigned here, at render, and never stored — two browsers
+ * cannot then fight over who is "Anonymous 1". It is derived by sorting the
+ * un-named anonymous rows by document id, which is the only ordering every
+ * viewer can compute for themselves and agree on with no server involved.
+ *
+ * Explicitly NOT join order: `updatedAt` moves on every heartbeat, and a
+ * write-once `joinedAt` would be clobbered by the merge writes that publish
+ * name and focus changes.
+ *
+ * The accepted cost: when an un-named anonymous participant leaves, everyone
+ * after them shifts down a number. Nobody is misidentified — the numbers are
+ * still consistent across viewers at any instant — but "Anonymous 2" is not a
+ * durable name for a person. Stable server-assigned numbering is out of scope.
+ */
+export function withDisplayNames(participants: Participant[]): Participant[] {
+  const unnamed = participants.filter((p) => isAnonymousId(p.uid) && !p.name.trim());
+  const numbers = new Map(
+    unnamed
+      .map((p) => p.uid)
+      .sort()
+      .map((uid, i) => [uid, i + 1] as const),
+  );
+  return participants.map((p) => {
+    const n = numbers.get(p.uid);
+    return n === undefined ? p : { ...p, name: `Anonymous ${n}` };
+  });
 }
 
 /** Just enough of a DOMRect to place a tooltip, so this stays testable
