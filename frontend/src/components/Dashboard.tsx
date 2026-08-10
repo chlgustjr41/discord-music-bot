@@ -185,7 +185,7 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
           {/* One wrapping cluster: at narrow widths the whole group drops to
               its own line instead of squeezing (or clipping) the controls. */}
           <div className="flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto sm:gap-2">
-          <PresenceBar participants={participants} />
+          <PresenceBar participants={participants} selfUid={user?.uid ?? null} />
           <IdentityChip />
           <PinServerButton serverId={serverId} serverName={state.serverName} />
           <Button

@@ -104,3 +104,52 @@ export function isAllowedPhotoUrl(url: string | null | undefined): boolean {
 export function shouldPublish(signedIn: boolean): boolean {
   return signedIn;
 }
+
+/** Just enough of a DOMRect to place a tooltip, so this stays testable
+ *  without a layout engine. */
+export interface AnchorRect {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/** Where a hover tooltip should be pinned, in viewport coordinates.
+ *  Exactly one of `left`/`right` is set — see anchorFor. */
+export interface Anchor {
+  top: number;
+  left?: number;
+  right?: number;
+  maxWidth: number;
+}
+
+/**
+ * Anchor a tooltip to an avatar without measuring the tooltip.
+ *
+ * The dashboard header Card is `overflow-hidden`, so a tooltip positioned
+ * inside the row is clipped; it is portalled to document.body with
+ * `position: fixed` instead. That moves the problem to keeping it on screen,
+ * and measuring the rendered tooltip in order to clamp it would mean setting
+ * state from a layout effect — a cascading render, and a lint error here.
+ *
+ * The geometry avoids the measurement entirely. Cap the width at half the
+ * viewport and anchor to whichever edge of the avatar faces the middle: an
+ * avatar in the left half grows rightwards from its left edge and so ends at
+ * most at (middle + half a viewport); one in the right half grows leftwards
+ * from its right edge and so starts at least at (middle - half a viewport).
+ * Either way both edges stay on screen, at any width, in one pass.
+ *
+ * Staying inside the right edge is not cosmetic: a fixed element that pokes
+ * past it adds horizontal scroll to the whole dashboard, which at 375px is
+ * exactly where the header is already wrapping.
+ */
+export function anchorFor(rect: AnchorRect, vw: number, vh: number): Anchor {
+  const maxWidth = Math.max(120, vw / 2 - 8);
+  const below = rect.bottom + 6;
+  // Flip above when there is no room below, so this still behaves if the bar
+  // is ever moved down the page.
+  const top = below + 40 > vh ? Math.max(4, rect.top - 30) : below;
+  return rect.left > vw / 2
+    ? { top, right: Math.max(4, vw - rect.right), maxWidth }
+    : { top, left: Math.max(4, rect.left), maxWidth };
+}

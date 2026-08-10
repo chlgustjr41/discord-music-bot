@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PRESENCE_TTL_MS,
+  anchorFor,
   colorForUid,
   isAllowedPhotoUrl,
   isFocused,
@@ -144,5 +145,45 @@ describe("isAllowedPhotoUrl", () => {
     expect(isAllowedPhotoUrl("not a url")).toBe(false);
     expect(isAllowedPhotoUrl(null)).toBe(false);
     expect(isAllowedPhotoUrl("")).toBe(false);
+  });
+});
+
+describe("anchorFor", () => {
+  function rect(left: number, width = 24, top = 40) {
+    return { left, right: left + width, top, bottom: top + width };
+  }
+
+  it("grows rightwards from an avatar in the left half", () => {
+    const a = anchorFor(rect(20), 1280, 800);
+    expect(a.left).toBe(20);
+    expect(a.right).toBeUndefined();
+  });
+
+  it("grows leftwards from an avatar in the right half", () => {
+    const a = anchorFor(rect(1100), 1280, 800);
+    expect(a.right).toBe(1280 - 1124);
+    expect(a.left).toBeUndefined();
+  });
+
+  it("cannot overflow either edge at 375px, at any avatar position", () => {
+    // The header already wraps at 375px, and a fixed tooltip poking past the
+    // right edge would add horizontal scroll to the whole dashboard. Swept
+    // rather than sampled, because the interesting case is the crossover in
+    // the middle where the anchor flips edges.
+    const vw = 375;
+    for (let left = 0; left <= vw - 24; left += 1) {
+      const a = anchorFor(rect(left), vw, 800);
+      const start = a.left ?? vw - (a.right ?? 0) - a.maxWidth;
+      const end = a.left !== undefined ? a.left + a.maxWidth : vw - (a.right ?? 0);
+      expect(end).toBeLessThanOrEqual(vw);
+      expect(start).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("flips above the avatar when there is no room below", () => {
+    const below = anchorFor(rect(20, 24, 40), 1280, 800);
+    const above = anchorFor(rect(20, 24, 780), 1280, 800);
+    expect(below.top).toBeGreaterThan(40);
+    expect(above.top).toBeLessThan(780);
   });
 });
