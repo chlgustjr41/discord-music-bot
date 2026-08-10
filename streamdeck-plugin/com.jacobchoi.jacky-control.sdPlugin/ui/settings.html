@@ -78,6 +78,17 @@
         <option value="zh">中文</option>
       </sdpi-select>
     </sdpi-item>
+    <!-- Opt-in, and deliberately given no `default`: the echo publishes what
+         was heard into a channel everyone in the session can read, so a key
+         nobody configured must store nothing rather than store "off". -->
+    <sdpi-item label="Debug">
+      <sdpi-checkbox setting="debug" label="Print debug message to Discord"></sdpi-checkbox>
+    </sdpi-item>
+    <div style="padding-left: 4px; font-size: 9pt; opacity: 0.7">
+      Posts what was heard, how it was resolved and what ran into the session's
+      Discord channel — which everyone in the session can read. Turn it on when
+      a command does not do what you expected, then turn it back off.
+    </div>
     <div id="voice-error" style="display: none; padding-left: 4px; font-size: 9pt; color: #e94560"></div>
   </div>
 

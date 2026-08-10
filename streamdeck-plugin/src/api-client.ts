@@ -38,6 +38,11 @@ export type VoiceResult = {
   client?: { type: string; url?: string }[];
 };
 
+/** Per-press options for `voiceCommand`. `debug` asks the server to echo what
+ *  it heard and how it resolved into the session's Discord channel — opt-in
+ *  per key, because that channel is readable by everyone in the session. */
+export type VoiceOptions = { language?: string; debug?: boolean };
+
 export type ClientConfig = { apiUrl: string; authToken: string };
 
 export class ControlApiError extends Error {
@@ -135,12 +140,23 @@ export class JackyClient {
 
   /** 30 s, not the usual 10 s: this request includes a transcription round-trip.
    *
+   *  An options object rather than positional arguments: both knobs are
+   *  optional and one of them is a bare boolean, so `voiceCommand(wav, true)`
+   *  would be a silent mis-call that publishes a transcript to Discord.
+   *  Naming it at the call site makes that impossible.
+   *
    *  `language` fixes the transcription language, which beats autodetect on
    *  clips this short. An unset setting OMITS the parameter rather than
    *  sending an empty one: the server's own default is English, and
-   *  `?language=` would be a value it has to normalize away. */
-  async voiceCommand(wav: Uint8Array, language?: string): Promise<VoiceResult> {
-    const query = language ? `?language=${encodeURIComponent(language)}` : "";
+   *  `?language=` would be a value it has to normalize away. `debug` is
+   *  likewise only ever sent when ON — absent already means off server-side,
+   *  so there is no `debug=0` to send. */
+  async voiceCommand(wav: Uint8Array, opts: VoiceOptions = {}): Promise<VoiceResult> {
+    const params = new URLSearchParams();
+    if (opts.language) params.set("language", opts.language);
+    if (opts.debug) params.set("debug", "1");
+    const encoded = params.toString();
+    const query = encoded ? `?${encoded}` : "";
     const res = await this.fetchFn(this.url("/control/voice" + query), {
       method: "POST",
       headers: {

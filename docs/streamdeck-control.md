@@ -162,7 +162,7 @@ Once signed in, their authentication persists across restarts and key changes.
   outage costs you the flexible phrasings, not the key. (Transcription still
   needs OpenAI; without it the key cannot hear you at all.)
 
-  Two per-key settings in the Property Inspector:
+  Three per-key settings in the Property Inspector:
 
   - **Microphone** — which input device to record from. Open only while the
     key is held. Recording caps at 15 seconds.
@@ -171,6 +171,24 @@ Once signed in, their authentication persists across restarts and key changes.
     give commands in Korean, Japanese, Spanish, French, German, or Chinese.
     It is per key, so one deck can carry an English key and a Korean one. An
     unrecognised code degrades to English rather than breaking the key.
+  - **Print debug message to Discord** — **off by default**, and per key.
+    With it on, every press posts one message to the session's own text
+    channel saying what was heard, **how** it was resolved (the grammar, the
+    reasoning layer, or nothing at all), and each action with its result:
+
+    ```
+    🎙️ Heard: "play playlist chill next"
+    Resolved by: grammar
+    Actions: playlist(chill, next) → Queued 12
+    ```
+
+    This is the thing to turn on when a command does not do what you
+    expected — the middle line is what answers "why did it do *that*", and it
+    posts even when nothing was recognised, which is the most useful case.
+    It is not subject to the 10-second announce cooldown, so it never
+    silently drops. Turn it back off when you are done: it publishes your
+    transcript to a channel **everyone in the session can read**, which is
+    exactly why it is opt-in and why no key arrives with it on.
 - Voice commands appear in the dashboard's Command History with a Voice badge,
   showing both what was heard and the action it ran — one row per action, all
   carrying the same utterance. **Transcripts are stored in Firestore** and

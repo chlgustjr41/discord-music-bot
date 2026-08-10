@@ -1474,3 +1474,121 @@ async def test_open_dashboard_logs_under_its_own_name(
     interpreter.actions = [Action("open_dashboard")]
     await client.post("/control/voice", data=WAV, headers=auth)
     assert service.repo.command_log[-1][1] == "open_dashboard"
+
+
+# ── voice debug echo (?debug=1) ──────────────────────────────────────────
+
+
+def debug_posts(service):
+    """The debug echoes only. `_announce` posts an EMBED, the debug path posts
+    TEXT, so the two are distinguishable in the capture notifier."""
+    return [s for s in service.fake_notifier.sent if s.get("text") is not None]
+
+
+async def test_debug_echo_reports_the_transcript_the_provenance_and_the_verbs(
+    client, service, guild_id, auth, transcriber, interpreter
+):
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "next song"          # grammar resolves this to `skip`
+    resp = await client.post("/control/voice?debug=1", data=WAV, headers=auth)
+    assert resp.status == 200
+    posts = debug_posts(service)
+    assert len(posts) == 1
+    message = posts[0]["text"]
+    assert posts[0]["guild_id"] == guild_id
+    assert "next song" in message      # what was HEARD
+    assert "grammar" in message        # how it was RESOLVED
+    assert "skip" in message           # what RAN
+
+
+async def test_no_debug_parameter_posts_nothing(
+    client, service, guild_id, auth, transcriber, interpreter
+):
+    """The regression that keeps the echo opt-in: it publishes transcribed
+    speech to a channel other people can read."""
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "next song"
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 200
+    assert service.fake_notifier.sent == []
+
+
+async def test_a_non_truthy_debug_value_leaves_the_echo_off(
+    client, service, guild_id, auth, transcriber, interpreter
+):
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "next song"
+    for value in ("0", "false", "no", ""):
+        resp = await client.post(
+            f"/control/voice?debug={value}", data=WAV, headers=auth
+        )
+        assert resp.status == 200
+    assert service.fake_notifier.sent == []
+
+
+async def test_debug_echo_reports_reasoning_when_the_interpreter_resolved_it(
+    client, service, guild_id, auth, transcriber, interpreter
+):
+    put_user_in_voice(service, guild_id)
+    transcriber.text = UNINTERPRETABLE
+    interpreter.actions = [Action("pause")]
+    resp = await client.post("/control/voice?debug=1", data=WAV, headers=auth)
+    assert resp.status == 200
+    message = debug_posts(service)[0]["text"]
+    assert "reasoning" in message
+    assert "grammar" not in message
+
+
+async def test_debug_echo_posts_when_nothing_was_recognised_and_still_422s(
+    client, service, guild_id, auth, transcriber, interpreter
+):
+    """The single most useful case: "I heard X and resolved nothing". The 422
+    returns before dispatch, so the post has to happen anyway."""
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "mmm hmm yeah whatever"
+    interpreter.actions = []
+    resp = await client.post("/control/voice?debug=1", data=WAV, headers=auth)
+    assert resp.status == 422
+    assert (await resp.json())["error"] == "no-speech"
+    posts = debug_posts(service)
+    assert len(posts) == 1
+    assert "mmm hmm yeah whatever" in posts[0]["text"]
+    assert "nothing" in posts[0]["text"]
+
+
+async def test_the_announce_cooldown_does_not_suppress_the_debug_echo(
+    client, service, guild_id, sid, auth, transcriber, interpreter
+):
+    """The 10 s per-guild cooldown exists to stop a misrecognition spamming an
+    embed. A debug echo is requested per press and is worthless if it drops."""
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {"currentTrack": {"title": "Song"}})
+    transcriber.text = "now playing"
+
+    first = await client.post("/control/voice", data=WAV, headers=auth)
+    assert first.status == 200
+    # A real announce landed, so the cooldown window is now open.
+    assert [s for s in service.fake_notifier.sent if s.get("embed") is not None]
+
+    second = await client.post("/control/voice?debug=1", data=WAV, headers=auth)
+    assert second.status == 200
+    body = await second.json()
+    assert body["ok"] is False, "the announce itself was cooled down"
+    posts = debug_posts(service)
+    assert len(posts) == 1
+    assert "now playing" in posts[0]["text"]
+
+
+async def test_a_failing_debug_post_does_not_change_the_response(
+    client, service, guild_id, auth, transcriber, interpreter
+):
+    class BoomNotifier:
+        async def send(self, guild_id, **kwargs):
+            raise RuntimeError("discord is having a day")
+
+    put_user_in_voice(service, guild_id)
+    service.notifier = BoomNotifier()
+    transcriber.text = "next song"
+    resp = await client.post("/control/voice?debug=1", data=WAV, headers=auth)
+    assert resp.status == 200
+    assert [a["action"] for a in (await resp.json())["actions"]] == ["skip"]

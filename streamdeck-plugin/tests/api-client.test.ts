@@ -148,7 +148,7 @@ describe("JackyClient", () => {
 
   it("POSTs voice audio with the chosen transcription language", async () => {
     const f = fetchStub(200, { transcript: "", actions: [], ok: true, detail: null });
-    await new JackyClient(CONFIG, f).voiceCommand(new Uint8Array([1, 2]), "ko");
+    await new JackyClient(CONFIG, f).voiceCommand(new Uint8Array([1, 2]), { language: "ko" });
     const [url, init] = (f as any).mock.calls[0];
     expect(url).toBe("https://control.example.com/control/voice?language=ko");
     expect(init.method).toBe("POST");
@@ -167,8 +167,41 @@ describe("JackyClient", () => {
 
   it("omits the language parameter for a blank stored setting", async () => {
     const f = fetchStub(200, { transcript: "", actions: [], ok: true, detail: null });
-    await new JackyClient(CONFIG, f).voiceCommand(new Uint8Array([1, 2]), "");
+    await new JackyClient(CONFIG, f).voiceCommand(new Uint8Array([1, 2]), { language: "" });
     expect((f as any).mock.calls[0][0]).toBe("https://control.example.com/control/voice");
+  });
+
+  it("asks for the debug echo only when the key opted in", async () => {
+    // The echo posts the transcript to a Discord channel other people read, so
+    // the parameter must never appear off the back of a default.
+    const f = fetchStub(200, { transcript: "", actions: [], ok: true, detail: null });
+    await new JackyClient(CONFIG, f).voiceCommand(new Uint8Array([1, 2]), { debug: true });
+    expect((f as any).mock.calls[0][0]).toBe(
+      "https://control.example.com/control/voice?debug=1",
+    );
+  });
+
+  it("omits the debug parameter when the option is off", async () => {
+    // Absent already means off server-side, so there is no `debug=0` to send.
+    const f = fetchStub(200, { transcript: "", actions: [], ok: true, detail: null });
+    const client = new JackyClient(CONFIG, f);
+    await client.voiceCommand(new Uint8Array([1, 2]), { debug: false });
+    await client.voiceCommand(new Uint8Array([1, 2]), { language: "ko" });
+    const urls = (f as any).mock.calls.map((c: any[]) => c[0]);
+    expect(urls[0]).toBe("https://control.example.com/control/voice");
+    expect(urls[1]).toBe("https://control.example.com/control/voice?language=ko");
+    for (const url of urls) expect(url).not.toContain("debug");
+  });
+
+  it("sends the language alongside the debug flag", async () => {
+    const f = fetchStub(200, { transcript: "", actions: [], ok: true, detail: null });
+    await new JackyClient(CONFIG, f).voiceCommand(new Uint8Array([1, 2]), {
+      language: "ko",
+      debug: true,
+    });
+    expect((f as any).mock.calls[0][0]).toBe(
+      "https://control.example.com/control/voice?language=ko&debug=1",
+    );
   });
 
   it("voiceCommand throws ControlApiError carrying 422 so the key can tell them apart", async () => {
