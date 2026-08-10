@@ -170,7 +170,7 @@ describe("PresenceBar self", () => {
   it("marks your own avatar so you can tell which one is you without hovering", () => {
     const { container } = render(
       <PresenceBar
-        selfUid="u1"
+        selfId="u1"
         participants={[participant({ uid: "u1" }), participant({ uid: "u2" })]}
       />,
     );
@@ -186,7 +186,7 @@ describe("PresenceBar self", () => {
   it("makes your own avatar a button, and nobody else's", () => {
     const { container } = render(
       <PresenceBar
-        selfUid="u1"
+        selfId="u1"
         participants={[participant({ uid: "u1" }), participant({ uid: "u2" })]}
       />,
     );
@@ -200,15 +200,32 @@ describe("PresenceBar self", () => {
 
   it("opens the nickname editor when you click yourself", () => {
     const { container } = render(
-      <PresenceBar selfUid="u1" participants={[participant({ uid: "u1" })]} />,
+      <PresenceBar selfId="u1" participants={[participant({ uid: "u1" })]} />,
     );
     fireEvent.click(container.querySelector('[data-uid="u1"]') as HTMLElement);
     expect(screen.getByText("Who are you?")).toBeDefined();
   });
 
+  it("lets a signed-out visitor click their own badge", () => {
+    // Self-detection keys on the PRESENCE id, not a uid. Keying on the uid
+    // would leave every anonymous visitor unable to name themselves — the one
+    // thing they can do about being "Anonymous 2".
+    const id = "anon_3f7a9c21-4e5b-4c8d-9a1e-77b0c2d3e4f5";
+    const { container } = render(
+      <PresenceBar
+        selfId={id}
+        participants={[participant({ uid: id, name: "Anonymous 1" })]}
+      />,
+    );
+    const self = container.querySelector(`[data-uid="${id}"]`) as HTMLElement;
+    expect(self.tagName).toBe("BUTTON");
+    fireEvent.click(self);
+    expect(screen.getByText("Who are you?")).toBeDefined();
+  });
+
   it("does not open the editor when you click someone else", () => {
     const { container } = render(
-      <PresenceBar selfUid="u1" participants={[participant({ uid: "u2" })]} />,
+      <PresenceBar selfId="u1" participants={[participant({ uid: "u2" })]} />,
     );
     fireEvent.click(container.querySelector('[data-uid="u2"]') as HTMLElement);
     expect(screen.queryByText("Who are you?")).toBeNull();

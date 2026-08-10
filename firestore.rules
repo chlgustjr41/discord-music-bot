@@ -50,26 +50,37 @@ service cloud.firestore {
     // READ IS PUBLIC, deliberately. The session code is already the capability
     // for everything else on this dashboard — queue, playback, history — so
     // who is looking is no more sensitive than what is playing, and a
-    // signed-out visitor is meant to see the avatar row. WRITE stays
-    // uid-scoped: you can watch, but you can only put yourself on the list,
-    // and only you can remove or refresh you. This is the one place in this
-    // app where per-user write rules are both meaningful and achievable.
+    // signed-out visitor is meant to see the avatar row.
+    //
+    // WRITE SPLITS ON THE DOCUMENT ID, because presence is now a property of
+    // having the page open rather than of having an account, and an anonymous
+    // row cannot be uid-scoped — there is no uid to scope it to.
+    //
+    //   id == request.auth.uid   → signed in: only you can create, refresh or
+    //                              remove you, exactly as before.
+    //   id matches anon_<id>     → anonymous: writable and deletable WITHOUT
+    //                              AUTH, which means by ANYONE who has the
+    //                              session code.
+    //
+    // State that consequence plainly rather than hiding it: a griefer with the
+    // code can overwrite or delete any anonymous presence row, blanking
+    // someone's avatar or adding fake ones. It is accepted because it is the
+    // trust level this app already runs at — `servers/{id}` and every
+    // subcollection under it are `allow read, write: if true`, so the queue,
+    // playback and history are already fully open to the same person, and a
+    // presence row is strictly less valuable than the queue. A deleted row
+    // also comes back on the next heartbeat, within 15 seconds. Signed-in rows
+    // keep their uid scoping, so an account's avatar still cannot be forged or
+    // removed by anyone else.
+    //
     // `updatedAt` is stamped by the server, never by the writer: a client-set
     // timestamp lets anyone write one far-future value and stay in everyone's
     // presence bar forever, and nobody else could delete them because writes
     // are uid-scoped. Clock skew alone would also make honest users flicker
     // in and out.
     //
-    // The shape is constrained as well as the author. Without that, `name` and
-    // `color` are free text (an avatar visually identical to somebody
-    // else's) and `photoURL` is worse: it is rendered as an <img src>
-    // for every viewer, so an attacker-controlled URL harvests the IP and
-    // User-Agent of everyone on the dashboard on every render, with no
-    // interaction. Name collision is only BOUNDED here, not eliminated — two
-    // people can legitimately share a display name — which is acceptable
-    // because every participant is an authenticated member of a session whose
-    // code they already have.
-    match /presence/{sessionCode}/participants/{uid} {
+    // The shape is constrained as well as the author — see validShape below.
+    match /presence/{sessionCode}/participants/{pid} {
       function validPhoto(photo) {
         return photo == null
           || (photo is string
@@ -78,22 +89,52 @@ service cloud.firestore {
               // googleusercontent.com subdomain, the Google account photo host.
               && photo.matches('https://[a-zA-Z0-9-]+[.]googleusercontent[.]com/.*'));
       }
+      // Must stay identical to ANON_ID in frontend/src/lib/presence.ts, which
+      // is what decides who is DISPLAYED as anonymous. matches() is a
+      // full-string match, so a uid can never satisfy this by prefix. The
+      // alphabet covers a crypto.randomUUID(), hyphens included.
+      function isAnon() {
+        return pid.matches('anon_[A-Za-z0-9_-]{8,64}');
+      }
+      // The shape, which is identical on both branches. Without it `name` and
+      // `color` are free text (an avatar visually identical to somebody
+      // else's) and `photoURL` is worse: it is rendered as an <img src> for
+      // every viewer, so an attacker-controlled URL harvests the IP and
+      // User-Agent of everyone on the dashboard on every render, with no
+      // interaction. Name collision is only BOUNDED here, not eliminated —
+      // two people can legitimately share a display name.
+      //
+      // `anon` is optional rather than required: signed-in clients do not send
+      // it, and demanding it would deny every write from a browser still
+      // running the previous build.
+      function validShape() {
+        return request.resource.data.keys().hasOnly(
+                 ['name', 'photoURL', 'color', 'focused', 'anon', 'updatedAt'])
+          && request.resource.data.keys().hasAll(
+               ['name', 'color', 'focused', 'updatedAt'])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() <= 64
+          && request.resource.data.color is string
+          && request.resource.data.color.size() <= 32
+          // Greys the avatar for everyone else: visible tab AND focused window.
+          && request.resource.data.focused is bool
+          && request.resource.data.updatedAt == request.time;
+      }
+
       allow read: if true;
-      allow delete: if request.auth != null && request.auth.uid == uid;
-      allow create, update: if request.auth != null
-        && request.auth.uid == uid
-        && request.resource.data.keys().hasOnly(
-             ['name', 'photoURL', 'color', 'focused', 'updatedAt'])
-        && request.resource.data.keys().hasAll(
-             ['name', 'color', 'focused', 'updatedAt'])
-        && request.resource.data.name is string
-        && request.resource.data.name.size() <= 64
-        && request.resource.data.color is string
-        && request.resource.data.color.size() <= 32
-        && validPhoto(request.resource.data.get('photoURL', null))
-        // Greys the avatar for everyone else: visible tab AND focused window.
-        && request.resource.data.focused is bool
-        && request.resource.data.updatedAt == request.time;
+      allow delete: if (request.auth != null && request.auth.uid == pid)
+        || isAnon();
+      allow create, update: if
+        (request.auth != null
+          && request.auth.uid == pid
+          && validShape()
+          && validPhoto(request.resource.data.get('photoURL', null)))
+        // An anonymous row may not carry a photo AT ALL. There is no account
+        // photo behind it, so any URL there was chosen by the writer — and
+        // this branch has no authenticated writer to hold responsible.
+        || (isAnon()
+            && validShape()
+            && request.resource.data.get('photoURL', null) == null);
     }
 
 

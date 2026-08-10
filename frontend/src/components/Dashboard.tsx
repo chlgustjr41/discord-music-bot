@@ -48,7 +48,7 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
   // Presence changes on join, leave and heartbeat only — a handful of events
   // per session — so it lives here with everything else rather than behind an
   // isolating wrapper.
-  const { participants } = usePresence(sessionCode, user);
+  const { participants, selfId } = usePresence(sessionCode, user);
 
   const botConnected = !!state?.voiceChannelId;
 
@@ -185,7 +185,7 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
           {/* One wrapping cluster: at narrow widths the whole group drops to
               its own line instead of squeezing (or clipping) the controls. */}
           <div className="flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto sm:gap-2">
-          <PresenceBar participants={participants} selfUid={user?.uid ?? null} />
+          <PresenceBar participants={participants} selfId={selfId} />
           <IdentityChip />
           <PinServerButton serverId={serverId} serverName={state.serverName} />
           <Button

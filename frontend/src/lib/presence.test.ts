@@ -4,9 +4,12 @@ import {
   anchorFor,
   colorForUid,
   isAllowedPhotoUrl,
+  isAnonymousId,
   isFocused,
   livingParticipants,
-  shouldPublish,
+  presenceIdFor,
+  toParticipant,
+  withDisplayNames,
   type Participant,
 } from "./presence";
 
@@ -107,13 +110,162 @@ describe("livingParticipants", () => {
   });
 });
 
-describe("shouldPublish", () => {
-  it("is the single auth gate: signed out never publishes", () => {
-    expect(shouldPublish(false)).toBe(false);
+describe("toParticipant", () => {
+  const NOW = 1_700_000_000_000;
+  const stamp = (ms: number) => ({ toMillis: () => ms });
+
+  it("converts a server Timestamp to plain milliseconds", () => {
+    const row = toParticipant("u1", { updatedAt: stamp(NOW - 1_000) }, false);
+    expect(row.updatedAt).toBe(NOW - 1_000);
   });
 
-  it("publishes when signed in", () => {
-    expect(shouldPublish(true)).toBe(true);
+  it("keeps a row alive while THIS browser's write is still in flight", () => {
+    // serverTimestamp() reads back as null in the local snapshot Firestore
+    // fires before the ack. Without this, your own avatar blinks out for the
+    // round trip on every heartbeat, nickname change and focus change.
+    const row = toParticipant("u1", { updatedAt: null }, true);
+    expect(livingParticipants([row], Date.now())).toHaveLength(1);
+  });
+
+  it("still filters an unresolved timestamp that is NOT our pending write", () => {
+    // The half that stops this becoming "NaN means fresh": only a document
+    // this browser has an unacknowledged write on gets the benefit of the
+    // doubt. Anything else with no usable timestamp is not a live row.
+    const row = toParticipant("u1", { updatedAt: null }, false);
+    expect(livingParticipants([row], Date.now())).toHaveLength(0);
+  });
+
+  it("prefers the acked server time over now, even while a write is pending", () => {
+    // hasPendingWrites is a fallback for the unresolved field, not a licence
+    // to overwrite a real timestamp with this browser's clock.
+    const row = toParticipant("u1", { updatedAt: stamp(NOW - 5_000) }, true);
+    expect(row.updatedAt).toBe(NOW - 5_000);
+  });
+
+  it("carries the document id and the published fields through", () => {
+    const row = toParticipant(
+      "u1",
+      { name: "Ada", photoURL: "https://x/y", color: "#abc", focused: false },
+      false,
+    );
+    expect(row).toMatchObject({
+      uid: "u1",
+      name: "Ada",
+      photoURL: "https://x/y",
+      color: "#abc",
+      focused: false,
+    });
+  });
+
+  it("defaults a row with no focus flag to focused rather than greying it out", () => {
+    expect(toParticipant("u1", {}, false).focused).toBe(true);
+  });
+
+  it("defaults missing or wrongly typed fields rather than trusting them", () => {
+    const row = toParticipant("u1", { name: 7, photoURL: 7, color: 7 }, false);
+    expect(row).toMatchObject({ name: "", photoURL: null, color: "" });
+  });
+});
+
+describe("presenceIdFor", () => {
+  const BROWSER = "3f7a9c21-4e5b-4c8d-9a1e-77b0c2d3e4f5";
+
+  it("uses the account uid when signed in", () => {
+    expect(presenceIdFor("uid-A", BROWSER)).toBe("uid-A");
+  });
+
+  it("namespaces the per-browser id when signed out", () => {
+    expect(presenceIdFor(null, BROWSER)).toBe(`anon_${BROWSER}`);
+  });
+
+  it("treats an empty uid as signed out rather than writing to an empty id", () => {
+    expect(presenceIdFor("", BROWSER)).toBe(`anon_${BROWSER}`);
+  });
+});
+
+describe("isAnonymousId", () => {
+  // Must stay in lockstep with the rules' anon_[A-Za-z0-9_-]{8,64}: this is
+  // what decides who gets a number, and the rules are what decides who may
+  // write without auth. Disagreement between them is the bug to prevent.
+  it("recognises the ids presenceIdFor actually produces", () => {
+    const id = presenceIdFor(null, "3f7a9c21-4e5b-4c8d-9a1e-77b0c2d3e4f5");
+    expect(isAnonymousId(id)).toBe(true);
+  });
+
+  it("never mistakes an account uid for an anonymous id", () => {
+    // Firebase uids are 28 alphanumeric characters.
+    expect(isAnonymousId("Ab3xY9pQrS1tU2vW4xY6zA8bC0dE")).toBe(false);
+    expect(isAnonymousId("uid-A")).toBe(false);
+  });
+
+  it("rejects a near-miss that the rules would also reject", () => {
+    expect(isAnonymousId("anon_short")).toBe(false); // under 8 characters
+    expect(isAnonymousId("anon_" + "a".repeat(65))).toBe(false); // over 64
+    expect(isAnonymousId("anon_has spaces!")).toBe(false);
+    expect(isAnonymousId("anon_")).toBe(false);
+    expect(isAnonymousId("xanon_abcdefgh")).toBe(false);
+    expect(isAnonymousId("anon_abcdefgh/../x")).toBe(false);
+  });
+});
+
+describe("withDisplayNames", () => {
+  const anon = (n: string, name = "") => ({ ...p(`anon_${n}`, 0), name });
+
+  it("numbers un-named anonymous rows", () => {
+    const out = withDisplayNames([anon("bbbbbbbb"), anon("aaaaaaaa")]);
+    expect(out.map((x) => x.name)).toEqual(["Anonymous 2", "Anonymous 1"]);
+  });
+
+  it("numbers identically for two viewers holding the same people", () => {
+    // The whole reason numbering is by sorted document id and not by join
+    // order: every viewer must independently call the same person
+    // "Anonymous 1", with no server assigning it.
+    const rows = [anon("cccccccc"), anon("aaaaaaaa"), anon("bbbbbbbb")];
+    const viewerA = withDisplayNames(rows);
+    const viewerB = withDisplayNames([...rows].reverse());
+
+    const byId = (xs: Participant[]) =>
+      Object.fromEntries(xs.map((x) => [x.uid, x.name]));
+    expect(byId(viewerB)).toEqual(byId(viewerA));
+    expect(byId(viewerA)).toEqual({
+      anon_aaaaaaaa: "Anonymous 1",
+      anon_bbbbbbbb: "Anonymous 2",
+      anon_cccccccc: "Anonymous 3",
+    });
+  });
+
+  it("does not depend on the arrival order of a shuffled snapshot", () => {
+    const rows = ["dddddddd", "aaaaaaaa", "cccccccc", "bbbbbbbb"].map((n) => anon(n));
+    const shuffles = [rows, [...rows].reverse(), [rows[2], rows[0], rows[3], rows[1]]];
+    const naming = shuffles.map((s) =>
+      Object.fromEntries(withDisplayNames(s).map((x) => [x.uid, x.name])),
+    );
+    expect(naming[1]).toEqual(naming[0]);
+    expect(naming[2]).toEqual(naming[0]);
+  });
+
+  it("shows an anonymous nickname instead of a number, and does not count it", () => {
+    const out = withDisplayNames([
+      anon("aaaaaaaa", "Ada"),
+      anon("bbbbbbbb"),
+    ]);
+    expect(out.map((x) => x.name)).toEqual(["Ada", "Anonymous 1"]);
+  });
+
+  it("leaves signed-in rows untouched, named or not", () => {
+    const rows = [p("uid-A", 0), { ...p("uid-B", 0), name: "" }, anon("bbbbbbbb")];
+    const out = withDisplayNames(rows);
+    expect(out[0]).toBe(rows[0]);
+    expect(out[1]).toBe(rows[1]);
+    expect(out[2].name).toBe("Anonymous 1");
+  });
+
+  it("numbers a whitespace-only name, which is not a name", () => {
+    expect(withDisplayNames([anon("aaaaaaaa", "   ")])[0].name).toBe("Anonymous 1");
+  });
+
+  it("returns an empty list unchanged", () => {
+    expect(withDisplayNames([])).toEqual([]);
   });
 });
 

@@ -5,8 +5,10 @@ import { NicknameDialog } from "./NicknameDialog";
 
 interface Props {
   participants: Participant[];
-  /** Which row is you, if you are signed in. Yours is marked and clickable. */
-  selfUid?: string | null;
+  /** Which row is you: a presence document id, uid or `anon_...`, NOT a
+   *  uid. Keying on the uid would leave a signed-out visitor unable to click
+   *  their own badge to set a nickname. Yours is marked and clickable. */
+  selfId?: string | null;
 }
 
 const MAX_SHOWN = 4;
@@ -18,7 +20,7 @@ const MAX_SHOWN = 4;
  * the same to everyone and across reloads; it is drawn as an explicit box-shadow
  * rather than a utility class whose colour could drift.
  */
-export function PresenceBar({ participants, selfUid = null }: Props) {
+export function PresenceBar({ participants, selfId = null }: Props) {
   const [tip, setTip] = useState<(Anchor & { uid: string }) | null>(null);
   const [editing, setEditing] = useState(false);
 
@@ -38,7 +40,7 @@ export function PresenceBar({ participants, selfUid = null }: Props) {
   return (
     <div className="flex items-center -space-x-2">
       {shown.map((p) => {
-        const isSelf = !!selfUid && p.uid === selfUid;
+        const isSelf = !!selfId && p.uid === selfId;
         const label = isSelf
           ? `${p.name || "You"} (you) — click to change your name`
           : p.focused
@@ -127,7 +129,7 @@ export function PresenceBar({ participants, selfUid = null }: Props) {
             }}
           >
             <span className="font-medium">{tipped.name || "Someone"}</span>
-            {selfUid && tipped.uid === selfUid && (
+            {selfId && tipped.uid === selfId && (
               <span className="text-muted-foreground"> (you)</span>
             )}
             {!tipped.focused && (

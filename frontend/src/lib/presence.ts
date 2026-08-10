@@ -1,12 +1,14 @@
 /**
  * Pure logic behind dashboard presence.
  *
- * Deliberately free of Firebase imports so every rule here — who publishes,
- * who is still here — can be tested exhaustively without a network or an
- * emulator. The hook that owns the I/O makes no decisions of its own.
+ * Deliberately free of Firebase imports so every rule here — which row is
+ * yours, who is still here, what each row is called — can be tested
+ * exhaustively without a network or an emulator. The hook that owns the I/O
+ * makes no decisions of its own.
  */
 
 export interface Participant {
+  /** The presence DOCUMENT id: an account uid, or `anon_<browserId>`. */
   uid: string;
   name: string;
   photoURL: string | null;
@@ -70,6 +72,61 @@ export function livingParticipants(all: Participant[], now: number): Participant
 }
 
 /**
+ * Firestore hands `updatedAt` back as a Timestamp, and as `null` for a local
+ * write the server has not acknowledged yet. Everything above this boundary
+ * deals in plain milliseconds, so the conversion happens here, once, and an
+ * unresolved field becomes NaN rather than a number that would read as fresh.
+ *
+ * Duck-typed on `toMillis` rather than imported from firebase/firestore, so
+ * this file stays free of Firebase and testable without an emulator.
+ */
+function toMillis(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (
+    value &&
+    typeof value === "object" &&
+    typeof (value as { toMillis?: unknown }).toMillis === "function"
+  ) {
+    return (value as { toMillis: () => number }).toMillis();
+  }
+  return NaN;
+}
+
+/**
+ * One presence document, as the UI needs it.
+ *
+ * `hasPendingWrites` comes straight off the snapshot's metadata and is true
+ * exactly when THIS browser has an unacknowledged write on this document. That
+ * is the one case where an unresolved `updatedAt` is not a reason to doubt the
+ * row: it is our own write, in flight, and the person is demonstrably here.
+ * Resolving it to now keeps your avatar on screen for the round trip instead of
+ * blinking it out every heartbeat.
+ *
+ * It is deliberately NOT a general "NaN means fresh" rule — livingParticipants
+ * keeps its guard, and an unresolved stamp on anyone else's row still filters
+ * it out, because a malformed row must not become immortal.
+ */
+export function toParticipant(
+  uid: string,
+  data: Record<string, unknown>,
+  hasPendingWrites: boolean,
+): Participant {
+  const updatedAt = toMillis(data.updatedAt);
+  return {
+    uid,
+    name: typeof data.name === "string" ? data.name : "",
+    photoURL: typeof data.photoURL === "string" ? data.photoURL : null,
+    color: typeof data.color === "string" ? data.color : "",
+    // Defaults to focused. A row written by a client from before this field
+    // existed says nothing about attention, and greying someone out on the
+    // strength of a missing field would be a lie about them.
+    focused: typeof data.focused === "boolean" ? data.focused : true,
+    updatedAt:
+      hasPendingWrites && !Number.isFinite(updatedAt) ? Date.now() : updatedAt,
+  };
+}
+
+/**
  * Hosts a participant avatar may be loaded from.
  *
  * `photoURL` is rendered as `<img src>` for everyone on the dashboard, so an
@@ -99,10 +156,62 @@ export function isAllowedPhotoUrl(url: string | null | undefined): boolean {
   return host === PHOTO_HOST || host.endsWith(`.${PHOTO_HOST}`);
 }
 
-/** The one place that answers "does this browser broadcast?", so the auth
- *  gate cannot be applied in one code path and forgotten in another. */
-export function shouldPublish(signedIn: boolean): boolean {
-  return signedIn;
+/**
+ * Anonymous presence ids, as both the client and the rules understand them.
+ *
+ * MUST stay identical to the pattern in firestore.rules: this decides who is
+ * shown as "Anonymous N", and the copy in the rules decides who may write
+ * without authenticating. If the two ever disagree, one of them is wrong about
+ * a security boundary. The alphabet covers a crypto.randomUUID() (hyphens) and
+ * the length bounds keep a document id sane.
+ */
+const ANON_ID = /^anon_[A-Za-z0-9_-]{8,64}$/;
+
+/**
+ * The document id for this browser's presence row.
+ *
+ * Namespaced so the rules can tell a signed-in row from an anonymous one by id
+ * alone — an anonymous row cannot be uid-scoped, because there is no uid to
+ * scope it to, so the id shape is the only thing left to key the rule on.
+ */
+export function presenceIdFor(uid: string | null, browserId: string): string {
+  return uid ? uid : `anon_${browserId}`;
+}
+
+export function isAnonymousId(id: string): boolean {
+  return ANON_ID.test(id);
+}
+
+/**
+ * Resolves the name each row should DISPLAY: an anonymous participant who has
+ * not set a nickname becomes "Anonymous N".
+ *
+ * The number is assigned here, at render, and never stored — two browsers
+ * cannot then fight over who is "Anonymous 1". It is derived by sorting the
+ * un-named anonymous rows by document id, which is the only ordering every
+ * viewer can compute for themselves and agree on with no server involved.
+ *
+ * Explicitly NOT join order: `updatedAt` moves on every heartbeat, and a
+ * write-once `joinedAt` would be clobbered by the merge writes that publish
+ * name and focus changes.
+ *
+ * The accepted cost: when an un-named anonymous participant leaves, everyone
+ * after them shifts down a number. Nobody is misidentified — the numbers are
+ * still consistent across viewers at any instant — but "Anonymous 2" is not a
+ * durable name for a person. Stable server-assigned numbering is out of scope.
+ */
+export function withDisplayNames(participants: Participant[]): Participant[] {
+  const unnamed = participants.filter((p) => isAnonymousId(p.uid) && !p.name.trim());
+  const numbers = new Map(
+    unnamed
+      .map((p) => p.uid)
+      .sort()
+      .map((uid, i) => [uid, i + 1] as const),
+  );
+  return participants.map((p) => {
+    const n = numbers.get(p.uid);
+    return n === undefined ? p : { ...p, name: `Anonymous ${n}` };
+  });
 }
 
 /** Just enough of a DOMRect to place a tooltip, so this stays testable
