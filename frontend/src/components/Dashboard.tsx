@@ -185,7 +185,6 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
           {/* One wrapping cluster: at narrow widths the whole group drops to
               its own line instead of squeezing (or clipping) the controls. */}
           <div className="flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto sm:gap-2">
-          <PresenceBar participants={participants} selfId={selfId} />
           <IdentityChip />
           <PinServerButton serverId={serverId} serverName={state.serverName} />
           <Button
@@ -219,6 +218,14 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
             {exiting ? "Disconnecting…" : "Exit"}
           </Button>
           <AccountMenu />
+          </div>
+          {/* Its own full-width row rather than a member of the control
+              cluster: the avatars expand on hover, and sharing a wrapping row
+              with six buttons would either shove them around or clip the
+              expansion. `basis-full` puts it on a new line without needing a
+              second flex container. */}
+          <div className="flex basis-full justify-end">
+            <PresenceBar participants={participants} selfId={selfId} />
           </div>
         </CardContent>
       </Card>
