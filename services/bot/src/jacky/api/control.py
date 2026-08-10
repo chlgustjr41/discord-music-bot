@@ -432,7 +432,9 @@ def register_control_routes(
         # rule uniformly makes "the word 'playlist' never reaches a YouTube
         # search" a property of the ROUTE rather than of whichever component
         # happened to produce the actions.
-        actions = enforce_intent(actions, transcript)
+        # Same `language` that was sent to the transcriber, so the play-verb
+        # check reads the transcript in the language it was produced in.
+        actions = enforce_intent(actions, transcript, language)
         # Defence in depth: LlmIntentInterpreter runs validate_actions, which
         # already truncates, but `interpreter` is an injected Any and the cap
         # is this route's own blast-radius bound — one dispatch and one history

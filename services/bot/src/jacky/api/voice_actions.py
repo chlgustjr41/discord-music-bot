@@ -122,7 +122,43 @@ def validate_actions(raw) -> list[Action]:
 # "playlists" is not "playlist". Tokenizing beats a substring test or a
 # hand-written \b regex per word, and it treats punctuation the same way the
 # grammar's normalizer does.
-_WORD = re.compile(r"[a-z0-9]+")
+#
+# Unicode-aware (\w, not [a-z0-9]) so an accented word stays ONE token. With
+# an ASCII class the Spanish "ponés" splits into "pon" + "s" and the verb
+# "pon" matches a word that is not it — the same substring bug "displayed"
+# already guards against, one alphabet over.
+_WORD = re.compile(r"\w+")
+
+# Play verbs per language, for the placement rule below. The Voice key offers
+# these seven (see transcribe.LANGUAGES) and the route passes the same
+# normalized code it sent to the transcriber.
+#
+# NOTE the imperative/infinitive pairs: speech is usually the imperative
+# ("spiele"), but transcribers emit the infinitive often enough to be worth
+# listing, and an extra verb only costs a missed downgrade on a phrasing that
+# already contains a play verb.
+_PLAY_VERBS = {
+    "en": ("play",),
+    "ko": ("재생", "틀어", "플레이"),
+    "ja": ("再生", "かけて", "プレイ"),
+    "es": ("reproduce", "reproducir", "pon", "toca"),
+    "fr": ("joue", "jouer", "lance", "mets"),
+    "de": ("spiel", "spiele", "spielen", "abspielen"),
+    "zh": ("播放", "放"),
+}
+
+# Korean, Japanese and Chinese are not written with spaces around the verb
+# stem — "재생해줘" is one token and "재생" is a prefix of it — so whole-word
+# matching cannot work and these are matched as substrings. Latin-script
+# languages keep whole-word matching, which is what makes "displayed" and
+# "ponés" not count.
+#
+# The tradeoff is asymmetric per script: a substring FALSE POSITIVE (zh "放"
+# also appears in 放松 "relax") costs an interrupt the user did not ask for,
+# while a false negative costs only an append. "放" is kept because 放音乐 is
+# how the command is ordinarily spoken; if that proves too loose in practice
+# the fix is to drop the bare character, not to widen the others.
+_SUBSTRING_LANGUAGES = frozenset({"ko", "ja", "zh"})
 
 
 # Verbs that REPLACE what is currently playing when placement is "now".
@@ -133,25 +169,48 @@ _WORD = re.compile(r"[a-z0-9]+")
 _INTERRUPTING = ("play", "playlist")
 
 
-def enforce_intent(actions: list[Action], transcript: str) -> list[Action]:
+def _said_play(transcript: str, language: str) -> bool:
+    """Did the user actually utter a play verb, in the language they set?"""
+    verbs = _PLAY_VERBS.get(language)
+    if verbs is None:
+        # An unlisted language degrades to "assume they did", NOT to "no verb
+        # exists". The latter would make the downgrade unconditional and leave
+        # that language able only to append — silently, since the key still
+        # reports success. That is exactly the failure this table exists to
+        # remove, so the degradation must not reintroduce it for the next
+        # language added to the dropdown before it is added here.
+        return True
+    lowered = transcript.lower()
+    if language in _SUBSTRING_LANGUAGES:
+        return any(verb in lowered for verb in verbs)
+    return bool(set(_WORD.findall(lowered)) & set(verbs))
+
+
+def enforce_intent(
+    actions: list[Action], transcript: str, language: str = "en"
+) -> list[Action]:
     """A second, purely structural pass, applied AFTER validate_actions.
 
     Two guarantees that do not depend on the model having cooperated:
 
     - an INTERRUPTING action (`play` or `playlist`) with placement "now" is
-      downgraded to "end" unless the transcript actually contains the word
-      "play". The currently playing track is only overridden by an explicit
-      "play" (or by a skip, which this function does not touch);
+      downgraded to "end" unless the transcript actually contains a play verb
+      IN `language`. The currently playing track is only overridden by an
+      explicit play verb (or by a skip, which this function does not touch);
     - a `play` action becomes a `playlist` action when the transcript
       contains "playlist" — a saved playlist must never reach a YouTube
       search.
 
     The downgrade runs first, so the conversion carries the enforced
     placement rather than reinstating the one the model asked for.
+
+    The playlist rule stays English-only on purpose: it keys off the word the
+    grammar's own playlist table keys off, and mistaking a foreign word for
+    "playlist" would route a real search to a playlist lookup that then finds
+    nothing. The placement rule is the one with a silent failure mode.
     """
-    words = set(_WORD.findall(transcript.lower()))
-    said_play = "play" in words
-    said_playlist = "playlist" in words
+    said_play = _said_play(transcript, language)
+    said_playlist = "playlist" in set(_WORD.findall(transcript.lower()))
 
     out: list[Action] = []
     for action in actions:

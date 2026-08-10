@@ -212,6 +212,88 @@ def test_a_playlist_cannot_interrupt_without_an_explicit_play():
     assert got == [Action("playlist", name="chill", placement="end")]
 
 
+@pytest.mark.parametrize(
+    ("language", "said"),
+    [
+        ("en", "play bohemian rhapsody"),
+        ("ko", "보헤미안 랩소디 재생해줘"),
+        ("ko", "보헤미안 랩소디 틀어줘"),
+        ("ja", "ボヘミアンラプソディを再生して"),
+        ("ja", "ボヘミアンラプソディをかけて"),
+        ("es", "reproduce bohemian rhapsody"),
+        ("es", "pon bohemian rhapsody"),
+        ("fr", "joue bohemian rhapsody"),
+        ("fr", "mets bohemian rhapsody"),
+        ("de", "spiele bohemian rhapsody"),
+        ("zh", "播放波西米亚狂想曲"),
+    ],
+)
+def test_now_survives_a_play_verb_in_every_supported_language(language, said):
+    """The downgrade must not silently cripple non-English speakers: without
+    a per-language verb table a Korean user could only ever APPEND, never
+    replace, while the key still reported success."""
+    got = enforce_intent(
+        [Action("play", query="bohemian rhapsody", placement="now")],
+        said,
+        language,
+    )
+    assert got[0].placement == "now"
+
+
+@pytest.mark.parametrize(
+    ("language", "said"),
+    [
+        ("en", "bohemian rhapsody"),
+        ("ko", "보헤미안 랩소디"),
+        ("ja", "ボヘミアンラプソディ"),
+        ("es", "bohemian rhapsody"),
+        ("fr", "bohemian rhapsody"),
+        ("de", "bohemian rhapsody"),
+        ("zh", "波西米亚狂想曲"),
+    ],
+)
+def test_a_bare_noun_phrase_is_still_downgraded_in_every_language(language, said):
+    got = enforce_intent(
+        [Action("play", query="bohemian rhapsody", placement="now")],
+        said,
+        language,
+    )
+    assert got[0].placement == "end"
+
+
+def test_an_english_play_does_not_authorise_an_interrupt_in_another_language():
+    """The table is consulted per request, not unioned: a language's verbs
+    are the only ones that count for that language."""
+    got = enforce_intent(
+        [Action("play", query="x", placement="now")], "play x", "ko"
+    )
+    assert got[0].placement == "end"
+
+
+def test_latin_verbs_are_whole_words_not_substrings():
+    """Substring matching would let the Spanish "ponés" (you put) authorise
+    an interrupt via the verb "pon"."""
+    got = enforce_intent(
+        [Action("play", query="x", placement="now")], "ponés la mesa", "es"
+    )
+    assert got[0].placement == "end"
+
+
+def test_an_unknown_language_never_downgrades():
+    """Degrading to "no verbs known" would cripple that language exactly the
+    way this fix exists to prevent; degrade toward obeying the model."""
+    got = enforce_intent(
+        [Action("play", query="x", placement="now")], "spela x", "sv"
+    )
+    assert got[0].placement == "now"
+
+
+def test_language_defaults_to_english():
+    assert enforce_intent(
+        [Action("play", query="x", placement="now")], "bohemian rhapsody"
+    )[0].placement == "end"
+
+
 def test_a_playlist_may_interrupt_when_the_transcript_said_play():
     got = enforce_intent(
         [Action("playlist", name="chill", placement="now")], "play playlist chill"

@@ -1251,6 +1251,33 @@ async def test_interpreter_output_is_run_through_enforce_intent(
         await tc.close()
 
 
+async def test_the_request_language_reaches_enforce_intent(
+    service, store, guild_id, auth, transcriber, interpreter
+):
+    """A Korean "play" must be able to replace the current track. With the
+    rule hardcoded to English this downgraded to "end" and the key still
+    reported success — the bot simply appeared to ignore the user."""
+    dispatcher = RecordingDispatcher()
+    tc = build_client(
+        service, store, transcriber=transcriber, interpreter=interpreter,
+        voice_dispatcher=dispatcher,
+    )
+    await tc.start_server()
+    try:
+        put_user_in_voice(service, guild_id)
+        transcriber.text = "보헤미안 랩소디 재생해줘"
+        interpreter.actions = [Action("play", query="보헤미안 랩소디", placement="now")]
+        resp = await tc.post(
+            "/control/voice?language=ko", data=WAV, headers=auth
+        )
+        assert resp.status == 200
+        assert dispatcher.dispatched == [
+            [Action("play", query="보헤미안 랩소디", placement="now")]
+        ]
+    finally:
+        await tc.close()
+
+
 async def test_the_language_query_parameter_reaches_the_transcriber(
     client, service, guild_id, auth, transcriber, interpreter
 ):
