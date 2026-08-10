@@ -214,9 +214,9 @@ async def test_all_control_routes_require_auth(client):
             resp = await client.request(route.method, path)
             assert resp.status == 401, f"{route.method} {path}"
             seen_paths.add(path)
-    # now-playing + 4 actions + channels + summon
+    # now-playing + 5 actions + channels + summon
     # + playlists + playlist + dashboard-url + voice
-    assert len(seen_paths) == 11
+    assert len(seen_paths) == 12
 
 
 async def test_string_user_id_resolves_int_keyed_member(client, service, guild_id, auth):
@@ -316,7 +316,7 @@ async def test_volume_zero_is_not_treated_as_unset(client, service, guild_id, si
 
 async def test_actions_409_without_session(client, auth):
     for path in ("/control/play-pause", "/control/skip",
-                 "/control/stop", "/control/volume"):
+                 "/control/stop", "/control/volume", "/control/shuffle"):
         resp = await client.post(path, json={"delta": 5}, headers=auth)
         assert resp.status == 409, path
 
@@ -365,6 +365,73 @@ async def test_volume_missing_delta_is_400(client, service, guild_id, auth):
     put_user_in_voice(service, guild_id)
     resp = await client.post("/control/volume", json={}, headers=auth)
     assert resp.status == 400
+
+
+def spy_on_shuffle(service) -> list:
+    """Record the sids handed to repo.shuffle_queue, delegating to the real one.
+
+    FakeRepo.shuffle_queue only REPORTS len(queue) — it never reorders and
+    never writes — so "the queue came back in a different order" is not an
+    observable here. The delegation itself is what this route owes: the
+    voice dispatcher and j!shuffle call the same repository method, and a
+    route that shuffled on its own would be the divergence the spec forbids.
+    """
+    calls: list = []
+    original = service.repo.shuffle_queue
+
+    async def spy(sid):
+        calls.append(sid)
+        return await original(sid)
+
+    service.repo.shuffle_queue = spy
+    return calls
+
+
+async def test_shuffle_shuffles_the_queue_and_returns_the_count(
+    client, service, guild_id, sid, auth
+):
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(
+        sid, {"queue": [{"title": t} for t in ("a", "b", "c", "d")]}
+    )
+    calls = spy_on_shuffle(service)
+
+    resp = await client.post("/control/shuffle", headers=auth)
+    assert resp.status == 200
+    assert (await resp.json()) == {"ok": True, "count": 4}
+    assert calls == [sid]
+
+
+async def test_shuffle_of_an_empty_queue_succeeds_with_zero(
+    client, service, guild_id, sid, auth
+):
+    """Shuffling nothing is not an error — the key must not flash alert."""
+    put_user_in_voice(service, guild_id)
+    assert await service.repo.get_queue(sid) == []
+    calls = spy_on_shuffle(service)
+
+    resp = await client.post("/control/shuffle", headers=auth)
+    assert resp.status == 200
+    assert (await resp.json()) == {"ok": True, "count": 0}
+    assert calls == [sid]
+
+
+async def test_shuffle_logs_one_history_row(client, service, guild_id, sid, auth):
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {"queue": [{"title": "a"}]})
+    before = len(service.repo.command_log)
+
+    resp = await client.post("/control/shuffle", headers=auth)
+    assert resp.status == 200
+    assert len(service.repo.command_log) - before == 1
+    entry = service.repo.command_log[-1]
+    # (sid, command, args, user, source, transcript). "shuffle" is the j!
+    # command name, so the dashboard's history renders the row exactly as it
+    # renders a typed j!shuffle.
+    assert entry[0] == sid
+    assert entry[1] == "shuffle"
+    assert entry[3] == "Stream Deck"
+    assert entry[4] == "streamdeck"
 
 
 # ── channel discovery ────────────────────────────────────────────────────
@@ -616,7 +683,7 @@ async def test_deactivated_guild_has_no_controllable_session(
     assert (await resp.json()) == {"active": False}
 
     for path in ("/control/play-pause", "/control/skip",
-                 "/control/stop", "/control/volume"):
+                 "/control/stop", "/control/volume", "/control/shuffle"):
         resp = await client.post(path, json={"delta": 5}, headers=auth)
         assert resp.status == 409, path
 
