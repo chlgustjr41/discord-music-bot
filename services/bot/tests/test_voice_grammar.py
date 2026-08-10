@@ -198,6 +198,43 @@ def test_argument_is_sliced_from_the_original_text():
     ]
 
 
+@pytest.mark.parametrize(
+    ("said", "query"),
+    [
+        ("play Back in Black, next", "Back in Black"),
+        ("play Back in Black , next", "Back in Black"),
+        ("play Back in Black. next", "Back in Black"),
+    ],
+)
+def test_trailing_punctuation_does_not_leak_into_a_sliced_query(said, query):
+    """_split_trailing_next matches text that was never punctuation-
+    normalized, so the comma before "next" used to end up inside the search
+    query."""
+    assert parse_structured(said).actions == [
+        Action("play", query=query, placement="next")
+    ]
+
+
+def test_the_trim_does_not_eat_punctuation_that_belongs_to_the_title():
+    """Trimming must stay at the END of the slice: a title's own punctuation
+    is exactly what the slice-from-the-original rule exists to preserve."""
+    assert parse_structured("play AC/DC Back in Black next").actions == [
+        Action("play", query="AC/DC Back in Black", placement="next")
+    ]
+    assert parse_structured("play Sgt. Pepper next").actions == [
+        Action("play", query="Sgt. Pepper", placement="next")
+    ]
+    assert parse_structured("play Sgt. Pepper").actions == [
+        Action("play", query="Sgt. Pepper", placement="now")
+    ]
+
+
+def test_the_trim_applies_to_playlist_names_too():
+    assert parse_structured("play playlist Chill Vibes, next").actions == [
+        Action("playlist", name="Chill Vibes", placement="next")
+    ]
+
+
 # ── the unresolved case: the whole point of the task ─────────────────────
 
 

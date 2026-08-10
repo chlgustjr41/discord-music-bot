@@ -152,7 +152,13 @@ def _keywords(norm: str) -> list[str]:
 def _split_trailing_next(text: str) -> tuple[str, bool]:
     """TRAILING "next" is placement: "play X next" is front-of-queue."""
     if text.lower().endswith(" next"):
-        return text[: -len(" next")].strip(), True
+        # Trailing " ,." only, and only on the head that was just SLICED.
+        # This function matches text that has not been punctuation-normalized
+        # (it must not be — the argument is sliced from the original so
+        # "AC/DC" survives), so "play X, next" left the comma inside the
+        # query. Stripping at the end of the slice cannot reach a title's
+        # internal punctuation: "AC/DC" and "Sgt. Pepper" are unaffected.
+        return text[: -len(" next")].strip(" ,."), True
     return text, False
 
 
