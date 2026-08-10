@@ -3,14 +3,42 @@ import {
   PRESENCE_TTL_MS,
   colorForUid,
   isAllowedPhotoUrl,
+  isFocused,
   livingParticipants,
   shouldPublish,
   type Participant,
 } from "./presence";
 
 function p(uid: string, updatedAt: number): Participant {
-  return { uid, name: uid, photoURL: null, color: "#fff", updatedAt };
+  return { uid, name: uid, photoURL: null, color: "#fff", focused: true, updatedAt };
 }
+
+describe("isFocused", () => {
+  // The full truth table, because the interesting half is the pair that a
+  // single-signal implementation gets wrong: a visible tab in a window you
+  // have alt-tabbed away from is not being read, and a focused window whose
+  // tab is hidden is showing something else entirely.
+  it("is true only when the tab is visible AND the window has focus", () => {
+    expect(isFocused("visible", true)).toBe(true);
+  });
+
+  it("is false for a visible tab in an unfocused window", () => {
+    expect(isFocused("visible", false)).toBe(false);
+  });
+
+  it("is false for a hidden tab in a focused window", () => {
+    expect(isFocused("hidden", true)).toBe(false);
+  });
+
+  it("is false when hidden and unfocused", () => {
+    expect(isFocused("hidden", false)).toBe(false);
+  });
+
+  it("treats any non-visible visibilityState as away", () => {
+    // "prerender" and the legacy "unloaded" are both real values.
+    expect(isFocused("prerender", true)).toBe(false);
+  });
+});
 
 describe("colorForUid", () => {
   it("is stable for the same uid", () => {

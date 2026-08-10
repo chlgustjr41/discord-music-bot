@@ -1,7 +1,11 @@
 /**
  * Session-dashboard identity (FUTURE #3): who is this browser?
  *
- * Priority: Google account displayName > locally saved nickname > "Web User".
+ * Priority: locally saved nickname > Google account displayName > "Web User".
+ * The nickname wins deliberately: it is the only name a person can choose
+ * here, so an account name overriding it would make the rename UI a no-op for
+ * exactly the people who have a nickname set.
+ *
  * Components read the CURRENT name at write time via getIdentityName() and
  * stamp it into requestedBy / social stats; React UI subscribes via
  * useSyncExternalStore in useIdentity().
@@ -22,19 +26,27 @@ const listeners = new Set<() => void>();
 export interface Identity {
   name: string;          // effective display name
   named: boolean;        // true when a nickname or account name is set
-  viaAccount: boolean;   // true when the name comes from Google auth
+  viaAccount: boolean;   // true when the SHOWN name comes from Google auth
+  signedIn: boolean;     // true whenever there is a Firebase user, nickname or not
   nickname: string;      // the stored nickname (may be empty)
+  accountName: string;   // the Google displayName, even when a nickname hides it
 }
 
 function buildSnapshot(): Identity {
   const nickname = (localStorage.getItem(NICKNAME_KEY) ?? "").trim();
   const accountName = authUser?.displayName?.trim() ?? "";
-  const name = accountName || nickname || ANONYMOUS_NAME;
+  const name = nickname || accountName || ANONYMOUS_NAME;
   return {
     name,
-    named: !!(accountName || nickname),
-    viaAccount: !!accountName,
+    named: !!(nickname || accountName),
+    // Follows the NAME, not the session: with a nickname set the shown name is
+    // no longer the account's, so callers that caption where the name came
+    // from stay correct. Anything that needs "is there an account?" — the
+    // sign-out button, for one — reads signedIn instead.
+    viaAccount: !nickname && !!accountName,
+    signedIn: !!authUser,
     nickname,
+    accountName,
   };
 }
 

@@ -11,7 +11,21 @@ export interface Participant {
   name: string;
   photoURL: string | null;
   color: string;
+  /** Is this person actually looking at the page? See isFocused. */
+  focused: boolean;
   updatedAt: number;
+}
+
+/**
+ * "Looking at this page" means both: a visible tab you have switched away
+ * from the window still isn't being read.
+ *
+ * Pulled out as a pure function because the hook that owns it has to stitch
+ * three separate events together (visibilitychange, focus, blur), and the
+ * decision those events feed is the only part worth testing exhaustively.
+ */
+export function isFocused(visibility: string, hasFocus: boolean): boolean {
+  return visibility === "visible" && hasFocus;
 }
 
 /** Entries older than this are treated as gone. Firestore has no

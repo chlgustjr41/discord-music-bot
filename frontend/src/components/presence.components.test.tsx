@@ -19,6 +19,7 @@ function participant(over: Partial<Participant> = {}): Participant {
     name: "Ada",
     photoURL: null,
     color: "hsl(200, 70%, 60%)",
+    focused: true,
     updatedAt: Date.now(),
     ...over,
   };
