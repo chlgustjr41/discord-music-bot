@@ -56,6 +56,59 @@ _LOG_COMMAND_FOR = {
 }
 
 
+# Query values that turn the per-press debug echo ON. Anything else — absent,
+# empty, "0", "false", a typo — leaves it off: the echo publishes transcribed
+# speech to a channel other people can read, so the server must never enable it
+# by inference. Matched case-insensitively after stripping whitespace.
+_DEBUG_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _wants_debug(raw: str | None) -> bool:
+    return raw is not None and raw.strip().lower() in _DEBUG_TRUTHY
+
+
+def _describe_action(action: Any) -> str:
+    """`playlist(chill, next)` — the verb plus whatever the route actually
+    placed on it, so the echo distinguishes what was DECIDED from what was
+    heard. Only fields that carry a decision are shown; the rest are noise."""
+    parts: list[str] = []
+    if action.query:
+        parts.append(action.query)
+    if action.name:
+        parts.append(action.name)
+    if action.action in ("play", "playlist"):
+        parts.append(action.placement)
+    if action.count != 1:
+        parts.append(f"x{action.count}")
+    if action.level is not None:
+        parts.append(f"level {action.level}")
+    if action.delta is not None:
+        parts.append(f"delta {action.delta:+d}")
+    if action.action == "loop":
+        parts.append(action.mode)
+    return f"{action.action}({', '.join(parts)})" if parts else action.action
+
+
+def build_debug_message(transcript: str, resolved_by: str, pairs) -> str:
+    """The echo itself. `pairs` is (action, result-detail-or-None).
+
+    Three lines, because the whole point is that a reader can tell what was
+    HEARD from what the bot DECIDED — collapsing them into one sentence is how
+    that distinction gets lost.
+    """
+    if pairs:
+        rendered = "; ".join(
+            f"{_describe_action(a)} → {detail or '—'}" for a, detail in pairs
+        )
+    else:
+        rendered = "(none)"
+    return (
+        f'🎙️ Heard: "{transcript}"\n'
+        f"Resolved by: {resolved_by}\n"
+        f"Actions: {rendered}"
+    )
+
+
 def _is_valid_document_id(name: str) -> bool:
     """Firestore document-id rules we can violate from a request body.
 
@@ -364,6 +417,24 @@ def register_control_routes(
             "url": entry_url(service.settings.web_app_url),
         })
 
+    async def post_debug(guild_id: int, message: str) -> None:
+        """Echo one press to the session's text channel. Best-effort.
+
+        Deliberately NOT routed through VoiceIntentDispatcher._announce: that
+        applies a 10 s per-guild cooldown, which exists to stop a
+        misrecognition spamming an embed. A debug echo is explicitly requested
+        per press, so silently dropping it is the one failure it cannot have.
+
+        INVARIANT: nothing on this path logs the message or the transcript.
+        The echo publishes transcribed speech to Discord by explicit per-key
+        opt-in; container stdout has different retention and readers, and the
+        transcript must never reach it.
+        """
+        try:
+            await service.notifier.send(guild_id, text=message)
+        except Exception:  # noqa: BLE001 — the actions already ran
+            log.warning("voice debug echo failed to post")
+
     async def voice(request: web.Request, user_id: str) -> web.Response:
         """Transcribe a push-to-talk clip and run the recognized command."""
         if transcriber is None or voice_dispatcher is None:
@@ -382,6 +453,8 @@ def register_control_routes(
         # An unknown or absent code degrades to English rather than erroring:
         # a stale key setting must not break the key.
         language = normalize_language(request.query.get("language"))
+        # Opt-in, per press, off by default — see _DEBUG_TRUTHY.
+        debug = _wants_debug(request.query.get("debug"))
         try:
             transcript = await transcriber.transcribe(audio, language)
         except Exception:  # noqa: BLE001 — any STT fault is one failure mode
@@ -440,7 +513,23 @@ def register_control_routes(
         # is this route's own blast-radius bound — one dispatch and one history
         # row per action. It must not depend on a collaborator to enforce it.
         actions = actions[:MAX_ACTIONS]
+        # The same fact the INFO log above reports, as a VALUE the debug echo
+        # can carry: which layer produced what is about to run. Read after the
+        # enforcement passes, so an action list emptied there reads "nothing"
+        # rather than claiming a layer resolved something that no longer exists.
+        resolved_by = (
+            "nothing" if not actions
+            else "grammar" if parsed.resolved
+            else "reasoning"
+        )
         if not actions:
+            # The echo posts BEFORE the early return: "I heard X and resolved
+            # nothing" is the most useful thing this instrument says, and it is
+            # exactly the case someone turns it on to diagnose.
+            if debug:
+                await post_debug(
+                    guild.id, build_debug_message(transcript, resolved_by, [])
+                )
             # "Didn't catch that": neither layer recognized a command, so
             # NOTHING runs — there is no longer any path from an unrecognised
             # utterance to a search. The same 422/"no-speech" pair the empty
@@ -479,6 +568,11 @@ def register_control_routes(
                 log_args, "Voice", user_id,
                 source="voice", transcript=transcript,
             )
+        if debug:
+            await post_debug(guild.id, build_debug_message(
+                transcript, resolved_by,
+                list(zip(actions, (r.detail for r in results), strict=False)),
+            ))
         done = sum(1 for r in results if r.ok)
         return web.json_response({
             "transcript": transcript,
