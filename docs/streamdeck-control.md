@@ -203,7 +203,11 @@ Once signed in, their authentication persists across restarts and key changes.
   | `No ffmpeg` | The capture binary is in neither the bundle nor PATH |
   | `Mic error` | ffmpeg opened and died — exit code and its stderr are in the plugin log |
   | `Hold longer` | The capture ran but the press was too short to produce audio |
+  | `No audio` | An empty clip reached the server (400); the fault is this end of the wire |
   | `Didn't catch that` | The server heard something and could resolve no command from it (422) |
+
+  The last two used to be one message, which is why a microphone that never
+  opened read as speech nobody understood.
 - Voice commands appear in the dashboard's Command History with a Voice badge,
   showing both what was heard and the action it ran — one row per action, all
   carrying the same utterance. **Transcripts are stored in Firestore** and

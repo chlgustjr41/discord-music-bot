@@ -1146,9 +1146,34 @@ async def test_voice_empty_body_never_reaches_the_transcriber(
     an OpenAI call."""
     put_user_in_voice(service, guild_id)
     resp = await client.post("/control/voice", data=b"", headers=auth)
-    assert resp.status == 422
-    assert (await resp.json())["error"] == "no-speech"
+    assert resp.status == 400
+    assert (await resp.json())["error"] == "no-audio"
     assert transcriber.calls == []
+
+
+async def test_an_empty_upload_is_distinguishable_from_an_unrecognised_one(
+    client, service, guild_id, auth, transcriber, interpreter
+):
+    """The client-side capture failure that took two rounds to find: the plugin
+    said "Didn't catch that" because an empty upload answered the same 422 as
+    speech nobody could resolve. The key blamed the user's voice for a
+    microphone that never opened. The two must not share a code — and the empty
+    one has nothing to echo, because it never reached transcription."""
+    put_user_in_voice(service, guild_id)
+
+    empty = await client.post("/control/voice?debug=1", data=b"", headers=auth)
+
+    transcriber.text = "mmm hmm yeah whatever"
+    interpreter.actions = []
+    unresolved = await client.post("/control/voice?debug=1", data=WAV, headers=auth)
+
+    assert empty.status != unresolved.status
+    assert (await empty.json())["error"] != (await unresolved.json())["error"]
+    assert unresolved.status == 422
+    # Only the utterance that actually existed is echoed to Discord.
+    posts = debug_posts(service)
+    assert len(posts) == 1
+    assert "mmm hmm yeah whatever" in posts[0]["text"]
 
 
 async def test_voice_volume_logs_the_resulting_level(

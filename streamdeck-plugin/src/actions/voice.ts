@@ -33,6 +33,11 @@ const log = streamDeck.logger.createScope("voice");
  *  again, not by going to look at whether the bot is up. */
 const NO_SPEECH_STATUS = 422;
 
+/** The upload was empty — the server never reached transcription, so it has
+ *  no opinion at all about what was said. Distinct from 422 precisely so the
+ *  key stops blaming the user's speech for a capture that produced nothing. */
+const NO_AUDIO_STATUS = 400;
+
 /** Recording state for one physical key. `downs`/`ups` count presses so a
  *  key-up that lands while onKeyDown is still awaiting can be detected. */
 type KeyState = {
@@ -195,14 +200,19 @@ export class Voice extends SingletonAction<VoiceSettings> {
       }
     } catch (err) {
       // "Nothing was resolvable" is not "the bot broke", and the user's next
-      // move differs: say it again, versus go and look. Every other status —
+      // move differs: say it again, versus go and look. "No audio" is a third
+      // thing again — the server never got a clip, so the problem is this end
+      // of the wire and the mic setting is where to look. Every other status —
       // and anything that never reached the server — stays "Failed".
       const status = err instanceof ControlApiError ? err.status : null;
       log.warn(
         `${ev.action.id}: the voice request failed with ` +
           `${status === null ? "no response at all" : `status ${status}`}`,
       );
-      const title = status === NO_SPEECH_STATUS ? "Didn't\ncatch that" : "Failed";
+      const title =
+        status === NO_SPEECH_STATUS ? "Didn't\ncatch that"
+        : status === NO_AUDIO_STATUS ? "No\naudio"
+        : "Failed";
       await ev.action.setTitle(title);
       await ev.action.showAlert();
     }

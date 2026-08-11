@@ -447,8 +447,17 @@ def register_control_routes(
         if len(audio) > VOICE_MAX_BYTES:
             return web.json_response({"error": "too-large"}, status=413)
         # A zero-byte upload cannot contain speech; don't pay OpenAI to say so.
+        #
+        # Its OWN code, not the 422 the unrecognised case uses. Sharing one was
+        # the second half of a reproduced bug: the plugin's microphone capture
+        # was spawning ffmpeg against a device that cannot exist, uploading
+        # nothing, and the key rendered "Didn't catch that" — blaming the
+        # user's speech for a request that never reached transcription and had
+        # no debug echo to explain itself. 400 rather than 422: an empty body
+        # is a malformed request, not content the server understood and could
+        # not act on.
         if not audio:
-            return web.json_response({"error": "no-speech"}, status=422)
+            return web.json_response({"error": "no-audio"}, status=400)
 
         # An unknown or absent code degrades to English rather than erroring:
         # a stale key setting must not break the key.
@@ -532,11 +541,10 @@ def register_control_routes(
                 )
             # "Didn't catch that": neither layer recognized a command, so
             # NOTHING runs — there is no longer any path from an unrecognised
-            # utterance to a search. The same 422/"no-speech" pair the empty
-            # upload returns, deliberately: the plugin reports both as a
-            # failed press today (it renders the status, not the body), and
-            # splitting the code would change nothing on the key while
-            # inventing a distinction the client cannot see.
+            # utterance to a search. Distinct from the empty upload above,
+            # which answers 400/"no-audio": this one really did hear something
+            # and really did fail to resolve it, and only this one has a
+            # transcript to echo.
             return web.json_response({"error": "no-speech"}, status=422)
 
         try:

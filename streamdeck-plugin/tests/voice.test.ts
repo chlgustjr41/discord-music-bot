@@ -462,6 +462,16 @@ describe("Voice language and failure reporting", () => {
     expect(k.action.showAlert).toHaveBeenCalled();
   });
 
+  it("says no audio arrived rather than that it misheard, on 400", async () => {
+    // The server's own code for "you sent an empty body". Blaming the speech
+    // for a capture that never produced any is what sent this bug round twice.
+    h.voiceCommand.mockRejectedValue(new ControlApiError(400));
+    const k = await speakWith({});
+    expect(k.action.setTitle).toHaveBeenCalledWith("No\naudio");
+    expect(k.action.setTitle).not.toHaveBeenCalledWith("Didn't\ncatch that");
+    expect(k.action.setTitle).not.toHaveBeenCalledWith("Failed");
+  });
+
   it("still reports a plain failure for a server error", async () => {
     h.voiceCommand.mockRejectedValue(new ControlApiError(500));
     const k = await speakWith({});
