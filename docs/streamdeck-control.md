@@ -231,6 +231,11 @@ Once signed in, their authentication persists across restarts and key changes.
     fits inside the key, never stretched or cropped. It falls back to the
     glyph when the track has no artwork, when the session ends, or when the
     option is switched back off, so a stale cover never outlives its track.
+    YouTube thumbnails are fetched at their **small** variant (`mqdefault`,
+    320×180 — still four times a 72-pixel key's resolution). The full-size
+    `maxresdefault` encodes to roughly 258,000 characters, and a payload that
+    large simply does not render; anything still over 64 KB encoded is
+    skipped, with its size logged, and the glyph is kept.
 
   Both default **off**, so a Play/Pause key you never reconfigured behaves
   exactly as before. Settings are per key: two Play/Pause keys can be

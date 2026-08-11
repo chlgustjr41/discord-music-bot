@@ -13,7 +13,7 @@ import { letterboxSvg } from "../image";
 import { handlePiEvent } from "../pi-bridge";
 import { getClient, poller } from "../runtime";
 import type { PollState } from "../poller";
-import { loadThumbnail } from "../thumbnail";
+import { loadThumbnail, MAX_ENCODED_CHARS } from "../thumbnail";
 
 const TITLE_WIDTH = 9;
 
@@ -112,6 +112,17 @@ export class PlayPause extends SingletonAction<PlayPauseSettings> {
               }
               if (st.lastThumbUrl !== thumb) {
                 log.debug(`${a.id}: dropping a fetch that lost its track`);
+                return;
+              }
+              // The whole of the reported bug, as a number: 258,023 encoded
+              // characters went over the websocket to a 72-pixel key and
+              // nothing appeared. Past the cap the glyph is worth more than
+              // artwork the host will not render, so keep it and say why.
+              if (uri.length > MAX_ENCODED_CHARS) {
+                log.warn(
+                  `${a.id}: artwork is ${uri.length} encoded chars, over the ` +
+                    `${MAX_ENCODED_CHARS} cap — keeping the glyph`,
+                );
                 return;
               }
               st.lastThumbData = letterboxSvg(uri);

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { loadThumbnail } from "../src/thumbnail";
+import { loadThumbnail, smallThumbnailUrl } from "../src/thumbnail";
 
 function imageRes(bytes: number, type = "image/jpeg") {
   return {
@@ -66,5 +66,52 @@ describe("loadThumbnail", () => {
       throw new Error("offline");
     }) as unknown as typeof fetch;
     expect(await loadThumbnail("https://i/t.jpg", f)).toBeNull();
+  });
+
+  it("fetches the small variant, not the one the server named", async () => {
+    // The bug: a 1280x720 maxresdefault encodes to ~258,000 characters and is
+    // pushed over the websocket to render on a 72-pixel key.
+    const f = vi.fn(async () => imageRes(8)) as unknown as typeof fetch;
+    await loadThumbnail("https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg", f);
+    expect(vi.mocked(f).mock.calls[0][0]).toBe(
+      "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg",
+    );
+  });
+});
+
+describe("smallThumbnailUrl", () => {
+  const VARIANTS = ["maxresdefault", "hqdefault", "sddefault", "default"];
+
+  it.each(VARIANTS)("rewrites the %s variant down to mqdefault", (variant) => {
+    expect(smallThumbnailUrl(`https://i.ytimg.com/vi/dQw4w9WgXcQ/${variant}.jpg`)).toBe(
+      "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg",
+    );
+  });
+
+  it("leaves an already-small variant alone", () => {
+    const url = "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg";
+    expect(smallThumbnailUrl(url)).toBe(url);
+  });
+
+  it("rewrites the webp form without changing its extension", () => {
+    expect(smallThumbnailUrl("https://i.ytimg.com/vi_webp/abc123/maxresdefault.webp")).toBe(
+      "https://i.ytimg.com/vi_webp/abc123/mqdefault.webp",
+    );
+  });
+
+  it("leaves a non-YouTube url untouched", () => {
+    // An unknown host has no variant vocabulary to rewrite into; the size cap
+    // is what makes leaving it alone safe.
+    const url = "https://covers.test/artist/album/front-cover.jpg";
+    expect(smallThumbnailUrl(url)).toBe(url);
+  });
+
+  it("leaves a ytimg path it does not recognise untouched", () => {
+    const url = "https://i.ytimg.com/an/unexpected/path.jpg";
+    expect(smallThumbnailUrl(url)).toBe(url);
+  });
+
+  it("hands back anything that is not a url at all", () => {
+    expect(smallThumbnailUrl("not a url")).toBe("not a url");
   });
 });
