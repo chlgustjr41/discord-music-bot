@@ -165,7 +165,12 @@ Once signed in, their authentication persists across restarts and key changes.
   Three per-key settings in the Property Inspector:
 
   - **Microphone** — which input device to record from. Open only while the
-    key is held. Recording caps at 15 seconds.
+    key is held. Recording caps at 15 seconds. Left unset, the key records
+    from the **first device it can enumerate** and says which one in the log;
+    it does not fall back to a "default" device, because Windows has no such
+    DirectShow device and recording against that name captured nothing at all.
+    With no audio inputs on the machine the key says "No mic" rather than
+    spawning a capture that cannot work.
   - **Language** — the language you speak, **English by default**. Naming it
     beats autodetect by a wide margin on clips this short, so set it if you
     give commands in Korean, Japanese, Spanish, French, German, or Chinese.
@@ -189,6 +194,20 @@ Once signed in, their authentication persists across restarts and key changes.
     silently drops. Turn it back off when you are done: it publishes your
     transcript to a channel **everyone in the session can read**, which is
     exactly why it is opt-in and why no key arrives with it on.
+
+  What the key says when a press does not work, and where each one points:
+
+  | Key shows | Meaning |
+  |---|---|
+  | `No mic` | The machine reports no audio input devices at all |
+  | `No ffmpeg` | The capture binary is in neither the bundle nor PATH |
+  | `Mic error` | ffmpeg opened and died — exit code and its stderr are in the plugin log |
+  | `Hold longer` | The capture ran but the press was too short to produce audio |
+  | `No audio` | An empty clip reached the server (400); the fault is this end of the wire |
+  | `Didn't catch that` | The server heard something and could resolve no command from it (422) |
+
+  The last two used to be one message, which is why a microphone that never
+  opened read as speech nobody understood.
 - Voice commands appear in the dashboard's Command History with a Voice badge,
   showing both what was heard and the action it ran — one row per action, all
   carrying the same utterance. **Transcripts are stored in Firestore** and
@@ -212,6 +231,11 @@ Once signed in, their authentication persists across restarts and key changes.
     fits inside the key, never stretched or cropped. It falls back to the
     glyph when the track has no artwork, when the session ends, or when the
     option is switched back off, so a stale cover never outlives its track.
+    YouTube thumbnails are fetched at their **small** variant (`mqdefault`,
+    320×180 — still four times a 72-pixel key's resolution). The full-size
+    `maxresdefault` encodes to roughly 258,000 characters, and a payload that
+    large simply does not render; anything still over 64 KB encoded is
+    skipped, with its size logged, and the glyph is kept.
 
   Both default **off**, so a Play/Pause key you never reconfigured behaves
   exactly as before. Settings are per key: two Play/Pause keys can be

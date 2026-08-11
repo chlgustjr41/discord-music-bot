@@ -5,6 +5,7 @@ import { ControlApiError } from "../src/api-client";
 const h = vi.hoisted(() => ({
   spawnMock: vi.fn(),
   resolveMock: vi.fn<() => string | null>(() => "ffmpeg"),
+  resolveDevice: vi.fn<(d?: string) => Promise<string | null>>(),
   voiceCommand: vi.fn(),
   openUrl: vi.fn(async (_url: string) => {}),
 }));
@@ -13,16 +14,31 @@ vi.mock("node:child_process", () => ({
   spawn: (...args: unknown[]) => h.spawnMock(...args),
 }));
 vi.mock("../src/ffmpeg-path", () => ({ resolveFfmpeg: () => h.resolveMock() }));
+vi.mock("../src/audio-devices", () => ({
+  resolveInputDevice: (d?: string) => h.resolveDevice(d),
+}));
 vi.mock("../src/pi-bridge", () => ({ handlePiEvent: vi.fn() }));
 vi.mock("../src/runtime", () => ({
   getClient: () => ({ voiceCommand: h.voiceCommand }),
 }));
 // The real module opens a websocket to the Stream Deck host on import.
-vi.mock("@elgato/streamdeck", () => ({
-  default: { system: { openUrl: (url: string) => h.openUrl(url) } },
-  action: () => (target: unknown) => target,
-  SingletonAction: class {},
-}));
+// `logger` is stubbed because the voice path writes to it — a bare default
+// would throw at import time on createScope.
+vi.mock("@elgato/streamdeck", () => {
+  const logger = {
+    createScope: () => logger,
+    trace: vi.fn(),
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+  return {
+    default: { logger, system: { openUrl: (url: string) => h.openUrl(url) } },
+    action: () => (target: unknown) => target,
+    SingletonAction: class {},
+  };
+});
 
 const { Voice } = await import("../src/actions/voice");
 
@@ -32,6 +48,7 @@ type GoneEv = Parameters<InstanceType<typeof Voice>["onWillDisappear"]>[0];
 
 class FakeProc extends EventEmitter {
   stdout = new EventEmitter();
+  stderr = new EventEmitter();
   stdin = { write: vi.fn() };
   kill = vi.fn();
 }
@@ -69,6 +86,9 @@ beforeEach(() => {
     return p;
   });
   h.resolveMock.mockReset().mockReturnValue("ffmpeg");
+  h.resolveDevice
+    .mockReset()
+    .mockImplementation(async (d?: string) => d || "Microphone (Yeti GX)");
   h.openUrl.mockReset().mockResolvedValue(undefined);
   h.voiceCommand.mockReset().mockResolvedValue({
     transcript: "skip",
@@ -216,6 +236,90 @@ describe("Voice key lifecycle", () => {
   });
 });
 
+describe("Voice microphone resolution", () => {
+  /** Hold the key down with the given settings, letting the settings and the
+   *  device lookup both settle. */
+  async function press(settings: Record<string, unknown> = {}) {
+    const v = new Voice();
+    const k = fakeKey("key-1");
+    const down = v.onKeyDown(k.down);
+    k.settle(0, settings);
+    await down;
+    return { v, k };
+  }
+
+  it("records from the key's configured microphone", async () => {
+    await press({ inputDevice: "Microphone (Yeti GX)" });
+    expect(h.spawnMock.mock.calls[0][1]).toContain("audio=Microphone (Yeti GX)");
+  });
+
+  it("auto-picks a real device when the key has none configured", async () => {
+    // Not "audio=default": there is no such DirectShow device, so ffmpeg used
+    // to spawn, fail instantly, and hand the key zero bytes.
+    h.resolveDevice.mockResolvedValue("Microphone (3- Logitech G733 Gaming Headset)");
+    await press({});
+    expect(h.resolveDevice).toHaveBeenCalledWith(undefined);
+    expect(h.spawnMock.mock.calls[0][1]).toContain(
+      "audio=Microphone (3- Logitech G733 Gaming Headset)",
+    );
+    expect(h.spawnMock.mock.calls[0][1].join(" ")).not.toContain("audio=default");
+  });
+
+  it("says there is no microphone instead of spawning against a name that cannot exist", async () => {
+    h.resolveDevice.mockResolvedValue(null);
+    const { k } = await press({});
+    expect(h.spawnMock).not.toHaveBeenCalled();
+    expect(k.action.setTitle).toHaveBeenCalledWith("No\nmic");
+    expect(k.action.showAlert).toHaveBeenCalled();
+  });
+
+  it("never opens the mic when the key is released during the device lookup", async () => {
+    // Same promise as the settings round-trip: the mic is open only while the
+    // key is held, and this await is a second window for a tap to slip through.
+    let release: ((d: string | null) => void) | null = null;
+    h.resolveDevice.mockImplementation(
+      () => new Promise<string | null>((r) => (release = r)),
+    );
+    const v = new Voice();
+    const k = fakeKey("key-1");
+    const down = v.onKeyDown(k.down);
+    k.settle();
+    // The press must be PAST the settings guard and inside the lookup, or the
+    // first guard would catch it and this would prove nothing about the second.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.resolveDevice).toHaveBeenCalled();
+
+    await v.onKeyUp(k.up);
+    release!("Microphone (Yeti GX)");
+    await down;
+
+    expect(h.spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("says the mic failed rather than blaming the hold length", async () => {
+    // ffmpeg started and then died on its own — the failure that used to be
+    // indistinguishable from a tap, because both end at zero bytes.
+    const { v, k } = await press({ inputDevice: "Gone" });
+    procs[0].stderr.emit("data", Buffer.from("Could not find audio only device"));
+    procs[0].emit("close", 1);
+    await v.onKeyUp(k.up);
+
+    expect(k.action.setTitle).toHaveBeenCalledWith("Mic\nerror");
+    expect(k.action.setTitle).not.toHaveBeenCalledWith("Hold\nlonger");
+    expect(k.action.setTitle).not.toHaveBeenCalledWith("No\nffmpeg");
+  });
+
+  it("still says to hold longer for a genuinely short press", async () => {
+    const { v, k } = await press({ inputDevice: "Yeti" });
+    const up = v.onKeyUp(k.up);
+    procs[0].emit("close", 0);
+    await up;
+
+    expect(k.action.setTitle).toHaveBeenCalledWith("Hold\nlonger");
+    expect(k.action.setTitle).not.toHaveBeenCalledWith("Mic\nerror");
+  });
+});
+
 describe("Voice client directives", () => {
   /** One complete hold-and-release that reaches the server round-trip, so the
    *  directive loop actually runs. */
@@ -356,6 +460,16 @@ describe("Voice language and failure reporting", () => {
     expect(k.action.setTitle).toHaveBeenCalledWith("Didn't\ncatch that");
     expect(k.action.setTitle).not.toHaveBeenCalledWith("Failed");
     expect(k.action.showAlert).toHaveBeenCalled();
+  });
+
+  it("says no audio arrived rather than that it misheard, on 400", async () => {
+    // The server's own code for "you sent an empty body". Blaming the speech
+    // for a capture that never produced any is what sent this bug round twice.
+    h.voiceCommand.mockRejectedValue(new ControlApiError(400));
+    const k = await speakWith({});
+    expect(k.action.setTitle).toHaveBeenCalledWith("No\naudio");
+    expect(k.action.setTitle).not.toHaveBeenCalledWith("Didn't\ncatch that");
+    expect(k.action.setTitle).not.toHaveBeenCalledWith("Failed");
   });
 
   it("still reports a plain failure for a server error", async () => {

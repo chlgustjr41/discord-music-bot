@@ -15,6 +15,7 @@ const { buildFfmpegArgs, MicRecorder, MAX_RECORD_MS } = await import("../src/aud
  *  graceful-quit "q", and "close"/"error" drive the recorder's state machine. */
 class FakeProc extends EventEmitter {
   stdout = new EventEmitter();
+  stderr = new EventEmitter();
   stdin = { write: vi.fn() };
   kill = vi.fn();
 }
@@ -41,10 +42,15 @@ describe("buildFfmpegArgs", () => {
     expect(args[args.length - 1]).toBe("pipe:1");
   });
 
-  it("falls back to the system default when no device is configured", () => {
-    // ffmpeg's dshow needs a name; "default" is the documented placeholder.
-    expect(buildFfmpegArgs("").join(" ")).toContain("audio=default");
-    expect(buildFfmpegArgs(undefined).join(" ")).toContain("audio=default");
+  it("never emits audio=default — no such DirectShow device exists", () => {
+    // THE regression. `ffmpeg -f dshow -i "audio=default"` answers
+    // "Could not find audio only device with name [default]" and exits having
+    // written nothing, which the key could not tell apart from a short press.
+    // dshow has no placeholder name: it wants a device that really exists.
+    expect(buildFfmpegArgs("Microphone (Yeti GX)").join(" ")).not.toContain("audio=default");
+    for (const nothing of ["", "   ", undefined, null]) {
+      expect(() => buildFfmpegArgs(nothing as unknown as string)).toThrow();
+    }
   });
 });
 
@@ -122,5 +128,42 @@ describe("MicRecorder", () => {
 
   it("stop() is safe when nothing was ever started", async () => {
     expect((await new MicRecorder().stop()).length).toBe(0);
+  });
+
+  it("reports a capture that died on its own distinctly from a short press", async () => {
+    // The invisible failure: ffmpeg SPAWNS fine, then exits immediately because
+    // the device does not exist. Zero bytes either way, so only "it exited
+    // non-zero before anyone asked it to stop" separates the two.
+    const rec = new MicRecorder();
+    rec.start("Nope", () => {});
+    proc.stderr.emit("data", Buffer.from("Could not find audio only device"));
+    proc.emit("close", 1);
+
+    expect(rec.micFailed).toBe(true);
+    expect(rec.spawnFailed).toBe(false);
+    expect(rec.exitCode).toBe(1);
+    expect(rec.stderr).toContain("Could not find audio only device");
+    // And it must not hang: the process is already gone, so there is no second
+    // "close" coming for stop() to wait on.
+    vi.useFakeTimers();
+    expect((await rec.stop()).length).toBe(0);
+  });
+
+  it("does not call a graceful quit a mic failure", async () => {
+    // ffmpeg answers "q" with a non-zero status in some builds. Asking it to
+    // stop and then seeing it stop is not a fault, however it words the exit.
+    const rec = new MicRecorder();
+    rec.start("Yeti", () => {});
+    const stopped = rec.stop();
+    proc.emit("close", 255);
+    await stopped;
+    expect(rec.micFailed).toBe(false);
+  });
+
+  it("does not call a clean exit a mic failure", async () => {
+    const rec = new MicRecorder();
+    rec.start("Yeti", () => {});
+    proc.emit("close", 0);
+    expect(rec.micFailed).toBe(false);
   });
 });

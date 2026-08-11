@@ -8,7 +8,10 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/pi-bridge", () => ({ handlePiEvent: vi.fn() }));
-vi.mock("../src/thumbnail", () => ({
+// Only the network call is replaced; MAX_ENCODED_CHARS stays the real cap, so
+// the size test cannot pass against a number invented by the test.
+vi.mock("../src/thumbnail", async (orig) => ({
+  ...(await orig<typeof import("../src/thumbnail")>()),
   loadThumbnail: (...args: unknown[]) => h.loadThumbnail(...args),
 }));
 vi.mock("../src/runtime", () => ({
@@ -38,6 +41,7 @@ vi.mock("@elgato/streamdeck", () => {
 });
 
 const { PlayPause } = await import("../src/actions/play-pause");
+const { MAX_ENCODED_CHARS } = await import("../src/thumbnail");
 type Settings = { showTitle?: boolean; showArtwork?: boolean };
 type AppearEv = Parameters<InstanceType<typeof PlayPause>["onWillAppear"]>[0];
 type GoneEv = Parameters<InstanceType<typeof PlayPause>["onWillDisappear"]>[0];
@@ -281,6 +285,35 @@ describe("Play/Pause key with showArtwork", () => {
     await flush();
 
     expect(k.setImage).not.toHaveBeenCalled();
+  });
+
+  it("keeps the glyph rather than sending an image too large to render", async () => {
+    // The reported bug, as a number: 258,023 encoded characters went over the
+    // websocket to a 72-pixel key and nothing appeared. Past the cap the
+    // artwork is worth less than the glyph it would replace.
+    h.loadThumbnail.mockResolvedValue(
+      "data:image/jpeg;base64," + "A".repeat(MAX_ENCODED_CHARS),
+    );
+    const pp = new PlayPause();
+    const k = fakeKey("key-1");
+    mount(pp, [[k, { showArtwork: true }]]);
+
+    emit(playing("Track", "https://img.test/huge.jpg"));
+    await flush();
+
+    expect(k.setImage).not.toHaveBeenCalled();
+  });
+
+  it("still applies an image that fits under the cap", async () => {
+    h.loadThumbnail.mockResolvedValue("data:image/jpeg;base64," + "A".repeat(2000));
+    const pp = new PlayPause();
+    const k = fakeKey("key-1");
+    mount(pp, [[k, { showArtwork: true }]]);
+
+    emit(playing("Track", "https://img.test/ok.jpg"));
+    await flush();
+
+    expect(k.setImage).toHaveBeenCalledTimes(1);
   });
 
   it("reverts the image when the option is switched back off", async () => {
