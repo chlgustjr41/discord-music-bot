@@ -165,7 +165,12 @@ Once signed in, their authentication persists across restarts and key changes.
   Three per-key settings in the Property Inspector:
 
   - **Microphone** — which input device to record from. Open only while the
-    key is held. Recording caps at 15 seconds.
+    key is held. Recording caps at 15 seconds. Left unset, the key records
+    from the **first device it can enumerate** and says which one in the log;
+    it does not fall back to a "default" device, because Windows has no such
+    DirectShow device and recording against that name captured nothing at all.
+    With no audio inputs on the machine the key says "No mic" rather than
+    spawning a capture that cannot work.
   - **Language** — the language you speak, **English by default**. Naming it
     beats autodetect by a wide margin on clips this short, so set it if you
     give commands in Korean, Japanese, Spanish, French, German, or Chinese.
@@ -189,6 +194,16 @@ Once signed in, their authentication persists across restarts and key changes.
     silently drops. Turn it back off when you are done: it publishes your
     transcript to a channel **everyone in the session can read**, which is
     exactly why it is opt-in and why no key arrives with it on.
+
+  What the key says when a press does not work, and where each one points:
+
+  | Key shows | Meaning |
+  |---|---|
+  | `No mic` | The machine reports no audio input devices at all |
+  | `No ffmpeg` | The capture binary is in neither the bundle nor PATH |
+  | `Mic error` | ffmpeg opened and died — exit code and its stderr are in the plugin log |
+  | `Hold longer` | The capture ran but the press was too short to produce audio |
+  | `Didn't catch that` | The server heard something and could resolve no command from it (422) |
 - Voice commands appear in the dashboard's Command History with a Voice badge,
   showing both what was heard and the action it ran — one row per action, all
   carrying the same utterance. **Transcripts are stored in Firestore** and

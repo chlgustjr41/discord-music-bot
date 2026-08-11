@@ -9,6 +9,7 @@ import streamDeck, {
 } from "@elgato/streamdeck";
 import { ControlApiError } from "../api-client";
 import { MicRecorder } from "../audio-capture";
+import { resolveInputDevice } from "../audio-devices";
 import { handlePiEvent } from "../pi-bridge";
 import { getClient } from "../runtime";
 import { openableUrl } from "../url-guard";
@@ -16,6 +17,16 @@ import { openableUrl } from "../url-guard";
 type VoiceSettings = { inputDevice?: string; language?: string; debug?: boolean };
 
 const SHOW_RESULT_MS = 4000;
+
+/** The blind spot that made the microphone bug take two rounds to find: the
+ *  key rendered one word and the capture left no trace at all, so "the device
+ *  never opened" and "the server misheard" were indistinguishable from
+ *  outside. Written at INFO, matching the artwork scope, because the SDK's
+ *  default level outside a debugger is INFO.
+ *
+ *  INVARIANT: nothing here logs the transcript or the response body. The body
+ *  carries transcribed speech; the status does not. Log statuses only. */
+const log = streamDeck.logger.createScope("voice");
 
 /** The server resolved nothing from the utterance and dispatched nothing.
  *  Worth its own message: this is the failure the user fixes by speaking
@@ -70,6 +81,23 @@ export class Voice extends SingletonAction<VoiceSettings> {
     // would strand the recorder we are about to spawn in an unreachable state
     // object with nothing able to stop it.
     if (st.ups >= press || this.keys.get(ev.action.id) !== st) return;
+    // A second await, so the same release check has to run again after it: an
+    // unconfigured key pays a device enumeration here, which is far slower
+    // than the settings round-trip and just as easy to tap through.
+    const device = await resolveInputDevice(inputDevice);
+    if (st.ups >= press || this.keys.get(ev.action.id) !== st) return;
+    if (!device) {
+      // Nothing to invent. `audio=default` is not a DirectShow device, and
+      // spawning against it is what produced a silent zero-byte capture.
+      log.warn(`${ev.action.id}: no audio input device is available`);
+      await ev.action.setTitle("No\nmic");
+      await ev.action.showAlert();
+      return;
+    }
+    log.info(
+      `${ev.action.id}: recording from ${device}` +
+        (inputDevice ? "" : " (auto-picked; the key has none configured)"),
+    );
     // Defence in depth: never leave an earlier press's recorder running.
     const stale = st.recorder;
     st.recorder = null;
@@ -79,12 +107,13 @@ export class Voice extends SingletonAction<VoiceSettings> {
     st.language = language;
     st.debug = debug;
     const recorder = new MicRecorder();
-    const started = recorder.start(inputDevice, () => {
+    const started = recorder.start(device, () => {
       // Only now is the device actually delivering audio.
       st.heardAudio = true;
       void ev.action.setTitle("Listening…").catch(() => {});
     });
     if (!started) {
+      log.error(`${ev.action.id}: no ffmpeg binary could be resolved`);
       await ev.action.setTitle("No\nffmpeg");
       await ev.action.showAlert();
       return;
@@ -104,9 +133,24 @@ export class Voice extends SingletonAction<VoiceSettings> {
     // already told it to abandon this press) or it never started one.
     if (!recorder) return;
     const wav = await recorder.stop();
+    log.info(`${ev.action.id}: captured ${wav.length} bytes`);
     if (recorder.spawnFailed) {
       // Zero bytes because the binary is missing, not because of a short hold.
+      log.error(`${ev.action.id}: ffmpeg never launched`);
       await ev.action.setTitle("No\nffmpeg");
+      await ev.action.showAlert();
+      this.clearLater(ev);
+      return;
+    }
+    if (recorder.micFailed) {
+      // ffmpeg launched and then died on its own. Also zero bytes, which is
+      // why this used to read as "Hold longer" — the reason is in stderr, and
+      // stderr is the only place it exists.
+      log.error(
+        `${ev.action.id}: ffmpeg exited ${recorder.exitCode}: ` +
+          `${recorder.stderr.trim() || "(nothing on stderr)"}`,
+      );
+      await ev.action.setTitle("Mic\nerror");
       await ev.action.showAlert();
       this.clearLater(ev);
       return;
@@ -129,6 +173,9 @@ export class Voice extends SingletonAction<VoiceSettings> {
         language: st.language,
         debug: st.debug,
       });
+      // Status only — the body carries transcribed speech (see the INVARIANT
+      // on `log`), so there is nothing here to widen this line with.
+      log.info(`${ev.action.id}: the server answered 2xx`);
       await ev.action.setTitle(result.detail || result.transcript);
       if (result.ok) await ev.action.showOk();
       else await ev.action.showAlert();
@@ -150,9 +197,13 @@ export class Voice extends SingletonAction<VoiceSettings> {
       // "Nothing was resolvable" is not "the bot broke", and the user's next
       // move differs: say it again, versus go and look. Every other status —
       // and anything that never reached the server — stays "Failed".
-      const misheard =
-        err instanceof ControlApiError && err.status === NO_SPEECH_STATUS;
-      await ev.action.setTitle(misheard ? "Didn't\ncatch that" : "Failed");
+      const status = err instanceof ControlApiError ? err.status : null;
+      log.warn(
+        `${ev.action.id}: the voice request failed with ` +
+          `${status === null ? "no response at all" : `status ${status}`}`,
+      );
+      const title = status === NO_SPEECH_STATUS ? "Didn't\ncatch that" : "Failed";
+      await ev.action.setTitle(title);
       await ev.action.showAlert();
     }
     this.clearLater(ev);

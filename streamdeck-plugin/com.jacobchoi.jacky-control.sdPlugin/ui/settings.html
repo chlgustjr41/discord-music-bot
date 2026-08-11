@@ -65,7 +65,10 @@
        configured, so no key ever sends an empty code. -->
   <div id="voice-settings" style="display: none">
     <sdpi-item label="Microphone">
-      <sdpi-select id="mic-select" setting="inputDevice" placeholder="System default"></sdpi-select>
+      <!-- Not "System default": DirectShow has no such device, and pretending
+           it did is exactly what made an unconfigured key capture nothing.
+           Left unset, the plugin picks the first device it can enumerate. -->
+      <sdpi-select id="mic-select" setting="inputDevice" placeholder="First available"></sdpi-select>
     </sdpi-item>
     <sdpi-item label="Language">
       <sdpi-select id="language-select" setting="language" default="en">
