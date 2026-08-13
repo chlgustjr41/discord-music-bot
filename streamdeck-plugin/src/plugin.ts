@@ -1,4 +1,5 @@
 import streamDeck from "@elgato/streamdeck";
+import { Announce } from "./actions/announce";
 import { Dashboard } from "./actions/dashboard";
 import { PlayPause } from "./actions/play-pause";
 import { Playlist } from "./actions/playlist";
@@ -21,6 +22,7 @@ streamDeck.actions.registerAction(new Summon());
 streamDeck.actions.registerAction(new Playlist());
 streamDeck.actions.registerAction(new Dashboard());
 streamDeck.actions.registerAction(new Voice());
+streamDeck.actions.registerAction(new Announce());
 
 await streamDeck.connect();
 await initRuntime();

@@ -57,6 +57,21 @@
     <div id="playlist-error" style="display: none; padding-left: 4px; font-size: 9pt; color: #e94560"></div>
   </div>
 
+  <!-- Announce key only: what a press posts into the session's Discord
+       channel. Deliberately no `default`: an unconfigured key must stay
+       unconfigured and flash an alert rather than silently post something
+       nobody chose. -->
+  <div id="announce-settings" style="display: none">
+    <sdpi-item label="Post">
+      <sdpi-select setting="command" placeholder="Select what to post">
+        <option value="session">Session code</option>
+        <option value="nowplaying">Now playing</option>
+        <option value="queue">Queue</option>
+        <option value="status">Status</option>
+      </sdpi-select>
+    </sdpi-item>
+  </div>
+
   <!-- Voice key only: which microphone to record from, and which language to
        transcribe as. The language list must stay in step with LANGUAGES in
        services/bot/src/jacky/api/transcribe.py — a code the server does not
@@ -226,6 +241,11 @@
       if (isPlaylist) {
         playlistDiv.style.display = "";
         sendToPlugin({ event: "get-playlists" });
+      }
+      // Nothing to fetch: the command list is a static allowlist mirrored
+      // from the bot's /control/announce route.
+      if (actionInfo.action.endsWith(".announce")) {
+        document.getElementById("announce-settings").style.display = "";
       }
       // Not gated on sign-in: the device list comes from the local ffmpeg,
       // not the bot, so it is never re-requested on auth-status.

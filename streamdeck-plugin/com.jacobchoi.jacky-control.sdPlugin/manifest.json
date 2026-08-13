@@ -45,6 +45,15 @@
       "States": [{ "Image": "imgs/shuffle", "TitleAlignment": "bottom" }]
     },
     {
+      "UUID": "com.jacobchoi.jacky-control.announce",
+      "Name": "Post to Discord",
+      "Icon": "imgs/announce",
+      "Tooltip": "Post the configured info to the session's Discord channel",
+      "PropertyInspectorPath": "ui/settings.html",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/announce", "TitleAlignment": "bottom" }]
+    },
+    {
       "UUID": "com.jacobchoi.jacky-control.stop",
       "Name": "Stop",
       "Icon": "imgs/stop",
