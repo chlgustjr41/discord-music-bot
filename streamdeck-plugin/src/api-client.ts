@@ -38,6 +38,12 @@ export type VoiceResult = {
   client?: { type: string; url?: string }[];
 };
 
+/** `POST /control/announce` answers 200 for both outcomes a configured key can
+ *  reach: `ok: true` posted the embed, `ok: false` carries a human-readable
+ *  `detail` for content that does not exist yet ("Queue is empty"). Cooldown
+ *  and no-session are non-2xx and surface as ControlApiError instead. */
+export type AnnounceResult = { ok: boolean; detail?: string };
+
 /** Per-press options for `voiceCommand`. `debug` asks the server to echo what
  *  it heard and how it resolved into the session's Discord channel — opt-in
  *  per key, because that channel is readable by everyone in the session. */
@@ -131,6 +137,11 @@ export class JackyClient {
   async dashboardUrl(): Promise<DashboardUrl> {
     const res = await this.get("/control/dashboard-url");
     return (await res.json()) as DashboardUrl;
+  }
+
+  async announce(command: string): Promise<AnnounceResult> {
+    const res = await this.post("/control/announce", { command });
+    return (await res.json()) as AnnounceResult;
   }
 
   async summon(guildId: string, channelId: string): Promise<SummonResult> {

@@ -211,6 +211,31 @@ describe("JackyClient", () => {
     });
   });
 
+  it("POSTs an announce command as a JSON body and parses the result", async () => {
+    const f = fetchStub(200, { ok: true, command: "session" });
+    const result = await new JackyClient(CONFIG, f).announce("session");
+    const [url, init] = (f as any).mock.calls[0];
+    expect(url).toBe("https://control.example.com/control/announce");
+    expect(init.method).toBe("POST");
+    expect(init.headers.Authorization).toBe("Bearer tok");
+    expect(JSON.parse(init.body)).toEqual({ command: "session" });
+    expect(result).toEqual({ ok: true, command: "session" });
+  });
+
+  it("announce returns the ok:false detail rather than throwing", async () => {
+    // Empty content ("Queue is empty") is a 200 with ok:false — the key needs
+    // the detail, so this must NOT be a throw.
+    const f = fetchStub(200, { ok: false, detail: "Queue is empty" });
+    const result = await new JackyClient(CONFIG, f).announce("queue");
+    expect(result).toEqual({ ok: false, detail: "Queue is empty" });
+  });
+
+  it("announce throws ControlApiError carrying 429 so the key can say 'just posted'", async () => {
+    const client = new JackyClient(CONFIG, fetchStub(429, { error: "just-posted" }));
+    await expect(client.announce("session")).rejects.toMatchObject({ status: 429 });
+    await expect(client.announce("session")).rejects.toBeInstanceOf(ControlApiError);
+  });
+
   it("GETs the dashboard url", async () => {
     const f = fetchStub(200, { active: true, url: "https://web/dashboard/ABC123" });
     const result = await new JackyClient(CONFIG, f).dashboardUrl();
