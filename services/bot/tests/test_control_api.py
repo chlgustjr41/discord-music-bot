@@ -1891,3 +1891,25 @@ async def test_status_parity_between_the_cog_and_the_route(
     [cog_embed] = ctx.sent
     route_embed = service.fake_notifier.sent[-1]["embed"]
     assert route_embed.to_dict() == cog_embed.to_dict()
+
+
+async def test_announce_reports_empty_content_not_cooldown_inside_the_window(
+    client, service, guild_id, sid, auth,
+):
+    """Mirrors the voice _announce ordering: content checks come BEFORE the
+    cooldown, so a press that had nothing to post is told why rather than
+    being blamed on a window it never tried to use."""
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(
+        sid, {"sessionCode": "CODE1234", "queue": []}
+    )
+    first = await client.post(
+        "/control/announce", json={"command": "session"}, headers=auth
+    )
+    assert first.status == 200 and (await first.json())["ok"] is True
+    # Window is now burnt; an empty-queue press must still say so.
+    resp = await client.post(
+        "/control/announce", json={"command": "queue"}, headers=auth
+    )
+    assert resp.status == 200
+    assert (await resp.json()) == {"ok": False, "detail": "Queue is empty"}

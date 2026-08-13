@@ -478,8 +478,6 @@ def register_control_routes(
         # this same 400 rather than a 500.
         if not isinstance(command, str) or command not in _ANNOUNCE_COMMANDS:
             return web.json_response({"error": "unknown-command"}, status=400)
-        if not announce_cooldown.allowed(guild.id):
-            return web.json_response({"error": "just-posted"}, status=429)
 
         sid = str(guild.id)
         state = await service.repo.get_state(sid) or {}
@@ -523,6 +521,11 @@ def register_control_routes(
                 guardian=await fetch_guardian_status(bot),
             )
 
+        # Checked AFTER the content checks, mirroring the voice _announce:
+        # a press that had nothing to post must report why ("Queue is empty"),
+        # never be blamed on a window it did not even try to use.
+        if not announce_cooldown.allowed(guild.id):
+            return web.json_response({"error": "just-posted"}, status=429)
         if not await service.notifier.send(guild.id, embed=embed):
             # The channel never received it; saying "posted" would be a lie —
             # and neither the history row nor the cooldown stamp happens.
