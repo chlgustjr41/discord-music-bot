@@ -234,8 +234,8 @@ async def test_all_control_routes_require_auth(client):
             assert resp.status == 401, f"{route.method} {path}"
             seen_paths.add(path)
     # now-playing + 5 actions + channels + summon
-    # + playlists + playlist + dashboard-url + voice
-    assert len(seen_paths) == 12
+    # + playlists + playlist + dashboard-url + voice + announce
+    assert len(seen_paths) == 13
 
 
 async def test_string_user_id_resolves_int_keyed_member(client, service, guild_id, auth):
@@ -1617,3 +1617,277 @@ async def test_a_failing_debug_post_does_not_change_the_response(
     resp = await client.post("/control/voice?debug=1", data=WAV, headers=auth)
     assert resp.status == 200
     assert [a["action"] for a in (await resp.json())["actions"]] == ["skip"]
+
+
+# ── POST /control/announce (spec: 2026-08-11-announce-key-design) ────────
+
+
+ANNOUNCE = "/control/announce"
+
+
+async def test_announce_409_without_a_session(client, auth):
+    resp = await client.post(ANNOUNCE, json={"command": "session"}, headers=auth)
+    assert resp.status == 409
+    assert (await resp.json()) == {"error": "no-active-session"}
+
+
+async def test_announce_400_for_an_unknown_or_malformed_command(
+    client, service, guild_id, auth
+):
+    put_user_in_voice(service, guild_id)
+    for body in ({"command": "play"}, {"command": 3}, {}, {"cmd": "session"}):
+        resp = await client.post(ANNOUNCE, json=body, headers=auth)
+        assert resp.status == 400, body
+        assert (await resp.json()) == {"error": "unknown-command"}
+    assert service.fake_notifier.sent == []
+
+
+async def test_announce_400_for_a_non_json_body(client, service, guild_id, auth):
+    """Malformed body == empty body == no command: a 400, never a 500."""
+    put_user_in_voice(service, guild_id)
+    resp = await client.post(ANNOUNCE, data=b"not json", headers=auth)
+    assert resp.status == 400
+    assert (await resp.json()) == {"error": "unknown-command"}
+
+
+async def test_announce_session_posts_the_session_embed(
+    client, service, guild_id, sid, auth
+):
+    put_user_in_voice(service, guild_id)
+    await service.repo.set_session_code(sid, "ABC123")
+    resp = await client.post(ANNOUNCE, json={"command": "session"}, headers=auth)
+    assert resp.status == 200
+    assert (await resp.json()) == {"ok": True, "command": "session"}
+    [post] = service.fake_notifier.sent
+    assert post["guild_id"] == guild_id
+    # The j!session embed, not merely "an embed": the code is in its body.
+    assert "ABC123" in post["embed"].description
+
+
+async def test_announce_nowplaying_posts_the_current_track(
+    client, service, guild_id, sid, auth
+):
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {
+        "currentTrack": {"title": "Song A", "artist": "Artist B", "duration": 63},
+    })
+    resp = await client.post(ANNOUNCE, json={"command": "nowplaying"}, headers=auth)
+    assert (await resp.json()) == {"ok": True, "command": "nowplaying"}
+    [post] = service.fake_notifier.sent
+    embed = post["embed"]
+    assert embed.title == "Now Playing"
+    assert "Song A" in embed.description and "Artist B" in embed.description
+
+
+async def test_announce_queue_posts_the_queue_embed(
+    client, service, guild_id, sid, auth
+):
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {
+        "currentTrack": {"title": "Current"},
+        "queue": [{"title": "First", "duration": 61}, {"title": "Second"}],
+    })
+    resp = await client.post(ANNOUNCE, json={"command": "queue"}, headers=auth)
+    assert (await resp.json()) == {"ok": True, "command": "queue"}
+    [post] = service.fake_notifier.sent
+    embed = post["embed"]
+    assert embed.title == "Queue"
+    assert "First" in embed.description and "Second" in embed.description
+    assert any("Current" in (f.value or "") for f in embed.fields)
+
+
+async def test_announce_status_posts_the_status_embed(
+    client, service, guild_id, sid, auth
+):
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {
+        "currentTrack": {"title": "Song A", "duration": 100},
+        "queue": [{"title": "b"}],
+    })
+    service.positions[guild_id] = {"connected": True, "position": 5000}
+    resp = await client.post(ANNOUNCE, json={"command": "status"}, headers=auth)
+    assert (await resp.json()) == {"ok": True, "command": "status"}
+    [post] = service.fake_notifier.sent
+    embed = post["embed"]
+    assert embed.title == "🩺 Jacky Music — System Status"
+    fields = {f.name: f.value for f in embed.fields}
+    assert "Song A" in fields["This server"]
+    # No Status cog on the FakeBot: the uptime line is OMITTED, and the post
+    # still happens — a missing cosmetic line must not break a health report.
+    assert "up " not in fields["Bot"]
+
+
+async def test_announce_session_without_a_code_fails_and_posts_nothing(
+    client, service, guild_id, auth
+):
+    put_user_in_voice(service, guild_id)  # init_state leaves sessionCode None
+    resp = await client.post(ANNOUNCE, json={"command": "session"}, headers=auth)
+    assert resp.status == 200
+    assert (await resp.json()) == {"ok": False, "detail": "No session code"}
+    assert service.fake_notifier.sent == []
+
+
+async def test_announce_nowplaying_with_nothing_playing_fails_and_posts_nothing(
+    client, service, guild_id, auth
+):
+    put_user_in_voice(service, guild_id)
+    resp = await client.post(ANNOUNCE, json={"command": "nowplaying"}, headers=auth)
+    assert resp.status == 200
+    assert (await resp.json()) == {"ok": False, "detail": "Nothing is playing"}
+    assert service.fake_notifier.sent == []
+
+
+async def test_announce_of_an_empty_queue_fails_and_posts_nothing(
+    client, service, guild_id, sid, auth
+):
+    """queue_embed would happily render "Queue is empty.", but the key answers
+    a person at the deck, not a person in the channel — nothing is posted."""
+    put_user_in_voice(service, guild_id)
+    assert await service.repo.get_queue(sid) == []
+    resp = await client.post(ANNOUNCE, json={"command": "queue"}, headers=auth)
+    assert resp.status == 200
+    assert (await resp.json()) == {"ok": False, "detail": "Queue is empty"}
+    assert service.fake_notifier.sent == []
+    assert service.repo.command_log == []
+
+
+async def test_announce_cooldown_blocks_the_second_post_then_expires(
+    client, service, guild_id, sid, auth
+):
+    from jacky.voice_control import ANNOUNCE_COOLDOWN_S
+
+    put_user_in_voice(service, guild_id)
+    await service.repo.set_session_code(sid, "ABC123")
+
+    first = await client.post(ANNOUNCE, json={"command": "session"}, headers=auth)
+    assert first.status == 200 and (await first.json())["ok"] is True
+
+    second = await client.post(ANNOUNCE, json={"command": "session"}, headers=auth)
+    assert second.status == 429
+    assert (await second.json()) == {"error": "just-posted"}
+    assert len(service.fake_notifier.sent) == 1
+
+    cooldown = client.server.app["announce_cooldown"]
+    later = cooldown.now() + ANNOUNCE_COOLDOWN_S + 1
+    cooldown.now = lambda: later
+    third = await client.post(ANNOUNCE, json={"command": "session"}, headers=auth)
+    assert third.status == 200 and (await third.json())["ok"] is True
+    assert len(service.fake_notifier.sent) == 2
+
+
+async def test_a_failed_announce_burns_neither_history_nor_the_cooldown(
+    client, service, guild_id, sid, auth
+):
+    put_user_in_voice(service, guild_id)
+    await service.repo.set_session_code(sid, "ABC123")
+    service.fake_notifier.fail = True
+
+    resp = await client.post(ANNOUNCE, json={"command": "session"}, headers=auth)
+    assert resp.status == 200
+    assert (await resp.json()) == {"ok": False, "detail": "Could not post to Discord"}
+    assert service.repo.command_log == []  # the channel never received it
+
+    # No cooldown stamp either: the retry succeeds IMMEDIATELY.
+    service.fake_notifier.fail = False
+    resp = await client.post(ANNOUNCE, json={"command": "session"}, headers=auth)
+    assert (await resp.json())["ok"] is True
+    assert len(service.repo.command_log) == 1
+
+
+async def test_announce_logs_one_history_row_after_a_successful_post(
+    client, service, guild_id, sid, auth
+):
+    put_user_in_voice(service, guild_id)
+    await service.repo.set_session_code(sid, "ABC123")
+    resp = await client.post(ANNOUNCE, json={"command": "session"}, headers=auth)
+    assert resp.status == 200
+    # (sid, command, args, user, source, transcript) — "session" is the j!
+    # name so history renders the row exactly like a typed j!session, and the
+    # streamdeck source keeps deck presses out of the typed rows' dedupe.
+    assert service.repo.command_log == [
+        (sid, "session", "", "Stream Deck", "streamdeck", ""),
+    ]
+
+
+# ── status parity: the cog and the route share one builder ───────────────
+
+
+class FakeHttpResponse:
+    def __init__(self, payload, status=200):
+        self._payload = payload
+        self.status = status
+
+    async def json(self, content_type=None):
+        return self._payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+class FakeHttpSession:
+    def __init__(self, payload, status=200):
+        self._response = FakeHttpResponse(payload, status)
+        self.urls: list[str] = []
+
+    def get(self, url):
+        self.urls.append(url)
+        return self._response
+
+
+class FakeCtx:
+    def __init__(self, guild):
+        self.guild = guild
+        self.sent: list = []
+
+    async def send(self, *, embed=None):
+        self.sent.append(embed)
+
+
+GUARDIAN_PAYLOAD = {
+    "canary": {"ok": False, "playbook": "F3", "error": "boom"},
+    "activeFailures": ["F3"],
+    "uptimeSeconds": 4200,
+    "lastProbeAt": "2026-08-13T10:00:00",
+    "actions": [
+        {"at": "2026-08-13T09:59:00", "playbook": "F3", "action": "alerted"},
+    ],
+}
+
+
+async def test_status_parity_between_the_cog_and_the_route(
+    client, service, guild_id, sid, auth
+):
+    """j!status and the announce route call the same builder over the same
+    inputs, so the embeds must be EQUAL — pinned so the extraction cannot
+    drift back into two constructions that happen to agree."""
+    from tests.conftest import FakeSettings
+
+    from jacky.commands.status import Status
+
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {
+        "currentTrack": {"title": "Song A", "duration": 120},
+        "queue": [{"title": "b"}],
+        "isPaused": True,
+    })
+    service.positions[guild_id] = {"connected": True, "position": 65000}
+
+    bot = service.bot
+    bot.repo = service.repo        # what the cog reads; the route uses service
+    bot.service = service
+    bot.settings = FakeSettings()
+    bot.http_session = FakeHttpSession(GUARDIAN_PAYLOAD)
+    cog = Status(bot)
+    bot.cogs["Status"] = cog       # the route reads started_at via get_cog
+
+    ctx = FakeCtx(guild=bot.get_guild(guild_id))
+    await cog.status.callback(cog, ctx)
+    resp = await client.post(ANNOUNCE, json={"command": "status"}, headers=auth)
+    assert resp.status == 200
+
+    [cog_embed] = ctx.sent
+    route_embed = service.fake_notifier.sent[-1]["embed"]
+    assert route_embed.to_dict() == cog_embed.to_dict()

@@ -15,6 +15,7 @@ session). Same liveness signal PlayerService.handle_summon uses.
 
 import hashlib
 import logging
+import time
 from typing import Any
 
 import discord
@@ -24,6 +25,14 @@ from jacky.api.dashboard_link import entry_url, session_url
 from jacky.api.transcribe import normalize_language
 from jacky.api.voice_actions import MAX_ACTIONS, enforce_intent
 from jacky.api.voice_grammar import parse_structured
+from jacky.commands.embeds import now_playing_embed, queue_embed, session_embed
+from jacky.commands.status import build_status_embed, fetch_guardian_status
+
+# Imported rather than redeclared: the announce key's window and the voice
+# announce window are independent STATE (see AnnounceCooldown), but "how long
+# does 'just posted' last" is one product decision, and a single constant
+# keeps the two from silently diverging.
+from jacky.voice_control import ANNOUNCE_COOLDOWN_S
 
 log = logging.getLogger("jacky.control")
 
@@ -107,6 +116,36 @@ def build_debug_message(transcript: str, resolved_by: str, pairs) -> str:
         f"Resolved by: {resolved_by}\n"
         f"Actions: {rendered}"
     )
+
+
+# The closed allowlist for POST /control/announce — each name is BOTH the
+# wire command and the j! name the history row logs under. A command runner
+# this is not: anything else is a 400, and mutations have their own routes.
+_ANNOUNCE_COMMANDS = frozenset({"session", "nowplaying", "queue", "status"})
+
+
+class AnnounceCooldown:
+    """Per-guild window for POST /control/announce.
+
+    Deliberately its OWN state, never VoiceIntentDispatcher's: the dispatcher
+    is None when OPENAI_API_KEY is unset, and a posting key must work on a
+    bot with voice off. Two independent 10 s windows on the same channel is
+    accepted and documented (spec: 2026-08-11-announce-key-design).
+    """
+
+    def __init__(self) -> None:
+        # Injectable clock, mirroring VoiceIntentDispatcher: tests advance
+        # time rather than sleep. monotonic, not wall clock, so a system time
+        # change cannot wedge the cooldown.
+        self.now = time.monotonic
+        self._last: dict[int, float] = {}
+
+    def allowed(self, guild_id: int) -> bool:
+        last = self._last.get(guild_id)
+        return last is None or (self.now() - last) >= ANNOUNCE_COOLDOWN_S
+
+    def stamp(self, guild_id: int) -> None:
+        self._last[guild_id] = self.now()
 
 
 def _is_valid_document_id(name: str) -> bool:
@@ -417,6 +456,90 @@ def register_control_routes(
             "url": entry_url(service.settings.web_app_url),
         })
 
+    announce_cooldown = AnnounceCooldown()
+    # On the app so tests can reach the injectable clock.
+    app["announce_cooldown"] = announce_cooldown
+
+    async def announce(request: web.Request, user_id: str) -> web.Response:
+        """Post one j!-style embed to the session's text channel — the deck
+        equivalent of typing j!session (spec: 2026-08-11-announce-key-design).
+
+        Response contract: 4xx is reserved for request-level faults (no
+        session, unknown command, cooldown). Empty-content failures — nothing
+        playing, empty queue, no session code — answer 200 {"ok": false,
+        "detail": ...}, following the voice route's per-action convention, so
+        the key can render the detail rather than a generic alert.
+        """
+        guild, body, err = await action_target(request, user_id)
+        if err:
+            return err
+        command = body.get("command")
+        # A malformed / non-JSON body parses to {} (body_of), so it lands on
+        # this same 400 rather than a 500.
+        if not isinstance(command, str) or command not in _ANNOUNCE_COMMANDS:
+            return web.json_response({"error": "unknown-command"}, status=400)
+        if not announce_cooldown.allowed(guild.id):
+            return web.json_response({"error": "just-posted"}, status=429)
+
+        sid = str(guild.id)
+        state = await service.repo.get_state(sid) or {}
+        if command == "session":
+            code = state.get("sessionCode")
+            if not code:
+                return web.json_response({"ok": False, "detail": "No session code"})
+            embed = session_embed(code, service.settings.web_app_url)
+        elif command == "nowplaying":
+            current = state.get("currentTrack")
+            if not current:
+                return web.json_response(
+                    {"ok": False, "detail": "Nothing is playing"}
+                )
+            embed = now_playing_embed(current)
+        elif command == "queue":
+            queue = state.get("queue") or []
+            # Checked BEFORE building: queue_embed happily renders "Queue is
+            # empty.", but the j! command answers a person in the channel
+            # while the key answers a person at the deck — an empty queue
+            # fails on the key and posts nothing.
+            if not queue:
+                return web.json_response({"ok": False, "detail": "Queue is empty"})
+            embed = queue_embed(queue, state.get("currentTrack"), page=0)
+        else:  # status — always has content, always posts.
+            cog = bot.get_cog("Status")
+            node = getattr(bot, "node", None)
+            embed = build_status_embed(
+                # started_at lives on the cog; without it the uptime line is
+                # omitted rather than failing the post — a missing cosmetic
+                # line must not break a health report.
+                uptime_s=(
+                    time.monotonic() - cog.started_at if cog is not None else None
+                ),
+                gateway_ms=int(bot.latency * 1000),
+                guild_count=len(bot.guilds),
+                node_connected=bool(node and node.connected),
+                node_session_id=node.session_id if node else None,
+                state=state,
+                position=service.positions.get(guild.id) or {},
+                guardian=await fetch_guardian_status(bot),
+            )
+
+        if not await service.notifier.send(guild.id, embed=embed):
+            # The channel never received it; saying "posted" would be a lie —
+            # and neither the history row nor the cooldown stamp happens.
+            return web.json_response(
+                {"ok": False, "detail": "Could not post to Discord"}
+            )
+        # One row under the j! name, exactly the convention the shuffle route
+        # established: history renders the row like a typed command, and the
+        # streamdeck source keeps deck presses out of the typed rows' dedupe.
+        await service.repo.log_command(
+            sid, command, "", "Stream Deck", user_id, source="streamdeck"
+        )
+        # Stamped only on SUCCESS (mirrors VoiceIntentDispatcher._announce):
+        # a failed send must not burn the next 10 s of legitimate posts.
+        announce_cooldown.stamp(guild.id)
+        return web.json_response({"ok": True, "command": command})
+
     async def post_debug(guild_id: int, message: str) -> None:
         """Echo one press to the session's text channel. Best-effort.
 
@@ -650,5 +773,6 @@ def register_control_routes(
         web.get("/control/dashboard-url", guarded(dashboard_url)),
         web.post("/control/summon", guarded(summon)),
         web.post("/control/voice", guarded(voice)),
+        web.post("/control/announce", guarded(announce)),
     ])
     log.info("control API routes registered")

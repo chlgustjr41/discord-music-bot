@@ -45,105 +45,150 @@ def _fmt_position(position_ms: int, duration_s: int) -> str:
     return f"{pos_m}:{pos_s:02d}"
 
 
+async def fetch_guardian_status(bot) -> dict | None:
+    """The guardian's probe snapshot, or None for "unreachable".
+
+    Module-level (formerly Status._guardian_status) so the announce route can
+    call it without the cog. EVERYTHING sits inside the try: on a bot without
+    http_session/settings wired, or on any transport fault, the guardian is
+    REPORTED unreachable rather than raising — same contract the cog had.
+    """
+    try:
+        async with bot.http_session.get(bot.settings.guardian_status_url) as resp:
+            if resp.status != 200:
+                return None
+            return await resp.json(content_type=None)
+    except Exception as exc:  # noqa: BLE001 — reported as "unreachable"
+        log.debug("guardian status fetch failed: %s", exc)
+        return None
+
+
+def build_status_embed(
+    *,
+    uptime_s: float | None,
+    gateway_ms: int,
+    guild_count: int,
+    node_connected: bool,
+    node_session_id: str | None,
+    state: dict,
+    position: dict,
+    guardian: dict | None,
+) -> discord.Embed:
+    """The j!status embed, over plain data.
+
+    Shared by the Status cog and POST /control/announce so the deck's status
+    post and the typed j!status are the same embed BY CONSTRUCTION (spec:
+    2026-08-11-announce-key-design) — like dashboard_link before it. Pure
+    over its inputs: callers gather from the live bot/service, this renders.
+
+    uptime_s is Optional because the route reads started_at through
+    bot.get_cog("Status") and must survive the cog being absent — a missing
+    cosmetic line must not break a health report.
+    """
+    embed = discord.Embed(title="🩺 Jacky Music — System Status", color=EMBED_COLOR)
+
+    # ── bot ──────────────────────────────────────────────────────────
+    bot_line = f"v{__version__}"
+    if uptime_s is not None:
+        bot_line += f" · up {_fmt_uptime(uptime_s)}"
+    embed.add_field(
+        name="Bot",
+        value=(
+            f"{bot_line}\n"
+            f"Gateway ping **{gateway_ms}ms** · {guild_count} guilds"
+        ),
+        inline=False,
+    )
+
+    # ── audio node ───────────────────────────────────────────────────
+    node_line = "🟢 connected" if node_connected else "🔴 disconnected"
+    if node_session_id:
+        node_line += f" · session `{node_session_id}`"
+    embed.add_field(name="Audio node (Lavalink)", value=node_line, inline=False)
+
+    # ── this server's player ─────────────────────────────────────────
+    current = state.get("currentTrack")
+    if current:
+        voice_ok = position.get("connected")
+        player_line = (
+            f"{'🟢' if voice_ok else '🔴'} voice "
+            f"{'connected' if voice_ok else 'NOT connected'}\n"
+            f"**{current.get('title', '?')}** — "
+            f"{_fmt_position(position.get('position', 0), current.get('duration', 0))}"
+            f"{' (paused)' if state.get('isPaused') else ''}\n"
+            f"Queue: {len(state.get('queue', []))} track(s)"
+        )
+    elif state.get("voiceChannelId"):
+        player_line = f"🟡 idle in **{state.get('voiceChannelName', 'voice')}** — nothing playing"
+    else:
+        player_line = "⚪ no active session"
+    embed.add_field(name="This server", value=player_line, inline=False)
+
+    # ── guardian ─────────────────────────────────────────────────────
+    if guardian is None:
+        embed.add_field(
+            name="Guardian",
+            value="🔴 unreachable — the supervisor may be down (check `make logs s=guardian`)",
+            inline=False,
+        )
+    else:
+        canary = guardian.get("canary") or {}
+        if canary.get("ok"):
+            canary_line = "🟢 canary passing (YouTube reachable through Lavalink)"
+        elif canary:
+            playbook = canary.get("playbook", "F?")
+            hint = PLAYBOOK_HINTS.get(playbook, "see runbook")
+            error = (canary.get("error") or "")[:120]
+            canary_line = f"🔴 **[{playbook}]** {hint}\n`{error}`"
+        else:
+            canary_line = "🟡 no probe completed yet"
+        active = guardian.get("activeFailures") or []
+        if active:
+            canary_line += f"\nActive failures: {', '.join(active)}"
+        canary_line += f"\nUp {_fmt_uptime(guardian.get('uptimeSeconds', 0))}"
+        last_probe = guardian.get("lastProbeAt")
+        if last_probe:
+            canary_line += f" · last probe {last_probe} UTC"
+        embed.add_field(name="Guardian", value=canary_line, inline=False)
+
+        actions = guardian.get("actions") or []
+        if actions:
+            lines = [
+                f"`{a['at'][11:16]}` **[{a['playbook']}]** {a['action']}"
+                for a in actions[-5:]
+            ]
+            embed.add_field(
+                name="Recent automated actions", value="\n".join(lines), inline=False
+            )
+
+    embed.set_footer(text="Playbook details: docs/operations/RUNBOOK.md")
+    return embed
+
+
 class Status(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
+        # Stays on the cog (not module state): the announce route reads it via
+        # bot.get_cog("Status") and omits the uptime line when the cog is gone.
         self.started_at = time.monotonic()
-
-    async def _guardian_status(self) -> dict | None:
-        url = self.bot.settings.guardian_status_url
-        try:
-            async with self.bot.http_session.get(url) as resp:
-                if resp.status != 200:
-                    return None
-                return await resp.json(content_type=None)
-        except Exception as exc:  # noqa: BLE001 — reported as "unreachable"
-            log.debug("guardian status fetch failed: %s", exc)
-            return None
 
     @commands.command(name="status", aliases=["health"], brief="Bot + guardian health check")
     async def status(self, ctx: commands.Context) -> None:
         """Show the health of the whole stack: bot, audio node, this server's
         player, and the guardian's latest probe verdict."""
-        embed = discord.Embed(title="🩺 Jacky Music — System Status", color=EMBED_COLOR)
-
-        # ── bot ──────────────────────────────────────────────────────────
+        # Thin wrapper: gather inputs → shared builder → send. The rendering
+        # itself lives in build_status_embed, which the announce route shares.
         node = self.bot.node
-        gateway_ms = int(self.bot.latency * 1000)
-        embed.add_field(
-            name="Bot",
-            value=(
-                f"v{__version__} · up {_fmt_uptime(time.monotonic() - self.started_at)}\n"
-                f"Gateway ping **{gateway_ms}ms** · {len(self.bot.guilds)} guilds"
-            ),
-            inline=False,
+        embed = build_status_embed(
+            uptime_s=time.monotonic() - self.started_at,
+            gateway_ms=int(self.bot.latency * 1000),
+            guild_count=len(self.bot.guilds),
+            node_connected=bool(node and node.connected),
+            node_session_id=node.session_id if node else None,
+            state=await self.bot.repo.get_state(str(ctx.guild.id)) or {},
+            position=self.bot.service.positions.get(ctx.guild.id) or {},
+            guardian=await fetch_guardian_status(self.bot),
         )
-
-        # ── audio node ───────────────────────────────────────────────────
-        node_line = "🟢 connected" if node and node.connected else "🔴 disconnected"
-        if node and node.session_id:
-            node_line += f" · session `{node.session_id}`"
-        embed.add_field(name="Audio node (Lavalink)", value=node_line, inline=False)
-
-        # ── this server's player ─────────────────────────────────────────
-        state = await self.bot.repo.get_state(str(ctx.guild.id)) or {}
-        position = self.bot.service.positions.get(ctx.guild.id) or {}
-        current = state.get("currentTrack")
-        if current:
-            voice_ok = position.get("connected")
-            player_line = (
-                f"{'🟢' if voice_ok else '🔴'} voice "
-                f"{'connected' if voice_ok else 'NOT connected'}\n"
-                f"**{current.get('title', '?')}** — "
-                f"{_fmt_position(position.get('position', 0), current.get('duration', 0))}"
-                f"{' (paused)' if state.get('isPaused') else ''}\n"
-                f"Queue: {len(state.get('queue', []))} track(s)"
-            )
-        elif state.get("voiceChannelId"):
-            player_line = f"🟡 idle in **{state.get('voiceChannelName', 'voice')}** — nothing playing"
-        else:
-            player_line = "⚪ no active session"
-        embed.add_field(name="This server", value=player_line, inline=False)
-
-        # ── guardian ─────────────────────────────────────────────────────
-        guardian = await self._guardian_status()
-        if guardian is None:
-            embed.add_field(
-                name="Guardian",
-                value="🔴 unreachable — the supervisor may be down (check `make logs s=guardian`)",
-                inline=False,
-            )
-        else:
-            canary = guardian.get("canary") or {}
-            if canary.get("ok"):
-                canary_line = "🟢 canary passing (YouTube reachable through Lavalink)"
-            elif canary:
-                playbook = canary.get("playbook", "F?")
-                hint = PLAYBOOK_HINTS.get(playbook, "see runbook")
-                error = (canary.get("error") or "")[:120]
-                canary_line = f"🔴 **[{playbook}]** {hint}\n`{error}`"
-            else:
-                canary_line = "🟡 no probe completed yet"
-            active = guardian.get("activeFailures") or []
-            if active:
-                canary_line += f"\nActive failures: {', '.join(active)}"
-            canary_line += f"\nUp {_fmt_uptime(guardian.get('uptimeSeconds', 0))}"
-            last_probe = guardian.get("lastProbeAt")
-            if last_probe:
-                canary_line += f" · last probe {last_probe} UTC"
-            embed.add_field(name="Guardian", value=canary_line, inline=False)
-
-            actions = guardian.get("actions") or []
-            if actions:
-                lines = [
-                    f"`{a['at'][11:16]}` **[{a['playbook']}]** {a['action']}"
-                    for a in actions[-5:]
-                ]
-                embed.add_field(
-                    name="Recent automated actions", value="\n".join(lines), inline=False
-                )
-
-        embed.set_footer(text="Playbook details: docs/operations/RUNBOOK.md")
         await ctx.send(embed=embed)
 
     @commands.command(name="unlink", brief="Revoke your Stream Deck sign-ins")

@@ -277,6 +277,16 @@ class FakeGuild:
 class FakeBot:
     def __init__(self) -> None:
         self.guilds: list[FakeGuild] = []
+        # Read by the announce route's status branch (int(latency * 1000));
+        # a real bot always has both. `node` is wired in the service fixture.
+        self.latency = 0.0
+        # get_cog mirrors discord.py: None for a cog that was never added.
+        # The announce route reads Status.started_at through this and must
+        # degrade (omit the uptime line) when it is absent.
+        self.cogs: dict[str, object] = {}
+
+    def get_cog(self, name):
+        return self.cogs.get(name)
 
     def get_guild(self, guild_id):
         for g in self.guilds:
@@ -296,6 +306,7 @@ class FakeSettings:
     idle_timeout_seconds: int = 300
     empty_channel_timeout_seconds: int = 120
     web_app_url: str = "http://web.test"
+    guardian_status_url: str = "http://guardian.test/status"
 
 
 @pytest.fixture
@@ -326,6 +337,9 @@ async def service(guild_id):
     svc.search_retry_delay = 0
     svc.node = node
     svc.fake_notifier = notifier
+    # The announce route's status branch reads the node off the BOT (as the
+    # Status cog does), not off the service.
+    bot.node = node
     yield svc
     for task in list(svc.idle_tasks.values()) + list(svc.empty_channel_tasks.values()):
         task.cancel()
