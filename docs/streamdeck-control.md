@@ -246,6 +246,16 @@ Once signed in, their authentication persists across restarts and key changes.
   > will show as an unknown key after this update — drop a Play/Pause key in
   > its place and switch both options on to get the same display, plus
   > press-to-toggle.
+- **Post to Discord** key: configured per key with what to post — Session
+  code, Now playing, Queue, or Status. Pressing it posts **the same embed the
+  matching `j!` command posts** (`j!session`, `j!nowplaying`, `j!queue`,
+  `j!status`) into the session's text channel: both paths call the same embed
+  builders, so they cannot drift. Posts share a 10-second per-guild cooldown —
+  a mashed key shows "Just posted" instead of spamming the channel. Now
+  playing with nothing playing and Queue with an empty queue fail on the key
+  and post nothing (you're at the deck, not reading Discord); Status always
+  posts. Needs a live session — ⚠ otherwise. Posts appear in the dashboard's
+  Command History under the `j!` name. Two keys can be configured differently.
 - **Shuffle** key: shuffles the current queue in place; the track that is
   playing keeps playing. Needs a live session — ⚠ otherwise. An empty queue
   is not an error. Shuffles appear in the dashboard's Command History.
