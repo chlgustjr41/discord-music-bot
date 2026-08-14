@@ -10,6 +10,8 @@ public class ThumbnailsTests
     [InlineData("https://i.ytimg.com/vi/abc123/hqdefault.jpg", "https://i.ytimg.com/vi/abc123/mqdefault.jpg")]
     [InlineData("https://i.ytimg.com/vi_webp/abc123/sddefault.webp", "https://i.ytimg.com/vi_webp/abc123/mqdefault.webp")]
     [InlineData("https://i.ytimg.com/vi/abc123/mqdefault.jpg", "https://i.ytimg.com/vi/abc123/mqdefault.jpg")]
+    // A query string survives the rewrite.
+    [InlineData("https://i.ytimg.com/vi/x/maxresdefault.jpg?v=1", "https://i.ytimg.com/vi/x/mqdefault.jpg?v=1")]
     // Unknown host / shape / variant: untouched.
     [InlineData("https://covers.example/album.jpg", "https://covers.example/album.jpg")]
     [InlineData("https://i.ytimg.com/vi/abc123/unknownvariant.jpg", "https://i.ytimg.com/vi/abc123/unknownvariant.jpg")]
@@ -41,6 +43,21 @@ public class ThumbnailsTests
     {
         Assert.Null(await Thumbnails.LoadAsync("https://x.example/a.jpg", ClientReturning(HttpStatusCode.OK, new byte[Thumbnails.MaxBytes + 1])));
         Assert.Null(await Thumbnails.LoadAsync("https://x.example/a.jpg", ClientReturning(HttpStatusCode.OK, Array.Empty<byte>())));
+    }
+
+    [Fact]
+    public async Task fetch_rejects_oversize_body_when_content_length_is_missing()
+    {
+        // ByteArrayContent auto-declares Content-Length, which lets the
+        // declared-size check mask the post-read cap; nulling the header
+        // pins buf.Length > MaxBytes on its own.
+        var client = new HttpClient(new FakeHandler(req => {
+            var res = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(new byte[Thumbnails.MaxBytes + 1]) };
+            res.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
+            res.Content.Headers.ContentLength = null;
+            return res;
+        }));
+        Assert.Null(await Thumbnails.LoadAsync("https://x.example/a.jpg", client));
     }
 
     [Fact]

@@ -22,4 +22,8 @@ public class UrlGuardTests
     [InlineData("")]
     public void rejects_everything_else(string input)
         => Assert.Null(UrlGuard.OpenableUrl(input));
+
+    [Fact]
+    public void null_input_is_rejected()
+        => Assert.Null(UrlGuard.OpenableUrl(null!));
 }

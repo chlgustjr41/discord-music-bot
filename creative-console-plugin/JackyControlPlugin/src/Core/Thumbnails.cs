@@ -3,6 +3,7 @@ namespace Loupedeck.JackyControlPlugin;
 using System;
 using System.Net.Http;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
 /// <summary>
@@ -17,6 +18,7 @@ using System.Threading.Tasks;
 public static class Thumbnails
 {
     public const Int32 MaxBytes = 2 * 1024 * 1024;
+    private static readonly TimeSpan FetchTimeout = TimeSpan.FromSeconds(5);
     private const String SmallVariant = "mqdefault";
     private static readonly Regex YtThumbPath = new(@"^/(vi|vi_webp)/([^/]+)/([^/]+)\.(jpg|webp)$", RegexOptions.Compiled);
     private static readonly String[] KnownVariants = { "default", "mqdefault", "hqdefault", "sddefault", "maxresdefault" };
@@ -44,8 +46,11 @@ public static class Thumbnails
         try
         {
             // Rewritten BEFORE the request, not after: the point is never to
-            // pull 1280x720 down a link in the first place.
-            using var res = await http.GetAsync(SmallThumbnailUrl(url)).ConfigureAwait(false);
+            // pull 1280x720 down a link in the first place. ResponseHeadersRead
+            // so the declared-size check below runs at headers, before any
+            // body is buffered; the 5s timeout mirrors thumbnail.ts.
+            using var cts = new CancellationTokenSource(FetchTimeout);
+            using var res = await http.GetAsync(SmallThumbnailUrl(url), HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);
             if (!res.IsSuccessStatusCode)
             {
                 return null;
@@ -62,7 +67,7 @@ public static class Thumbnails
             {
                 return null;
             }
-            var buf = await res.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
+            var buf = await res.Content.ReadAsByteArrayAsync(cts.Token).ConfigureAwait(false);
             return buf.Length == 0 || buf.Length > MaxBytes ? null : buf;
         }
         catch
