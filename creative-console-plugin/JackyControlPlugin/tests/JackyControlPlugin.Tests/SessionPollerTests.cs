@@ -217,6 +217,24 @@ public class SessionPollerTests
     }
 
     [Fact]
+    public async Task stop_with_pending_delay_kills_the_loop_even_with_subscribers_still_attached()
+    {
+        var rig = new Rig();
+        var poller = rig.NewPoller();
+        var (cb, _) = Listener();
+        poller.Subscribe(cb);
+
+        rig.Succeed(await rig.NextPollAsync(), Track);
+        var delay = await rig.NextDelayAsync(); // chain parked on the delay
+
+        poller.Stop(); // plugin Unload: nobody unsubscribed, the loop must die anyway
+        delay.Tcs.TrySetResult(true); // even if the abandoned timer fires, nothing may poll
+
+        Assert.False(await rig.PollStartsWithin(150));
+        Assert.Equal(1, rig.PollCalls);
+    }
+
+    [Fact]
     public async Task kick_with_pending_delay_polls_immediately_and_resets_backoff()
     {
         var rig = new Rig();

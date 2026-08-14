@@ -13,6 +13,12 @@ namespace Loupedeck.JackyControlPlugin
     {
         private JackyControlPlugin JackyPlugin => (JackyControlPlugin)this.Plugin;
 
+        /// <summary>Guards the three display fields below: poll ticks, artwork
+        /// fetch completions and SDK repaints run on different threads, and the
+        /// post-fetch "does this still belong to the current track" check must
+        /// be atomic with the write or a stale cover can land under a new URL.</summary>
+        private readonly Object _gate = new();
+
         /// <summary>Latest poll state; null before the first poll lands.</summary>
         private PollState _lastState;
 
@@ -43,17 +49,22 @@ namespace Loupedeck.JackyControlPlugin
 
         private void OnPoll(PollState state)
         {
-            this._lastState = state;
-            var thumb = state is PollState.Data data && data.NowPlaying.Active ? data.NowPlaying.Thumbnail : null;
-            if (thumb != this._artUrl)
+            String toFetch = null;
+            lock (this._gate)
             {
-                this._artUrl = thumb;
-                this._artwork = null;
-                if (thumb != null)
+                this._lastState = state;
+                var thumb = state is PollState.Data data && data.NowPlaying.Active ? data.NowPlaying.Thumbnail : null;
+                if (thumb != this._artUrl)
                 {
+                    this._artUrl = thumb;
+                    this._artwork = null;
                     // Refetch only when the track actually changes, never per tick.
-                    _ = this.LoadArtworkAsync(thumb);
+                    toFetch = thumb;
                 }
+            }
+            if (toFetch != null)
+            {
+                _ = this.LoadArtworkAsync(toFetch);
             }
             this.ActionImageChanged();
         }
@@ -66,11 +77,14 @@ namespace Loupedeck.JackyControlPlugin
                 PluginLog.Info("artwork fetch returned nothing"); // URL/status stay out of the log; nothing sensitive to add
                 return;
             }
-            if (this._artUrl != url)
+            lock (this._gate)
             {
-                return; // a slow fetch that lost its track
+                if (this._artUrl != url)
+                {
+                    return; // a slow fetch that lost its track
+                }
+                this._artwork = bytes;
             }
-            this._artwork = bytes;
             this.ActionImageChanged();
         }
 
@@ -96,14 +110,20 @@ namespace Loupedeck.JackyControlPlugin
             var accent = new BitmapColor(233, 69, 96);                     // #e94560
             bmp.Clear(dark);
 
-            var state = this._lastState;
+            PollState state;
+            Byte[] artwork;
+            lock (this._gate)
+            {
+                state = this._lastState;
+                artwork = this._artwork;
+            }
             if (state is not PollState.Data data || !data.NowPlaying.Active)
             {
                 bmp.DrawText(state is PollState.Unauthorized ? "Sign in" : "♪", accent, fontSize: 14);
                 return bmp.ToImage();
             }
 
-            if (this._artwork != null && BitmapImage.TryCreateFromArray(this._artwork, out var art))
+            if (artwork != null && BitmapImage.TryCreateFromArray(artwork, out var art))
             {
                 bmp.SetBackgroundImage(art, resize: true);                 // scaled to the key
                 bmp.FillRectangle(0, bmp.Height - 26, bmp.Width, 26, new BitmapColor(26, 26, 46, 200));

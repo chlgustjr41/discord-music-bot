@@ -69,7 +69,14 @@ namespace Loupedeck.JackyControlPlugin
             => this.Poller = new SessionPoller(() =>
                 this.SignedIn ? this.Client().NowPlayingAsync() : throw new ControlApiException(0));
 
-        // This method is called when the plugin is unloaded.
-        public override void Unload() => this.Http.Dispose();
+        // This method is called when the plugin is unloaded. The poller must
+        // stop BEFORE the HttpClient is disposed: action OnUnloads are not
+        // guaranteed to have unsubscribed, and a delay-parked chain would
+        // otherwise keep ticking against a disposed client forever.
+        public override void Unload()
+        {
+            this.Poller?.Stop();
+            this.Http.Dispose();
+        }
     }
 }

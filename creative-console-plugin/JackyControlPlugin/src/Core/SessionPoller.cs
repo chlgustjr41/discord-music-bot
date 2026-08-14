@@ -124,6 +124,27 @@ public sealed class SessionPoller
         }
     }
 
+    /// <summary>Plugin shutdown: kill the loop regardless of subscribers, so a
+    /// delay-parked chain can never tick again against disposed services
+    /// (Unload runs before HttpClient.Dispose and action OnUnloads are not
+    /// guaranteed to have fired). Clearing <c>_chain</c> under the lock makes
+    /// any surviving chain observe it is no longer the live one and exit;
+    /// completing a pending Wake makes a parked chain observe that now
+    /// rather than after the abandoned delay fires.</summary>
+    public void Stop()
+    {
+        TaskCompletionSource<Boolean> wake = null;
+        lock (this._gate)
+        {
+            if (this._chain != null)
+            {
+                wake = this._chain.Wake; // null while a poll is in flight — that chain exits after the poll
+                this._chain = null;
+            }
+        }
+        wake?.TrySetResult(true);
+    }
+
     private void Emit(PollState state)
     {
         Action<PollState>[] subs;

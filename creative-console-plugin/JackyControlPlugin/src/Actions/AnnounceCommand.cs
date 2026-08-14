@@ -21,7 +21,10 @@ namespace Loupedeck.JackyControlPlugin
         private JackyControlPlugin JackyPlugin => (JackyControlPlugin)this.Plugin;
 
         private readonly Object _gate = new();
-        private readonly Dictionary<String, (String Label, DateTime Until)> _labels = new();
+
+        /// <summary>Deadlines are Environment.TickCount64 (monotonic), not
+        /// wall-clock: a system clock adjustment must not stick a label.</summary>
+        private readonly Dictionary<String, (String Label, Int64 Until)> _labels = new();
 
         private static readonly Dictionary<String, String> ShortNames = new()
         {
@@ -60,6 +63,9 @@ namespace Loupedeck.JackyControlPlugin
             {
                 // Status codes and type names only — never bodies or tokens.
                 PluginLog.Info($"announce failed: {(ex as ControlApiException)?.Status.ToString() ?? ex.GetType().Name}");
+                // The Stream Deck key alerts on every failure; a silent key
+                // reads as "it posted", so this one must answer too.
+                this.SetLabel(actionParameter, "Failed");
             }
         }
 
@@ -67,7 +73,7 @@ namespace Loupedeck.JackyControlPlugin
         {
             lock (this._gate)
             {
-                this._labels[actionParameter] = (label, DateTime.UtcNow.AddMilliseconds(ShowResultMs));
+                this._labels[actionParameter] = (label, Environment.TickCount64 + ShowResultMs);
             }
             this.ActionImageChanged(actionParameter);
             // Revert repaint after the label expires.
@@ -79,7 +85,7 @@ namespace Loupedeck.JackyControlPlugin
             String text = null;
             lock (this._gate)
             {
-                if (this._labels.TryGetValue(actionParameter, out var entry) && DateTime.UtcNow < entry.Until)
+                if (this._labels.TryGetValue(actionParameter, out var entry) && Environment.TickCount64 < entry.Until)
                 {
                     text = entry.Label;
                 }
