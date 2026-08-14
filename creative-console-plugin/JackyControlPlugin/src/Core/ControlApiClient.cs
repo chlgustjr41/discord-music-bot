@@ -63,13 +63,18 @@ public sealed class ControlApiClient
 
     private async Task<String> SendAsync(HttpRequestMessage req, TimeSpan timeout)
     {
-        using var cts = new CancellationTokenSource(timeout);
-        using var res = await this._http.SendAsync(req, cts.Token).ConfigureAwait(false);
-        if (!res.IsSuccessStatusCode)
+        using (req)
         {
-            throw new ControlApiException((Int32)res.StatusCode);
+            using var cts = new CancellationTokenSource(timeout);
+            // SendAsync defaults to ResponseContentRead, so the body is fully
+            // buffered before the CTS goes out of scope.
+            using var res = await this._http.SendAsync(req, cts.Token).ConfigureAwait(false);
+            if (!res.IsSuccessStatusCode)
+            {
+                throw new ControlApiException((Int32)res.StatusCode);
+            }
+            return await res.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
         }
-        return await res.Content.ReadAsStringAsync(cts.Token).ConfigureAwait(false);
     }
 
     private Task<String> PostAsync(String path, Object body = null)

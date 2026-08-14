@@ -103,8 +103,14 @@ public sealed class AuthFlow
 
     private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage req)
     {
-        using var cts = new CancellationTokenSource(RequestTimeout);
-        return await this._http.SendAsync(req, cts.Token).ConfigureAwait(false);
+        using (req)
+        {
+            using var cts = new CancellationTokenSource(RequestTimeout);
+            // Disposing the CTS before the caller reads the content is safe:
+            // SendAsync defaults to ResponseContentRead, so the body is fully
+            // buffered by the time this returns.
+            return await this._http.SendAsync(req, cts.Token).ConfigureAwait(false);
+        }
     }
 
     /// <summary>Best-effort parse of an {"error": "..."} body; null when the

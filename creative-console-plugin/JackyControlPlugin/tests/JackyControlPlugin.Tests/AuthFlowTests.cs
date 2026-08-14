@@ -26,8 +26,11 @@ public class AuthFlowTests
     [Fact]
     public async Task success_path_opens_guarded_url_and_returns_identity()
     {
+        // Uppercase host on purpose: UrlGuard normalizes it, so this pins that
+        // openUrl receives the guard's RETURN value, not the raw server string
+        // (opening the raw URL would surface "https://D.test/auth" here).
         var (http, seen) = Rig(
-            Json(HttpStatusCode.OK, """{"state":"s1","authorizeUrl":"https://d.test/auth"}"""),
+            Json(HttpStatusCode.OK, """{"state":"s1","authorizeUrl":"https://D.test/auth"}"""),
             new HttpResponseMessage(HttpStatusCode.Accepted),
             Json(HttpStatusCode.OK, """{"token":"t","discordUserId":"1","discordUserName":"Jacob"}"""));
         var opened = new List<string>();
