@@ -43,10 +43,13 @@ Drop the **Sign In** action on a key and press it:
 
 ## Actions
 
-All actions live in the **Jacky Music** group. Errors render as a ~3-second
-label on the key, then the key returns to its normal face. The shared
-vocabulary: **Sign in** (401 — not signed in), **Failed** (anything else;
-the status code is in the plugin log, never the response body).
+All actions live in the **Jacky Music** group. Actions that answer on the
+key (Post to Discord, Summon, Play Playlist, Voice) render errors as a
+transient label, then return to their normal face. The shared vocabulary:
+**Sign in** (401 — not signed in), **Failed** (anything else; the status
+code is in the plugin log, never the response body). The plain transport
+keys (Skip, Stop, Shuffle, Volume) log failures without key feedback, and
+Play/Pause reflects a signed-out state through its live face.
 
 - **Play / Pause** — press toggles playback. The key is a live display,
   repainted from a 5-second poll (backing off to 30 s while the server is
