@@ -105,6 +105,8 @@ Once signed in, their authentication persists across restarts and key changes.
   | `repeat`, `loop track`, `loop queue`, `loop off` | Loop mode |
   | `what's playing`, `now playing` | Posts the current track to the Discord channel |
   | `session code`, `post the session code` | Posts the code + dashboard link to Discord |
+  | `queue`, `show the queue`, `what's in the queue` | Posts the queue listing to Discord |
+  | `status`, `health`, `bot status` | Posts the full health embed to Discord |
   | `open the dashboard` | Opens the dashboard in your browser |
 
   Three rules are worth knowing because they are what the key's behaviour
@@ -127,13 +129,16 @@ Once signed in, their authentication persists across restarts and key changes.
   *leading* "next" is a skip (`next song` skips), *trailing* "next" is
   placement (`play X next` queues it first).
 
-  The two posting commands write to the session's own text channel — the same
-  place `j!nowplaying` and `j!session` post, using the same embeds, so the
-  output is identical however it was triggered. They share a 10-second
-  per-guild cooldown, so a misrecognition cannot spam the channel; the second
-  of two announces in quick succession reports "Just posted". Asking what's
-  playing when nothing is fails on the key rather than announcing that to the
-  channel — you're at the Stream Deck, not reading Discord.
+  The four posting commands go through the same announcer the **Post to
+  Discord key** uses — same embeds as `j!session` / `j!nowplaying` /
+  `j!queue` / `j!status`, same destination (the session's text channel, else
+  the text chat of the voice channel the bot is standing in). One 10-second
+  per-guild cooldown is **shared between voice and the key**: two features
+  posting into one channel get one spam bound, so a voice announce followed
+  quickly by a key press reports "Just posted", and vice versa. Asking
+  what's playing when nothing is (or for an empty queue) fails on the key
+  rather than announcing that to the channel — you're at the Stream Deck,
+  not reading Discord.
 
   `open the dashboard` opens exactly what the Open Dashboard key opens: both
   go through one shared URL builder, so they cannot drift apart. It is the
