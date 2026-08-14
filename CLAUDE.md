@@ -9,6 +9,7 @@
 - `services/lavalink/` — templated Lavalink config
 - `deploy/` — docker-compose.yml + .env contract
 - `streamdeck-plugin/` — Stream Deck plugin (TypeScript, @elgato/streamdeck): j! session control keys via the bot's /control API (docs/streamdeck-control.md)
+- `creative-console-plugin/` — Logitech MX Creative Console plugin (C#, net8.0, Logi Actions SDK): same j! session controls via the bot's /control API (docs/creative-console-control.md)
 - `docs/` — architecture, ADRs, runbook, deployment, roadmap
 - `bot/` — LEGACY v1 bot (replaced in production 2026-07-04; rollback-only during soak week, then archived — see docs/STATUS.md)
 - `frontend/`, `functions/` — unchanged (web app + search proxy)
