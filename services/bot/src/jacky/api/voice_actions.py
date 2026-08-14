@@ -21,8 +21,11 @@ _VERBS = (
     "play", "playlist", "skip", "pause", "resume",
     "volume", "shuffle", "clear_queue", "loop",
     # Read-and-announce, plus one client-side action. None of these removes
-    # anything — the no-deletion-verb guarantee is unchanged.
-    "now_playing", "session_info", "open_dashboard",
+    # anything — the no-deletion-verb guarantee is unchanged. All four
+    # inquiries post through the shared Announcer (spec:
+    # 2026-08-14-voice-announce-unification-design) and are argument-free.
+    "now_playing", "session_info", "queue_info", "status_info",
+    "open_dashboard",
 )
 _NEEDS_QUERY = ("play",)
 _NEEDS_NAME = ("playlist",)

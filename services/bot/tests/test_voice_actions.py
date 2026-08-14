@@ -83,7 +83,8 @@ def test_schema_declares_the_closed_vocabulary():
     assert set(verbs) == {
         "play", "playlist", "skip", "pause", "resume",
         "volume", "shuffle", "clear_queue", "loop",
-        "now_playing", "session_info", "open_dashboard",
+        "now_playing", "session_info", "queue_info", "status_info",
+        "open_dashboard",
     }
     assert not any("delete" in v or "remove" in v for v in verbs)
 
@@ -119,8 +120,13 @@ def test_announce_and_client_verbs_validate():
     assert validate_actions([
         {"action": "now_playing"},
         {"action": "session_info"},
+        {"action": "queue_info"},
+        {"action": "status_info"},
         {"action": "open_dashboard"},
-    ]) == [Action("now_playing"), Action("session_info"), Action("open_dashboard")]
+    ]) == [
+        Action("now_playing"), Action("session_info"),
+        Action("queue_info"), Action("status_info"), Action("open_dashboard"),
+    ]
 
 
 def test_new_verbs_need_no_arguments():

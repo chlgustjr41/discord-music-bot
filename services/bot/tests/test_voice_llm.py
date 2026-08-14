@@ -117,6 +117,16 @@ def test_the_prompt_no_longer_tells_the_model_to_search_when_unsure():
     assert "empty" in lowered or "no actions" in lowered
 
 
+def test_the_prompt_names_the_four_post_to_discord_inquiries():
+    """So "can everyone see the queue" classifies onto queue_info rather than
+    a search: the schema enum admits the verbs, the prompt says what they DO."""
+    from jacky.api.voice_llm import SYSTEM_PROMPT
+
+    lowered = SYSTEM_PROMPT.lower()
+    for verb in ("session_info", "now_playing", "queue_info", "status_info"):
+        assert verb in lowered
+
+
 @pytest.mark.parametrize(
     "payload",
     [

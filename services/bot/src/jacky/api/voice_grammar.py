@@ -73,6 +73,25 @@ _EXACT = {
     "post session code": Action("session_info"),
     "session code": Action("session_info"),
     "post the session": Action("session_info"),
+    # Bare "queue" is safe to claim: it was UNRESOLVED before (the "queue "
+    # play-prefix requires an argument), and the exact table only ever sees
+    # the FULL normalized transcript, so "queue X" still reaches the prefix
+    # section and "loop queue" still hits its own exact key.
+    "queue": Action("queue_info"),
+    "the queue": Action("queue_info"),
+    "show the queue": Action("queue_info"),
+    "show queue": Action("queue_info"),
+    # Punctuation normalizes to a SPACE, so "what's in the queue" keys as
+    # "what s in the queue"; the apostrophe-less spelling is kept too
+    # because transcribers emit both (same pair as "what s playing").
+    "what s in the queue": Action("queue_info"),
+    "whats in the queue": Action("queue_info"),
+    "post the queue": Action("queue_info"),
+    "status": Action("status_info"),
+    "bot status": Action("status_info"),
+    "system status": Action("status_info"),
+    "health": Action("status_info"),
+    "health check": Action("status_info"),
     "open the dashboard": Action("open_dashboard"),
     "open dashboard": Action("open_dashboard"),
     # Bare "repeat"/"loop" mean the track, which is what people say when they

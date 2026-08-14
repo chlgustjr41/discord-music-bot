@@ -123,12 +123,17 @@ def build_client(
     transcriber=_BUILD_DEFAULT, voice_dispatcher=_BUILD_DEFAULT,
     interpreter=_BUILD_DEFAULT,
 ) -> TestClient:
+    from jacky.announce import Announcer
     from jacky.api.control import register_control_routes
     from jacky.api.ratelimit import SlidingWindow
     from jacky.core.health import build_app
     from jacky.voice_control import VoiceIntentDispatcher
 
     app = build_app(service.bot, service)
+    # ONE announcer for the route AND the dispatcher, mirroring core/bot.py:
+    # the shared 10 s window across voice and key posts is wiring, and the
+    # route-level cross-window test exercises exactly this.
+    announcer = Announcer(service, service.bot)
     register_control_routes(
         app, bot=service.bot, service=service, token_store=store,
         limiter=limiter or SlidingWindow(limit=1000, window_s=60),
@@ -136,13 +141,14 @@ def build_client(
             FakeTranscriber() if transcriber is _BUILD_DEFAULT else transcriber
         ),
         voice_dispatcher=(
-            VoiceIntentDispatcher(service, service.repo)
+            VoiceIntentDispatcher(service, service.repo, announcer)
             if voice_dispatcher is _BUILD_DEFAULT
             else voice_dispatcher
         ),
         interpreter=(
             FakeInterpreter() if interpreter is _BUILD_DEFAULT else interpreter
         ),
+        announcer=announcer,
     )
     return TestClient(TestServer(app))
 
@@ -1501,6 +1507,46 @@ async def test_open_dashboard_logs_under_its_own_name(
     assert service.repo.command_log[-1][1] == "open_dashboard"
 
 
+# ── the two new inquiries: queue and status through voice ────────────────
+
+
+async def test_a_grammar_resolved_status_never_reaches_the_interpreter(
+    client, service, guild_id, sid, auth, transcriber, interpreter
+):
+    """"status" is in the closed vocabulary now: no LLM call, no latency, and
+    the health embed posts where the bot is."""
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "status"
+    body = await (await client.post("/control/voice", data=WAV, headers=auth)).json()
+    assert [a["action"] for a in body["actions"]] == ["status_info"]
+    assert body["ok"] is True
+    assert interpreter.calls == [], "the grammar had already decided"
+    embed = service.fake_notifier.sent[-1]["embed"]
+    assert embed.title == "🩺 Jacky Music — System Status"
+
+
+async def test_queue_info_posts_and_logs_one_voice_row_under_queue(
+    client, service, guild_id, sid, auth, transcriber, interpreter
+):
+    """The row logs under the j! name "queue" (via _LOG_COMMAND_FOR) with the
+    voice source and the transcript — and there is exactly ONE row: the
+    Announcer never logs history, the route owns the voice attribution."""
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {"queue": [{"title": "First"}]})
+    transcriber.text = "what's in the queue"
+    before = len(service.repo.command_log)
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 200
+    embed = service.fake_notifier.sent[-1]["embed"]
+    assert embed.title == "Queue" and "First" in embed.description
+
+    assert len(service.repo.command_log) - before == 1
+    entry = service.repo.command_log[-1]
+    assert entry[1] == "queue"
+    assert entry[4] == "voice"
+    assert entry[5] == "what's in the queue"
+
+
 # ── voice debug echo (?debug=1) ──────────────────────────────────────────
 
 
@@ -1754,7 +1800,7 @@ async def test_announce_of_an_empty_queue_fails_and_posts_nothing(
 async def test_announce_cooldown_blocks_the_second_post_then_expires(
     client, service, guild_id, sid, auth
 ):
-    from jacky.voice_control import ANNOUNCE_COOLDOWN_S
+    from jacky.announce import ANNOUNCE_COOLDOWN_S
 
     put_user_in_voice(service, guild_id)
     await service.repo.set_session_code(sid, "ABC123")
@@ -1767,9 +1813,9 @@ async def test_announce_cooldown_blocks_the_second_post_then_expires(
     assert (await second.json()) == {"error": "just-posted"}
     assert len(service.fake_notifier.sent) == 1
 
-    cooldown = client.server.app["announce_cooldown"]
-    later = cooldown.now() + ANNOUNCE_COOLDOWN_S + 1
-    cooldown.now = lambda: later
+    announcer = client.server.app["announcer"]
+    later = announcer.now() + ANNOUNCE_COOLDOWN_S + 1
+    announcer.now = lambda: later
     third = await client.post(ANNOUNCE, json={"command": "session"}, headers=auth)
     assert third.status == 200 and (await third.json())["ok"] is True
     assert len(service.fake_notifier.sent) == 2
@@ -1913,3 +1959,27 @@ async def test_announce_reports_empty_content_not_cooldown_inside_the_window(
     )
     assert resp.status == 200
     assert (await resp.json()) == {"ok": False, "detail": "Queue is empty"}
+
+
+async def test_a_voice_announce_cools_down_the_post_key(
+    client, service, guild_id, sid, auth, transcriber, interpreter
+):
+    """The ONE shared window (spec: 2026-08-14-voice-announce-unification):
+    the route and the voice dispatcher post through the same Announcer, so a
+    spoken "session code" blocks an immediate Post key press. Previously
+    these were two independent 10 s windows on the same channel."""
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {
+        "sessionCode": "ABC123", "currentTrack": {"title": "Song"},
+    })
+
+    transcriber.text = "session code"   # grammar-resolved -> session_info
+    voice = await client.post("/control/voice", data=WAV, headers=auth)
+    assert voice.status == 200
+    assert (await voice.json())["ok"] is True
+    assert len(service.fake_notifier.sent) == 1
+
+    resp = await client.post(ANNOUNCE, json={"command": "nowplaying"}, headers=auth)
+    assert resp.status == 429
+    assert (await resp.json()) == {"error": "just-posted"}
+    assert len(service.fake_notifier.sent) == 1
