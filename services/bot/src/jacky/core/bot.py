@@ -145,6 +145,7 @@ class JackyBot(commands.Bot):
         health_app = build_app(self, self.service)
         self.token_store = None
         if self.settings.discord_client_id and self.settings.discord_client_secret:
+            from jacky.announce import Announcer
             from jacky.api.auth_routes import register_auth_routes
             from jacky.api.control import (
                 _MEMBER_LOOKUP_ERRORS,
@@ -181,6 +182,10 @@ class JackyBot(commands.Bot):
                 health_app, oauth=oauth, token_store=self.token_store,
                 member_gate=member_gate,
             )
+            # ONE Announcer, built OUTSIDE the OpenAI guard: a voice-off bot
+            # still has a working Post to Discord key. Handed to BOTH the
+            # route and the voice dispatcher so the 10 s window is shared.
+            announcer = Announcer(self.service, self)
             transcriber = None
             interpreter = None
             voice_dispatcher = None
@@ -201,12 +206,14 @@ class JackyBot(commands.Bot):
                     self.settings.openai_api_key,
                     self.settings.openai_intent_model,
                 )
-                voice_dispatcher = VoiceIntentDispatcher(self.service, self.repo)
+                voice_dispatcher = VoiceIntentDispatcher(
+                    self.service, self.repo, announcer
+                )
             register_control_routes(
                 health_app, bot=self, service=self.service,
                 token_store=self.token_store, limiter=SlidingWindow(),
                 transcriber=transcriber, interpreter=interpreter,
-                voice_dispatcher=voice_dispatcher,
+                voice_dispatcher=voice_dispatcher, announcer=announcer,
             )
         self._health_runner = await start_health_server(
             self, self.service, self.settings.health_port, app=health_app

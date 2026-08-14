@@ -4,9 +4,9 @@ import copy
 
 import pytest
 
+from jacky.announce import ANNOUNCE_COOLDOWN_S
 from jacky.api.voice_actions import Action
 from jacky.audio.models import LoadResult
-from jacky.voice_control import ANNOUNCE_COOLDOWN_S
 from tests.conftest import FakeRepo
 
 
@@ -116,9 +116,12 @@ async def test_voice_and_discord_rows_stay_separate():
 
 @pytest.fixture
 def dispatcher(service):
+    from jacky.announce import Announcer
     from jacky.voice_control import VoiceIntentDispatcher
 
-    return VoiceIntentDispatcher(service, service.repo)
+    return VoiceIntentDispatcher(
+        service, service.repo, Announcer(service, service.bot)
+    )
 
 
 async def test_play_now_replaces_the_current_track(dispatcher, service, guild_id, sid):
@@ -472,10 +475,11 @@ async def test_announce_cooldown_blocks_the_second_post_only(
 
 
 async def test_the_cooldown_expires(dispatcher, service, guild_id, sid):
+    # The clock lives on the shared Announcer now, not on the dispatcher.
     await service.repo.update_state(sid, {"currentTrack": {"title": "Song"}})
     assert (await dispatcher.dispatch_all(guild_id, [Action("now_playing")]))[0].ok
-    later = dispatcher.now() + ANNOUNCE_COOLDOWN_S + 1
-    dispatcher.now = lambda: later
+    later = dispatcher.announcer.now() + ANNOUNCE_COOLDOWN_S + 1
+    dispatcher.announcer.now = lambda: later
     assert (await dispatcher.dispatch_all(guild_id, [Action("now_playing")]))[0].ok
 
 

@@ -105,6 +105,10 @@ async def test_openai_key_wires_a_real_interpreter(captured: dict[str, Any]) -> 
     interpreter = captured["interpreter"]
     assert interpreter is not None, "voice interpretation would silently fall back"
     assert interpreter.model == "gpt-4o-mini"
+    # THE SAME Announcer instance reaches both consumers — the shared 10 s
+    # window across voice and key posts is exactly this identity.
+    assert captured["announcer"] is not None
+    assert captured["voice_dispatcher"].announcer is captured["announcer"]
 
 
 @pytest.mark.asyncio
@@ -120,3 +124,6 @@ async def test_no_openai_key_leaves_voice_unwired(captured: dict[str, Any]) -> N
     await _run({"openai_api_key": ""})
     assert captured["interpreter"] is None
     assert captured["transcriber"] is None
+    # The announcer lives OUTSIDE the OpenAI guard: a voice-off bot still has
+    # a working Post to Discord key.
+    assert captured["announcer"] is not None
