@@ -44,7 +44,24 @@ public sealed class MicRecorder : IDisposable
                 this.MaxDurationReached?.Invoke(this, EventArgs.Empty);
             }
         };
-        this._waveIn.StartRecording();
+        try
+        {
+            this._waveIn.StartRecording();
+        }
+        catch
+        {
+            // A stale device number (mic unplugged since the editor filled the
+            // listbox) throws MmException here. Recording must read false
+            // afterwards, or every later press silently no-ops against a
+            // recorder that never started.
+            this._writer.Dispose();
+            this._writer = null;
+            this._waveIn.Dispose();
+            this._waveIn = null;
+            this._buffer.Dispose();
+            this._buffer = null;
+            throw;
+        }
     }
 
     /// <summary>Stops and returns the complete WAV, or null if nothing was captured.</summary>

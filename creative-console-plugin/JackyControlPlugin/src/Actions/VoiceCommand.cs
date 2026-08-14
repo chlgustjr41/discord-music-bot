@@ -62,6 +62,18 @@ namespace Loupedeck.JackyControlPlugin
         private Timer _backstop;
         private Boolean _recording;
 
+        /// <summary>Identity of the current recording, bumped under _gate at
+        /// every start. Each stop trigger (press, max-duration event, backstop
+        /// timer) carries the generation it was registered for, and StopAndSend
+        /// no-ops on a mismatch: Timer.Dispose does not cancel an in-flight
+        /// callback, and a Task.Run queued for recording A must never be
+        /// allowed to kill recording B at ~0 s.</summary>
+        private Int32 _generation;
+
+        /// <summary>The per-recording MaxDurationReached handler, kept so the
+        /// stale generation's closure can be unsubscribed at stop.</summary>
+        private EventHandler _maxDurationHandler;
+
         /// <summary>Language/debug snapshot taken at record-start, so the whole
         /// press uses one consistent view of the key's settings.</summary>
         private String _language;
@@ -109,6 +121,7 @@ namespace Loupedeck.JackyControlPlugin
 
         protected override Boolean RunCommand(ActionEditorActionParameters parameters)
         {
+            Int32 gen;
             lock (this._gate)
             {
                 if (!this._recording)
@@ -117,9 +130,10 @@ namespace Loupedeck.JackyControlPlugin
                     this.ActionImageChanged();
                     return true;
                 }
+                gen = this._generation; // press-stop targets the live recording
             }
             // Second press: stop and send (shared with the 15 s backstops).
-            this.StopAndSend();
+            this.StopAndSend(gen);
             return true;
         }
 
@@ -136,22 +150,26 @@ namespace Loupedeck.JackyControlPlugin
 
             try
             {
-                if (this._recorder == null)
-                {
-                    this._recorder = new MicRecorder();
-                    // Raised from NAudio's capture callback — hop to the pool
-                    // rather than stopping the device from inside its own event.
-                    this._recorder.MaxDurationReached += (_, _) => Task.Run(this.StopAndSend);
-                }
+                this._recorder ??= new MicRecorder();
+                // Start throws for a stale device number (unplugged mic) and
+                // leaves the recorder fully reset, so the catch below is the
+                // whole recovery — Recording never sticks true.
                 this._recorder.Start(device);
+
+                var gen = ++this._generation;
+                // Raised from NAudio's capture callback — hop to the pool
+                // rather than stopping the device from inside its own event.
+                // Per-recording handler so the closure carries THIS recording's
+                // generation; unsubscribed again in StopAndSend.
+                this._maxDurationHandler = (_, _) => Task.Run(() => this.StopAndSend(gen));
+                this._recorder.MaxDurationReached += this._maxDurationHandler;
                 this._recording = true;
                 // Backstop for the backstop: MaxDurationReached only fires
                 // while audio is flowing; a stalled device still gets cut off.
-                this._backstop = new Timer(_ => this.StopAndSend(), null, MicRecorder.MaxSeconds * 1000, Timeout.Infinite);
+                this._backstop = new Timer(_ => this.StopAndSend(gen), null, MicRecorder.MaxSeconds * 1000, Timeout.Infinite);
             }
             catch (Exception ex)
             {
-                // Device numbers go stale (unplugged mic) — Start can throw.
                 PluginLog.Info($"voice start failed: {ex.GetType().Name}");
                 this._recording = false;
                 this._labels.Set(LabelKey, "Mic error", () => this.ActionImageChanged());
@@ -160,27 +178,61 @@ namespace Loupedeck.JackyControlPlugin
 
         /// <summary>The single stop path shared by the second press, the
         /// recorder's max-duration event and the backstop timer. The lock's
-        /// _recording flag makes it idempotent: whoever loses the race is a
-        /// no-op.</summary>
-        private void StopAndSend()
+        /// _recording flag makes it idempotent, and the generation check makes
+        /// it precise: a stale trigger queued for an earlier recording no-ops
+        /// instead of killing the one that replaced it.</summary>
+        private void StopAndSend(Int32 generation)
         {
-            Byte[] wav;
+            Byte[] wav = null;
+            var micError = false;
             String language;
             Boolean debug;
             lock (this._gate)
             {
-                if (!this._recording)
+                if (!this._recording || generation != this._generation)
                 {
                     return;
                 }
                 this._recording = false;
                 this._backstop?.Dispose();
                 this._backstop = null;
-                wav = this._recorder.Stop();
+                if (this._maxDurationHandler != null)
+                {
+                    this._recorder.MaxDurationReached -= this._maxDurationHandler;
+                    this._maxDurationHandler = null;
+                }
+                try
+                {
+                    wav = this._recorder.Stop();
+                }
+                catch (Exception ex)
+                {
+                    // Device teardown can throw (mic yanked mid-recording); the
+                    // repaint and an answer on the key must still happen. The
+                    // instance is discarded too — a recorder whose Stop threw
+                    // may still claim Recording, which would turn every later
+                    // Start into a silent no-op.
+                    PluginLog.Info($"voice stop failed: {ex.GetType().Name}");
+                    micError = true;
+                    try
+                    {
+                        this._recorder.Dispose();
+                    }
+                    catch
+                    {
+                        // Dispose re-runs Stop; the audio is discarded either way.
+                    }
+                    this._recorder = null;
+                }
                 language = this._language;
                 debug = this._debug;
             }
             this.ActionImageChanged();
+            if (micError)
+            {
+                this.SetLabel("Mic error");
+                return;
+            }
             if (wav == null)
             {
                 // Header-only WAV: zero audio frames ever arrived. The mic is
@@ -280,6 +332,7 @@ namespace Loupedeck.JackyControlPlugin
                 this._recording = false;
                 this._backstop?.Dispose();
                 this._backstop = null;
+                this._maxDurationHandler = null;
                 this._recorder?.Dispose();
                 this._recorder = null;
             }
