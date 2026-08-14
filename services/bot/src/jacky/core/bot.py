@@ -55,10 +55,24 @@ class ChannelNotifier:
             if text_channel_id is None:
                 state = await self.bot.repo.get_state(str(guild_id)) or {}
                 text_channel_id = state.get("textChannelId")
-            if not text_channel_id:
-                return False
-            channel = self.bot.get_channel(int(text_channel_id))
-            if not channel:
+            channel = (
+                self.bot.get_channel(int(text_channel_id))
+                if text_channel_id
+                else None
+            )
+            if channel is None:
+                # Fall back to where the bot IS. A session born from the deck
+                # or the web has no invoking text channel (begin_session keeps
+                # the prior one, None on a server never j!-started), and a
+                # stored id can outlive the channel it names — but the bot is
+                # standing in a voice channel, and a voice channel carries its
+                # own text chat (Messageable since discord.py 2.x). Posting
+                # there answers "which channel does a deck-born session
+                # announce into": the session's location, not a guess.
+                guild = self.bot.get_guild(int(guild_id))
+                voice = guild.voice_client if guild else None
+                channel = voice.channel if voice else None
+            if channel is None:
                 return False
             if embed is None:
                 if track is not None:

@@ -58,7 +58,8 @@ The ask: plugin actions communicate through the bot to post messages — the dec
 | Unknown command in body | 400; key flashes ⚠ (cannot happen from our PI, guards a stale plugin) |
 | Cooldown window | 429; key shows "Just posted" |
 | Nothing playing / empty queue | Failure on the key; nothing posted |
-| No text channel / notifier failure | Failure on the key; no history row |
+| No stored text channel, or a stale id | **Falls back to the bot's voice-channel text chat** — the session's location. Deck/web-born sessions have no invoking text channel, and this is where they announce. |
+| No destination at all (not even voice) | Failure on the key; no history row |
 | Bot with voice disabled | Works — no dependency on the voice dispatcher |
 
 ## Testing

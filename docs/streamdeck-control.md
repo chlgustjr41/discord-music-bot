@@ -249,8 +249,12 @@ Once signed in, their authentication persists across restarts and key changes.
 - **Post to Discord** key: configured per key with what to post — Session
   code, Now playing, Queue, or Status. Pressing it posts **the same embed the
   matching `j!` command posts** (`j!session`, `j!nowplaying`, `j!queue`,
-  `j!status`) into the session's text channel: both paths call the same embed
-  builders, so they cannot drift. Posts share a 10-second per-guild cooldown —
+  `j!status`): both paths call the same embed builders, so they cannot drift.
+  The destination is the session's text channel when one exists (the channel
+  a `j!` command was typed in), otherwise **the text chat of the voice
+  channel the bot is standing in** — so a session started from the deck or
+  the web, which never had an invoking text channel, posts where the session
+  actually lives instead of failing with "Could not post". Posts share a 10-second per-guild cooldown —
   a mashed key shows "Just posted" instead of spamming the channel. Now
   playing with nothing playing and Queue with an empty queue fail on the key
   and post nothing (you're at the deck, not reading Discord); Status always
