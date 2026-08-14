@@ -403,6 +403,36 @@ async def test_session_info_without_a_code_posts_nothing(
     assert len(service.fake_notifier.sent) == before
 
 
+async def test_queue_info_posts_the_queue_embed(dispatcher, service, guild_id, sid):
+    await service.repo.update_state(sid, {
+        "currentTrack": {"title": "Current"},
+        "queue": [{"title": "First"}, {"title": "Second"}],
+    })
+    result = (await dispatcher.dispatch_all(guild_id, [Action("queue_info")]))[0]
+    assert result.ok
+    embed = service.fake_notifier.sent[-1]["embed"]
+    assert embed.title == "Queue"
+    assert "First" in embed.description and "Second" in embed.description
+
+
+async def test_queue_info_with_an_empty_queue_posts_nothing(
+    dispatcher, service, guild_id, sid
+):
+    """Same convention as the other announces: the asker is at the mic, so an
+    empty queue fails on the key rather than announcing emptiness."""
+    result = (await dispatcher.dispatch_all(guild_id, [Action("queue_info")]))[0]
+    assert result.ok is False
+    assert result.detail == "Queue is empty"
+    assert service.fake_notifier.sent == []
+
+
+async def test_status_info_posts_the_status_embed(dispatcher, service, guild_id):
+    result = (await dispatcher.dispatch_all(guild_id, [Action("status_info")]))[0]
+    assert result.ok
+    embed = service.fake_notifier.sent[-1]["embed"]
+    assert embed.title == "🩺 Jacky Music — System Status"
+
+
 async def test_a_notifier_that_cannot_post_is_reported_as_failure(
     dispatcher, service, guild_id, sid
 ):

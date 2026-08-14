@@ -103,7 +103,7 @@ class VoiceIntentDispatcher:
             return await self._play(guild_id, sid, action)
         if kind == "playlist":
             return await self._playlist_action(guild_id, sid, action)
-        if kind in ("now_playing", "session_info"):
+        if kind in ("now_playing", "session_info", "queue_info", "status_info"):
             return await self._announce(guild_id, kind)
         if kind == "open_dashboard":
             return await self._open_dashboard(sid)

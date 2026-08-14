@@ -52,6 +52,8 @@ _LOG_COMMAND_FOR = {
     # These name real j! commands, so history reads naturally.
     "now_playing": "nowplaying",
     "session_info": "session",
+    "queue_info": "queue",
+    "status_info": "status",
     # open_dashboard has no j! equivalent — it logs under its own name.
 }
 

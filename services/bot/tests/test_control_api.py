@@ -1507,6 +1507,46 @@ async def test_open_dashboard_logs_under_its_own_name(
     assert service.repo.command_log[-1][1] == "open_dashboard"
 
 
+# ── the two new inquiries: queue and status through voice ────────────────
+
+
+async def test_a_grammar_resolved_status_never_reaches_the_interpreter(
+    client, service, guild_id, sid, auth, transcriber, interpreter
+):
+    """"status" is in the closed vocabulary now: no LLM call, no latency, and
+    the health embed posts where the bot is."""
+    put_user_in_voice(service, guild_id)
+    transcriber.text = "status"
+    body = await (await client.post("/control/voice", data=WAV, headers=auth)).json()
+    assert [a["action"] for a in body["actions"]] == ["status_info"]
+    assert body["ok"] is True
+    assert interpreter.calls == [], "the grammar had already decided"
+    embed = service.fake_notifier.sent[-1]["embed"]
+    assert embed.title == "🩺 Jacky Music — System Status"
+
+
+async def test_queue_info_posts_and_logs_one_voice_row_under_queue(
+    client, service, guild_id, sid, auth, transcriber, interpreter
+):
+    """The row logs under the j! name "queue" (via _LOG_COMMAND_FOR) with the
+    voice source and the transcript — and there is exactly ONE row: the
+    Announcer never logs history, the route owns the voice attribution."""
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {"queue": [{"title": "First"}]})
+    transcriber.text = "what's in the queue"
+    before = len(service.repo.command_log)
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+    assert resp.status == 200
+    embed = service.fake_notifier.sent[-1]["embed"]
+    assert embed.title == "Queue" and "First" in embed.description
+
+    assert len(service.repo.command_log) - before == 1
+    entry = service.repo.command_log[-1]
+    assert entry[1] == "queue"
+    assert entry[4] == "voice"
+    assert entry[5] == "what's in the queue"
+
+
 # ── voice debug echo (?debug=1) ──────────────────────────────────────────
 
 

@@ -235,6 +235,55 @@ def test_the_trim_applies_to_playlist_names_too():
     ]
 
 
+# ── queue / status inquiries (spec: 2026-08-14-voice-announce-unification) ─
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        "queue", "the queue", "show the queue", "show queue",
+        # Punctuation normalizes to a SPACE, so "what's" keys as "what s";
+        # the apostrophe-less spelling is a transcriber variant, kept too.
+        "what's in the queue", "whats in the queue", "post the queue",
+    ],
+)
+def test_queue_inquiries_resolve_to_queue_info(said):
+    parsed = parse_structured(said)
+    assert parsed.actions == [Action("queue_info")]
+    assert parsed.resolved is True
+
+
+@pytest.mark.parametrize(
+    "said", ["status", "bot status", "system status", "health", "health check"]
+)
+def test_status_inquiries_resolve_to_status_info(said):
+    parsed = parse_structured(said)
+    assert parsed.actions == [Action("status_info")]
+    assert parsed.resolved is True
+
+
+def test_bare_queue_queue_x_and_queue_playlist_x_stay_distinct():
+    """Side by side, because claiming the bare word is only safe while the
+    other two shapes keep parsing: bare "queue" was UNRESOLVED before (the
+    "queue " play-prefix requires an argument) and is now the inquiry, while
+    "queue X" must stay a play action with placement end and
+    "queue playlist X" a playlist action."""
+    assert parse_structured("queue").actions == [Action("queue_info")]
+    assert parse_structured("queue bohemian rhapsody").actions == [
+        Action("play", query="bohemian rhapsody", placement="end")
+    ]
+    assert parse_structured("queue playlist chill").actions == [
+        Action("playlist", name="chill", placement="end")
+    ]
+
+
+@pytest.mark.parametrize("said", ["loop queue", "repeat queue"])
+def test_loop_queue_still_hits_the_loop_table(said):
+    """Exact-match keys are full-string, so claiming bare "queue" cannot
+    shadow the loop table's two-word keys — pinned anyway."""
+    assert parse_structured(said).actions == [Action("loop", mode="queue")]
+
+
 # ── the unresolved case: the whole point of the task ─────────────────────
 
 
