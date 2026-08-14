@@ -267,6 +267,29 @@ public class SessionPollerTests
     }
 
     [Fact]
+    public async Task resubscribe_while_poll_in_flight_does_not_stack_chains()
+    {
+        var rig = new Rig();
+        var poller = rig.NewPoller();
+        var (a, _) = Listener();
+        var (b, seenB) = Listener();
+
+        poller.Subscribe(a);
+        var poll = await rig.NextPollAsync(); // in flight: no timer pending
+        poller.Unsubscribe(a);                // nothing to cancel; the chain lives on
+        poller.Subscribe(b);                  // must ride the existing chain, not start one
+
+        Assert.False(await rig.PollStartsWithin(150));
+        Assert.Equal(1, rig.PollCalls);
+
+        rig.Succeed(poll, Track); // the single chain carries on and serves b
+        var delay = await rig.NextDelayAsync();
+        Assert.Equal(5000, delay.Ms);
+        Assert.Equal(1, rig.MaxConcurrentPolls);
+        Assert.Equal(new PollState[] { new PollState.Data(Track) }, seenB.ToArray());
+    }
+
+    [Fact]
     public async Task throwing_subscriber_breaks_neither_the_loop_nor_other_subscribers()
     {
         var rig = new Rig();
