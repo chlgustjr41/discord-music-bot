@@ -12,19 +12,13 @@ namespace Loupedeck.JackyControlPlugin
     /// </summary>
     public class AnnounceCommand : PluginDynamicCommand
     {
-        private const Int32 ShowResultMs = 3000;
-
         /// <summary>Per-guild cooldown: the post already happened seconds ago.
         /// Its own message because the fix is "wait", not "go check the bot".</summary>
         private const Int32 JustPostedStatus = 429;
 
         private JackyControlPlugin JackyPlugin => (JackyControlPlugin)this.Plugin;
 
-        private readonly Object _gate = new();
-
-        /// <summary>Deadlines are Environment.TickCount64 (monotonic), not
-        /// wall-clock: a system clock adjustment must not stick a label.</summary>
-        private readonly Dictionary<String, (String Label, Int64 Until)> _labels = new();
+        private readonly TransientLabels _labels = new();
 
         private static readonly Dictionary<String, String> ShortNames = new()
         {
@@ -70,27 +64,12 @@ namespace Loupedeck.JackyControlPlugin
         }
 
         private void SetLabel(String actionParameter, String label)
-        {
-            lock (this._gate)
-            {
-                this._labels[actionParameter] = (label, Environment.TickCount64 + ShowResultMs);
-            }
-            this.ActionImageChanged(actionParameter);
-            // Revert repaint after the label expires.
-            _ = Task.Delay(ShowResultMs).ContinueWith(_ => this.ActionImageChanged(actionParameter));
-        }
+            => this._labels.Set(actionParameter, label, () => this.ActionImageChanged(actionParameter));
 
         protected override BitmapImage GetCommandImage(String actionParameter, PluginImageSize imageSize)
         {
-            String text = null;
-            lock (this._gate)
-            {
-                if (this._labels.TryGetValue(actionParameter, out var entry) && Environment.TickCount64 < entry.Until)
-                {
-                    text = entry.Label;
-                }
-            }
-            text ??= ShortNames.TryGetValue(actionParameter ?? "", out var name) ? name : "Post";
+            var text = this._labels.Current(actionParameter)
+                ?? (ShortNames.TryGetValue(actionParameter ?? "", out var name) ? name : "Post");
 
             using var bmp = new BitmapBuilder(imageSize);
             bmp.Clear(new BitmapColor(26, 26, 46));      // #1a1a2e, the family idiom
