@@ -3,6 +3,9 @@
 Spec: `superpowers/specs/2026-08-06-streamdeck-session-control-design.md`
 Plugin source: `streamdeck-plugin/` · Bot API: `services/bot/src/jacky/api/control.py`
 
+> A Logitech MX Creative Console version of this plugin exists — see
+> `docs/creative-console-control.md`. It shares this server setup and API.
+
 ## One-time server setup
 
 1. **Discord OAuth app** — Discord Developer Portal → Applications → your bot's app → OAuth2:

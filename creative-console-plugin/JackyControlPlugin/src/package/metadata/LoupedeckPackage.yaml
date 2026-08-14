@@ -9,10 +9,10 @@ type: plugin4
 name: JackyControl
 
 # Plugin name that is shown to the user.
-displayName: JackyControl
+displayName: Jacky Control
 
 # Short description of the plugin.
-description: Add a short description of the plugin here.
+description: "Control the Jacky Music Discord bot: playback, volume, playlists, voice commands, and Discord posting."
 
 # Name of the plugin library file.
 pluginFileName: JackyControlPlugin.dll
@@ -21,10 +21,10 @@ pluginFileName: JackyControlPlugin.dll
 version: 1.0
 
 # Author of the plugin. The author can be a company or an individual developer.
-author: 
+author: Jacob Choi
 
 # Copyright information.
-copyright: Copyright © 2026 . All rights reserved.
+copyright: Copyright © 2026 Jacob Choi. All rights reserved.
 
 
 # ==================================================================================================
@@ -44,6 +44,10 @@ supportedDevices:
     # LoupedeckCtFamily covers the following devices: Loupedeck CT, Live and Live S,
     # Razer Stream Controller, and Razer Stream Controller X.
     - LoupedeckCtFamily
+
+    # LogitechCreativeFamily covers the Logitech MX Creative Console
+    # (MxCreativeKeypad + MxCreativeDialpad) and the Actions Ring.
+    - LogitechCreativeFamily
 
     # LoupedeckPlusFamily covers Loupedeck+ device. Uncomment the following line to support Loupedeck+.
     #- LoupedeckPlusFamily
