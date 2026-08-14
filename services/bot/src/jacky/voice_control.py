@@ -12,6 +12,9 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+# The single definition lives in jacky.announce now (one product decision,
+# one piece of state); imported here so existing callers keep one source.
+from jacky.announce import ANNOUNCE_COOLDOWN_S
 from jacky.api.dashboard_link import entry_url, session_url
 from jacky.api.voice_actions import Action
 from jacky.api.voice_grammar import normalize_playlist_name
@@ -21,7 +24,6 @@ from jacky.commands.embeds import now_playing_embed, session_embed
 log = logging.getLogger("jacky.voice")
 
 VOLUME_STEP = 10
-ANNOUNCE_COOLDOWN_S = 10.0
 
 
 @dataclass(frozen=True)
