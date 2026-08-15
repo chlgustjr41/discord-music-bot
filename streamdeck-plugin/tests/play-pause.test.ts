@@ -180,6 +180,16 @@ describe("Play/Pause key with showTitle", () => {
   });
 });
 
+/** setImage payloads are base64 SVG data URIs (raw <svg> strings are silently
+ *  ignored by Stream Deck 7.x on Windows), so assertions on their content must
+ *  decode them first. Fails loudly if the payload regresses to a raw string. */
+function decodeApplied(payload: unknown): string {
+  const uri = payload as string;
+  const prefix = "data:image/svg+xml;base64,";
+  expect(uri.startsWith(prefix)).toBe(true);
+  return Buffer.from(uri.slice(prefix.length), "base64").toString("utf8");
+}
+
 describe("Play/Pause key with showArtwork", () => {
   it("sets a letterboxed cover", async () => {
     const pp = new PlayPause();
@@ -189,7 +199,7 @@ describe("Play/Pause key with showArtwork", () => {
     emit(playing("Track", "https://img.test/a.jpg"));
     await flush();
 
-    const svg = k.setImage.mock.calls.at(-1)?.[0] as string;
+    const svg = decodeApplied(k.setImage.mock.calls.at(-1)?.[0]);
     expect(svg).toContain('preserveAspectRatio="xMidYMid meet"');
     expect(svg).toContain("https://img.test/a.jpg");
   });
@@ -242,7 +252,7 @@ describe("Play/Pause key with showArtwork", () => {
     emit(playing("Track", "https://img.test/a.jpg"));
     await flush();
     const applied = k.setImage.mock.calls.at(-1)?.[0] as string;
-    expect(applied).toContain("https://img.test/a.jpg");
+    expect(decodeApplied(applied)).toContain("https://img.test/a.jpg");
     k.setImage.mockClear();
     h.loadThumbnail.mockClear();
 
@@ -268,7 +278,7 @@ describe("Play/Pause key with showArtwork", () => {
 
     expect(h.loadThumbnail).toHaveBeenCalledTimes(2);
     expect(h.loadThumbnail).toHaveBeenLastCalledWith("https://img.test/b.jpg");
-    expect(k.setImage.mock.calls.at(-1)?.[0]).toContain("https://img.test/b.jpg");
+    expect(decodeApplied(k.setImage.mock.calls.at(-1)?.[0])).toContain("https://img.test/b.jpg");
   });
 
   it("re-applies nothing when the fetch produced no image", async () => {
@@ -354,7 +364,7 @@ describe("Play/Pause settings are per key", () => {
     expect(titleKey.setTitle).toHaveBeenCalledWith("Track");
     expect(titleKey.setImage).not.toHaveBeenCalled();
     expect(artKey.setTitle).not.toHaveBeenCalled();
-    expect(artKey.setImage.mock.calls.at(-1)?.[0]).toContain("https://img.test/a.jpg");
+    expect(decodeApplied(artKey.setImage.mock.calls.at(-1)?.[0])).toContain("https://img.test/a.jpg");
   });
 
   it("forgets a key's state when it disappears", async () => {
