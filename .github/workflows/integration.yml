@@ -10,6 +10,8 @@ on:
     # Daily canary: the soft-gated live-mint steps below only produce signal
     # when they actually run; PRs alone can go quiet for days.
     - cron: "0 9 * * *"
+  # Manual runs for verifying workflow changes without waiting a day.
+  workflow_dispatch:
 
 concurrency:
   group: integration-${{ github.ref }}
@@ -46,6 +48,26 @@ jobs:
           done
           $COMPOSE logs lavalink
           exit 1
+      - name: Minter completed a cycle
+        # Soft gate on PRs: requires live Google egress from a datacenter IP;
+        # failure is signal, not a merge blocker (review I2). HARD on the
+        # daily schedule run — that is the canary, and it must turn red when
+        # Google-side minting breaks.
+        # MUST run before the synthetic-injection step: that step stops the
+        # minter and restarts lavalink, and a first mint takes ~15-30s
+        # (ADR-0004). When runners sped up in mid-August 2026 the injection
+        # step began firing ~12s after the minter started, killing the cycle
+        # mid-push every run — the canary was red daily 08-11..08-21 with
+        # minting itself perfectly healthy. Gating here, while the stack is
+        # untouched, times the mint and nothing else.
+        continue-on-error: ${{ github.event_name != 'schedule' }}
+        run: |
+          for i in $(seq 1 24); do
+            $COMPOSE logs token-minter | grep -q "minted and pushed" && exit 0
+            sleep 5
+          done
+          $COMPOSE logs token-minter pot-provider
+          exit 1
       - name: Cold-start injection (synthetic tokens, hard gate)
         # Proves the entrypoint injection path with zero live egress: seed a
         # synthetic tokens.env into the volume and check the rendered config.
@@ -63,26 +85,9 @@ jobs:
           done
           if [ "$healthy" != "true" ]; then $COMPOSE logs lavalink; exit 1; fi
           $COMPOSE exec -T lavalink sh -c 'grep -q "SYNTHPO123" /tmp/application.yml && ! grep -q "__POT_TOKEN__" /tmp/application.yml'
-      - name: Minter completed a cycle
-        # Soft gate on PRs: requires live Google egress from a datacenter IP;
-        # failure is signal, not a merge blocker (review I2). HARD on the
-        # daily schedule run — that is the canary, and it must turn red when
-        # Google-side minting breaks.
-        # 120s ceiling is enough because token-minter's depends_on gates on a
-        # healthy pot-provider AND a healthy lavalink (push target), so the
-        # first cycle no longer loses either boot race (a real mint takes
-        # ~15-30s, ADR-0004). The cycle completes before the synthetic step
-        # stops the minter, so this grep reads it from the retained logs.
-        continue-on-error: ${{ github.event_name != 'schedule' }}
-        run: |
-          for i in $(seq 1 24); do
-            $COMPOSE logs token-minter | grep -q "minted and pushed" && exit 0
-            sleep 5
-          done
-          $COMPOSE logs token-minter pot-provider
-          exit 1
       - name: Cold-start injection (real minted token)
-        # Soft on PRs, hard on the daily canary run — see the previous step.
+        # Soft on PRs, hard on the daily canary run — see the minter-cycle
+        # step above.
         continue-on-error: ${{ github.event_name != 'schedule' }}
         run: |
           # The synthetic step overwrote tokens.env; restarting the minter
