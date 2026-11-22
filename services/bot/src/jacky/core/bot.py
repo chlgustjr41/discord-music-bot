@@ -136,6 +136,7 @@ class JackyBot(commands.Bot):
         self.node.on_track_end = self.service.on_track_end
         self.node.on_track_exception = self.service.on_track_exception
         self.node.on_voice_ws_closed = self.service.on_voice_ws_closed
+        self.node.on_stats = self.service.on_stats
         self.node.start()
 
         for ext in EXTENSIONS:

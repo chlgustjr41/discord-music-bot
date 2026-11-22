@@ -15,6 +15,7 @@ session). Same liveness signal PlayerService.handle_summon uses.
 
 import hashlib
 import logging
+import re
 from typing import Any
 
 import discord
@@ -24,6 +25,7 @@ from jacky.api.dashboard_link import entry_url, session_url
 from jacky.api.transcribe import normalize_language
 from jacky.api.voice_actions import MAX_ACTIONS, enforce_intent
 from jacky.api.voice_grammar import parse_structured
+from jacky.state.untrusted import as_volume
 
 log = logging.getLogger("jacky.control")
 
@@ -31,6 +33,11 @@ log = logging.getLogger("jacky.control")
 # Module-level so tests can monkeypatch it with the conftest FakeNotFound
 # (constructing a real discord.NotFound requires a fake aiohttp response).
 _MEMBER_LOOKUP_ERRORS: tuple = (discord.NotFound, discord.HTTPException)
+
+# What TokenStore.mint produces: secrets.token_hex(32) — exactly 64 lowercase
+# hex characters. Must change together with it (tests/test_control_api.py
+# pins a freshly minted token against this same shape).
+_TOKEN_RE = re.compile(r"[0-9a-f]{64}")
 
 # 600 KB ~= 18 s of 16 kHz mono WAV, comfortably above the client's 15 s cap.
 VOICE_MAX_BYTES = 600_000
@@ -145,6 +152,13 @@ def register_control_routes(
             if not supplied.startswith("Bearer "):
                 return web.json_response({"error": "unauthorized"}, status=401)
             token = supplied[len("Bearer "):]
+            # Shape first, lookup second. resolve() costs a Firestore read
+            # on a miss, in the worker-thread pool the rest of the bot
+            # shares, and this port faces the internet: without this check
+            # every random string a stranger sends buys one. Same 401 as an
+            # unknown token, so the format is not an oracle either.
+            if not _TOKEN_RE.fullmatch(token):
+                return web.json_response({"error": "unauthorized"}, status=401)
             user_id = await token_store.resolve(token)
             if user_id is None:
                 return web.json_response({"error": "unauthorized"}, status=401)
@@ -186,6 +200,11 @@ def register_control_routes(
         isn't in voice yet, so a cache miss is legitimate. Unknown guilds
         return the same 403 as non-membership — never leak which guilds the
         bot is in.
+
+        Callers MUST test the error with `is not None`, never truthiness: a
+        web.Response is a MutableMapping, and before aiohttp grew a __bool__
+        an empty one is falsy (3.9.x, which `aiohttp>=3.9` permits). `if err:`
+        then skips the early return and the handler dereferences guild=None.
         """
         try:
             guild_id = int(str(raw_guild_id))
@@ -234,10 +253,11 @@ def register_control_routes(
             return {}
 
     def volume_of(state: dict) -> int:
-        # None-based default: 0 is a legal volume (j!volume 0 mutes) and must
-        # not be conflated with "unset" (web app can write volume: null).
-        vol = state.get("volume")
-        return 80 if vol is None else int(vol)
+        # as_volume, not `or 80`: 0 is a legal volume (j!volume 0 mutes) and
+        # must not be conflated with "unset". And not int(): the field is in
+        # a client-writable document, so it can be null or not a number at
+        # all — which must read as the default, not 500 every deck poll.
+        return as_volume(state.get("volume"))
 
     async def now_playing(request: web.Request, user_id: str) -> web.Response:
         guild = await resolve_guild(member_id_of(user_id))
@@ -256,7 +276,9 @@ def register_control_routes(
         })
 
     async def action_target(request: web.Request, user_id: str):
-        """(guild, body, error_response) triple for POST action routes."""
+        """(guild, body, error_response) triple for POST action routes.
+
+        Test the error with `is not None` — see guild_for_member."""
         body = await body_of(request)
         guild = await resolve_guild(member_id_of(user_id))
         if guild is None:
@@ -267,7 +289,7 @@ def register_control_routes(
 
     async def play_pause(request: web.Request, user_id: str) -> web.Response:
         guild, _body, err = await action_target(request, user_id)
-        if err:
+        if err is not None:
             return err
         # Read-then-write toggle: two overlapping presses can collapse into
         # one. Acceptable for a single-user personal API.
@@ -278,21 +300,21 @@ def register_control_routes(
 
     async def skip(request: web.Request, user_id: str) -> web.Response:
         guild, _body, err = await action_target(request, user_id)
-        if err:
+        if err is not None:
             return err
         await service.skip(guild.id)
         return web.json_response({"ok": True})
 
     async def stop(request: web.Request, user_id: str) -> web.Response:
         guild, _body, err = await action_target(request, user_id)
-        if err:
+        if err is not None:
             return err
         await service.teardown_session(guild.id, clear_queue=True)
         return web.json_response({"ok": True})
 
     async def shuffle(request: web.Request, user_id: str) -> web.Response:
         guild, _body, err = await action_target(request, user_id)
-        if err:
+        if err is not None:
             return err
         # repo.shuffle_queue, not a local reorder: the voice dispatcher and
         # j!shuffle already go through it, and a second implementation here
@@ -304,14 +326,13 @@ def register_control_routes(
         # source keeps deck presses from merging into the j!shuffle row (see
         # ServerRepository._log_command's per-source dedupe).
         await service.repo.log_command(
-            str(guild.id), "shuffle", "", "Stream Deck", user_id,
-            source="streamdeck",
+            str(guild.id), "shuffle", "", "Stream Deck", source="streamdeck",
         )
         return web.json_response({"ok": True, "count": count})
 
     async def volume(request: web.Request, user_id: str) -> web.Response:
         guild, body, err = await action_target(request, user_id)
-        if err:
+        if err is not None:
             return err
         try:
             delta = int(body["delta"])
@@ -369,7 +390,7 @@ def register_control_routes(
         """Insert a saved playlist at the head of the queue and jump to it."""
         body = await body_of(request)
         guild, member, err = await guild_for_member(user_id, body.get("guildId"))
-        if err:
+        if err is not None:
             return err
         name = body.get("playlistName")
         if not isinstance(name, str) or not _is_valid_document_id(name):
@@ -443,7 +464,7 @@ def register_control_routes(
         key can render the detail rather than a generic alert.
         """
         guild, body, err = await action_target(request, user_id)
-        if err:
+        if err is not None:
             return err
         command = body.get("command")
         # A malformed / non-JSON body parses to {} (body_of), so it lands on
@@ -465,7 +486,7 @@ def register_control_routes(
         # Logged HERE, on success only — the Announcer never logs history,
         # because the voice route logs its own `voice` rows with transcripts.
         await service.repo.log_command(
-            str(guild.id), command, "", "Stream Deck", user_id, source="streamdeck"
+            str(guild.id), command, "", "Stream Deck", source="streamdeck"
         )
         return web.json_response({"ok": True, "command": command})
 
@@ -625,7 +646,7 @@ def register_control_routes(
             )
             await service.repo.log_command(
                 str(guild.id), _LOG_COMMAND_FOR.get(action.action, action.action),
-                log_args, "Voice", user_id,
+                log_args, "Voice",
                 source="voice", transcript=transcript,
             )
         if debug:
@@ -664,7 +685,7 @@ def register_control_routes(
         except (KeyError, TypeError, ValueError):
             return web.json_response({"error": "bad-request"}, status=400)
         guild, _member, err = await guild_for_member(user_id, body.get("guildId"))
-        if err:
+        if err is not None:
             return err
 
         voice = guild.voice_client

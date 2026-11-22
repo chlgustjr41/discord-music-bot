@@ -195,6 +195,75 @@ async def test_unknown_token_is_401(client):
     assert resp.status == 401
 
 
+def spy_on_token_lookups(store, service) -> dict:
+    """Count TokenStore.resolve calls and the Firestore reads beneath them."""
+    counts = {"resolve": 0, "read": 0}
+    real_resolve, real_read = store.resolve, service.repo.get_control_token
+
+    async def resolve(token):
+        counts["resolve"] += 1
+        return await real_resolve(token)
+
+    async def read(token_hash):
+        counts["read"] += 1
+        return await real_read(token_hash)
+
+    store.resolve, service.repo.get_control_token = resolve, read
+    return counts
+
+
+@pytest.mark.parametrize("bearer", [
+    "",
+    "abc",
+    "not-a-token",
+    "0" * 63,                      # one short
+    "0" * 65,                      # one long
+    "A" * 64,                      # token_hex is lowercase
+    "g" * 64,                      # right length, not hex
+    "0" * 63 + "-",
+    "0" * 64 + " extra",
+    "0" * 32 + " " + "0" * 31,
+    "é" * 64,
+    pytest.param("x" * 5000, id="5000-chars"),
+])
+async def test_a_malformed_bearer_is_401_without_a_token_lookup(
+    client, store, service, bearer
+):
+    """Control tokens are secrets.token_hex(32): exactly 64 lowercase hex
+    characters. Anything else cannot be a token, so it is refused before
+    TokenStore.resolve — which costs a Firestore read, in a worker thread
+    the rest of the bot shares, for every string an internet client sends."""
+    counts = spy_on_token_lookups(store, service)
+    resp = await client.get(
+        "/control/now-playing",
+        headers={"Authorization": f"Bearer {bearer}"},
+    )
+    assert resp.status == 401
+    # Indistinguishable from an unknown token: no oracle for the format.
+    assert (await resp.json()) == {"error": "unauthorized"}
+    assert counts == {"resolve": 0, "read": 0}
+
+
+async def test_a_well_formed_unknown_bearer_is_still_looked_up(client, store, service):
+    counts = spy_on_token_lookups(store, service)
+    resp = await client.get(
+        "/control/now-playing", headers={"Authorization": f"Bearer {'ab12' * 16}"}
+    )
+    assert resp.status == 401
+    assert (await resp.json()) == {"error": "unauthorized"}
+    assert counts == {"resolve": 1, "read": 1}
+
+
+async def test_a_real_token_passes_the_format_check(client, store, service, token, auth):
+    import re
+
+    assert re.fullmatch(r"[0-9a-f]{64}", token), "the format the check assumes"
+    counts = spy_on_token_lookups(store, service)
+    resp = await client.get("/control/now-playing", headers=auth)
+    assert resp.status == 200
+    assert counts["resolve"] == 1
+
+
 async def test_revoked_token_is_401(client, store, auth):
     resp = await client.get("/control/now-playing", headers=auth)
     assert resp.status == 200
@@ -335,6 +404,27 @@ async def test_volume_zero_is_not_treated_as_unset(client, service, guild_id, si
     assert (await resp.json())["volume"] == 0
     resp = await client.post("/control/volume", json={"delta": 5}, headers=auth)
     assert (await resp.json()) == {"volume": 5}
+
+
+@pytest.mark.parametrize("junk", [
+    "loud", {"level": 9}, [70], True, pytest.param("9" * 5000, id="5000-digit-string"),
+])
+async def test_a_junk_stored_volume_never_500s_the_deck(
+    client, service, guild_id, sid, auth, junk
+):
+    """`volume` sits in a document web clients can write. now-playing is
+    polled by every deck key, so one junk value used to turn the whole deck
+    into a wall of errors; it reads as the default instead."""
+    put_user_in_voice(service, guild_id)
+    await service.repo.update_state(sid, {"volume": junk})
+
+    resp = await client.get("/control/now-playing", headers=auth)
+    assert resp.status == 200
+    assert (await resp.json())["volume"] == 80
+
+    resp = await client.post("/control/volume", json={"delta": 5}, headers=auth)
+    assert resp.status == 200
+    assert (await resp.json()) == {"volume": 85}
 
 
 # ── actions ──────────────────────────────────────────────────────────────
@@ -1903,16 +1993,33 @@ GUARDIAN_PAYLOAD = {
 }
 
 
+@pytest.mark.parametrize("audio_line", [
+    "Audio frames: no data yet",
+    "⚠️ Audio frame loss 4.1% (source starvation): "
+    "2877/3000 sent · 120 nulled · 3 deficit · Lavalink CPU 4%, host 12%",
+])
 async def test_status_parity_between_the_cog_and_the_route(
-    client, service, guild_id, sid, auth
+    client, service, guild_id, sid, auth, audio_line
 ):
     """j!status and the announce route call the same builder over the same
     inputs, so the embeds must be EQUAL — pinned so the extraction cannot
-    drift back into two constructions that happen to agree."""
+    drift back into two constructions that happen to agree.
+
+    Run with and without a Lavalink frame-statistics sample: the audio line
+    is threaded through the shared builder, so it has to appear in BOTH
+    embeds, identically."""
+    import time
+
     from tests.conftest import FakeSettings
 
+    from jacky.audio.stats import AudioStats
     from jacky.commands.status import Status
 
+    if "loss" in audio_line:
+        await service.on_stats(AudioStats(
+            sent=2877, nulled=120, deficit=3, playing_players=1,
+            lavalink_load=0.04, system_load=0.12, received_at=time.monotonic(),
+        ))
     put_user_in_voice(service, guild_id)
     await service.repo.update_state(sid, {
         "currentTrack": {"title": "Song A", "duration": 120},
@@ -1937,6 +2044,9 @@ async def test_status_parity_between_the_cog_and_the_route(
     [cog_embed] = ctx.sent
     route_embed = service.fake_notifier.sent[-1]["embed"]
     assert route_embed.to_dict() == cog_embed.to_dict()
+    for embed in (cog_embed, route_embed):
+        node_field = {f.name: f.value for f in embed.fields}["Audio node (Lavalink)"]
+        assert node_field.splitlines()[1:] == [audio_line]
 
 
 async def test_announce_reports_empty_content_not_cooldown_inside_the_window(
@@ -1983,3 +2093,56 @@ async def test_a_voice_announce_cools_down_the_post_key(
     assert resp.status == 429
     assert (await resp.json()) == {"error": "just-posted"}
     assert len(service.fake_notifier.sent) == 1
+
+
+# ── link allowlist, at the routes ────────────────────────────────────────
+# The rule itself is pinned in test_models.py and each in-process caller in
+# test_unsupported_links.py; these are the two HTTP entry points.
+
+LAN_LINK = "http://192.168.1.1/admin"
+
+
+async def test_voice_play_of_an_unsupported_link_reports_it_and_loads_nothing(
+    client, service, guild_id, sid, auth, transcriber, interpreter
+):
+    from jacky.audio.models import UNSUPPORTED_LINK_MESSAGE
+
+    put_user_in_voice(service, guild_id)
+    transcriber.text = UNINTERPRETABLE
+    interpreter.actions = [Action("play", query=LAN_LINK, placement="end")]
+
+    resp = await client.post("/control/voice", data=WAV, headers=auth)
+
+    assert resp.status == 200
+    body = await resp.json()
+    assert body["ok"] is False
+    assert body["detail"] == UNSUPPORTED_LINK_MESSAGE
+    assert body["actions"] == [
+        {"action": "play", "ok": False, "detail": UNSUPPORTED_LINK_MESSAGE}
+    ]
+    assert service.node.loads == []
+    state = await service.repo.get_state(sid)
+    assert state["queue"] == [] and state["currentTrack"] is None
+
+
+async def test_playlist_with_tampered_links_never_loads_them(
+    client, service, guild_id, sid, auth
+):
+    """Saved playlists live under servers/{id}/playlists, which web clients
+    can write — so a stored `url` is as untrusted as a typed one. The press
+    still succeeds; the entries are judged when they come up to play."""
+    await arm_playlist_guild(service, guild_id, tracks=[
+        {"title": LAN_LINK, "url": LAN_LINK},               # nothing loadable
+        {"title": "P2", "artist": "", "url": LAN_LINK},     # plain title survives
+    ])
+    await service.repo.update_state(sid, {"queue": [], "currentTrack": None})
+
+    resp = await client.post(
+        "/control/playlist",
+        json={"guildId": sid, "playlistName": "Chill"},
+        headers=auth,
+    )
+
+    assert resp.status == 200
+    assert service.node.loads == ["ytsearch:P2"]
+    assert not any("192.168" in identifier for identifier in service.node.loads)

@@ -12,6 +12,7 @@ import discord
 from discord.ext import commands
 
 from jacky import __version__
+from jacky.audio.stats import AudioStats, describe_audio
 from jacky.commands.embeds import EMBED_COLOR, error_embed, success_embed
 
 log = logging.getLogger("jacky.status")
@@ -73,6 +74,8 @@ def build_status_embed(
     state: dict,
     position: dict,
     guardian: dict | None,
+    audio: AudioStats | None,
+    audio_age_s: float | None,
 ) -> discord.Embed:
     """The j!status embed, over plain data.
 
@@ -84,6 +87,10 @@ def build_status_embed(
     uptime_s is Optional because the route reads started_at through
     bot.get_cog("Status") and must survive the cog being absent — a missing
     cosmetic line must not break a health report.
+
+    audio / audio_age_s are the latest Lavalink frame-statistics sample and
+    how old it is (see audio_inputs). Required keywords, not defaulted, so a
+    caller cannot leave the line out of one embed and not the other.
     """
     embed = discord.Embed(title="🩺 Jacky Music — System Status", color=EMBED_COLOR)
 
@@ -104,6 +111,7 @@ def build_status_embed(
     node_line = "🟢 connected" if node_connected else "🔴 disconnected"
     if node_session_id:
         node_line += f" · session `{node_session_id}`"
+    node_line += f"\n{describe_audio(audio, audio_age_s)}"
     embed.add_field(name="Audio node (Lavalink)", value=node_line, inline=False)
 
     # ── this server's player ─────────────────────────────────────────
@@ -165,6 +173,17 @@ def build_status_embed(
     return embed
 
 
+def audio_inputs(service) -> dict:
+    """build_status_embed's audio keywords, gathered from the live service.
+    One function for both callers (the cog and the announce path), so the
+    age is computed the same way on each side of the parity they share."""
+    stats = service.audio_stats
+    return {
+        "audio": stats,
+        "audio_age_s": time.monotonic() - stats.received_at if stats else None,
+    }
+
+
 class Status(commands.Cog):
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -188,6 +207,7 @@ class Status(commands.Cog):
             state=await self.bot.repo.get_state(str(ctx.guild.id)) or {},
             position=self.bot.service.positions.get(ctx.guild.id) or {},
             guardian=await fetch_guardian_status(self.bot),
+            **audio_inputs(self.bot.service),
         )
         await ctx.send(embed=embed)
 

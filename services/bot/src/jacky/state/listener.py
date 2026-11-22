@@ -15,6 +15,7 @@ import logging
 from datetime import timezone
 
 from jacky.audio.models import is_url, to_track_data
+from jacky.state.untrusted import as_seek_seconds, as_volume, shape
 
 log = logging.getLogger("jacky.listener")
 
@@ -97,8 +98,18 @@ class ServerDocListener:
             await self.service.play_next(guild_id)
             return
 
+        # Every field below is written by web clients. A value that is not
+        # what it should be is IGNORED — raising here would also skip every
+        # handler after it for this snapshot (pause, seek, skip).
         if old.get("volume") != new.get("volume"):
-            await self.service.set_volume(guild_id, int(new.get("volume", 80)))
+            volume = as_volume(new.get("volume"), default=None)
+            if volume is None:
+                log.warning(
+                    "ignoring a non-numeric volume (%s) for guild %s",
+                    shape(new.get("volume")), guild_id,
+                )
+            else:
+                await self.service.set_volume(guild_id, volume)
 
         if old.get("isPaused") != new.get("isPaused"):
             if not new.get("isPaused") and not playing and not new.get("currentTrack"):
@@ -109,15 +120,24 @@ class ServerDocListener:
 
         new_seek = new.get("seekPosition")
         if new_seek is not None and new_seek != old.get("seekPosition"):
-            await self.service.seek(guild_id, int(new_seek))
-            current = new.get("currentTrack")
-            if current:
-                new_started = (datetime.datetime.now(timezone.utc)
-                               - datetime.timedelta(seconds=int(new_seek)))
-                await self.repo.update_state(self.server_id, {
-                    "currentTrack": {**current, "startedAt": new_started.isoformat()},
-                    "seekPosition": None,
-                })
+            seconds = as_seek_seconds(new_seek)
+            if seconds is None:
+                # Not restamped either: startedAt drives the dashboard's
+                # progress bar, and a seek that did not happen must not move it.
+                log.warning(
+                    "ignoring a malformed or out-of-range seek (%s) for guild %s",
+                    shape(new_seek), guild_id,
+                )
+            else:
+                await self.service.seek(guild_id, seconds)
+                current = new.get("currentTrack")
+                if current:
+                    new_started = (datetime.datetime.now(timezone.utc)
+                                   - datetime.timedelta(seconds=seconds))
+                    await self.repo.update_state(self.server_id, {
+                        "currentTrack": {**current, "startedAt": new_started.isoformat()},
+                        "seekPosition": None,
+                    })
 
         # Web skip: currentTrack nulled while isPlaying stays true.
         if (old.get("currentTrack") is not None
@@ -139,6 +159,11 @@ class ServerDocListener:
         updated = False
         new_queue: list = []
         for track in queue:
+            if not isinstance(track, dict):
+                # Not a track at all (client-written junk). Left in place:
+                # play_next discards it when it reaches the head.
+                new_queue.append(track)
+                continue
             title, url = track.get("title", ""), track.get("url", "")
             if not (is_url(title) and url):
                 new_queue.append(track)
@@ -166,12 +191,18 @@ class ServerDocListener:
                 self._resolving = False
 
     async def _handle_retrigger(self, retrigger: dict) -> None:
+        # Written by a web client: anything but {command: str, args: str} is
+        # dropped here, before it can raise or be copied into command history.
+        if not isinstance(retrigger, dict):
+            return
         command = retrigger.get("command", "")
         args = retrigger.get("args", "")
+        if not isinstance(command, str) or not isinstance(args, str):
+            return
         guild_id = int(self.server_id)
         if not self._voice():
             return
-        await self.repo.log_command(self.server_id, command, args, "Web User", "web")
+        await self.repo.log_command(self.server_id, command, args, "Web User")
 
         if command == "play" and args:
             try:
@@ -202,10 +233,9 @@ class ServerDocListener:
         elif command == "loop":
             await self.service.cycle_loop_mode(guild_id)
         elif command == "volume" and args:
-            try:
-                await self.service.set_volume(guild_id, int(args))
-            except ValueError:
-                pass
+            volume = as_volume(args, default=None)
+            if volume is not None:
+                await self.service.set_volume(guild_id, volume)
 
     async def _handle_end_session(self) -> None:
         await self.service.teardown_session(

@@ -111,7 +111,7 @@ class FakeRepo:
         self.music_log.append((sid, track))
 
     async def log_command(
-        self, sid, command, args, user, user_id, *, source="discord", transcript=""
+        self, sid, command, args, user, *, source="discord", transcript=""
     ):
         self.command_log.append((sid, command, args, user, source, transcript))
 
@@ -166,8 +166,13 @@ class FakeNode:
         self.load_results: dict[str, LoadResult] = {}
         self.default_result = LoadResult(kind="track", tracks=[make_track()])
         self.fail_loads = False
+        # Every identifier that reached the node, in order — recorded BEFORE
+        # the canned failure, so "this never reached Lavalink" stays provable
+        # under fail_loads too.
+        self.loads: list[str] = []
 
     async def load_tracks(self, identifier):
+        self.loads.append(identifier)
         if self.fail_loads:
             raise RuntimeError("load failure (fake)")
         return self.load_results.get(identifier, self.default_result)
