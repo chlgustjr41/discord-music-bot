@@ -12,6 +12,21 @@
       ],
       "port": 5173,
       "autoPort": true
+    },
+    {
+      "name": "frontend-built",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "preview",
+        "--prefix",
+        "frontend",
+        "--",
+        "--port",
+        "4173",
+        "--strictPort"
+      ],
+      "port": 4173
     }
   ]
 }
