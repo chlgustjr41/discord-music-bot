@@ -68,7 +68,6 @@ export interface CommandHistoryEntry {
   command: string;
   args: string;
   user: string;
-  userId: string;
   timestamp: unknown; // Firestore Timestamp
   callCount: number;
   source?: string; // "voice" | "streamdeck" | "discord" (absent = discord)

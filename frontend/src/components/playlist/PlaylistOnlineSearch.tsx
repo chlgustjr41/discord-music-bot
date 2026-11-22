@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ResizableList } from "../ResizableList";
 import { TrackRowSkeleton } from "../TrackRowSkeleton";
+import { safeArtworkUrl } from "../../lib/artwork";
+import { SEARCH_QUERY_MAX } from "../../lib/limits";
 import type { SearchResult, Track } from "../../types";
 
 interface Props {
@@ -63,7 +65,8 @@ export function PlaylistOnlineSearch({
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search YouTube / SoundCloud / Bandcamp, or paste a URL…"
+          placeholder="Search, or paste a YouTube / SoundCloud link…"
+          maxLength={SEARCH_QUERY_MAX}
           className="pl-8 pr-8"
         />
         {loading && (
@@ -105,13 +108,14 @@ export function PlaylistOnlineSearch({
           <ul className="p-1 space-y-0.5">
             {results.map((r) => {
               const inDraft = draftUrls.has(r.url);
+              const artwork = safeArtworkUrl(r.thumbnail);
               return (
                 <li
                   key={r.videoId}
                   className="flex items-center gap-2 rounded-md p-2 hover:bg-muted/50"
                 >
-                  {r.thumbnail ? (
-                    <img src={r.thumbnail} alt="" className="h-7 w-7 rounded object-cover shrink-0" />
+                  {artwork ? (
+                    <img src={artwork} alt="" className="h-7 w-7 rounded object-cover shrink-0" />
                   ) : (
                     <div className="flex h-7 w-7 items-center justify-center rounded bg-muted shrink-0">
                       <Music className="h-3 w-3 text-muted-foreground" />

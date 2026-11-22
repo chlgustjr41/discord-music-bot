@@ -6,6 +6,7 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { db } from "../../firebase";
+import { PLAYLIST_NAME_MAX, PLAYLIST_TRACKS_MAX } from "../../lib/limits";
 import type { Track, CurrentTrack, SearchResult } from "../../types";
 import type { PlaylistDoc, UnifiedTrack } from "./types";
 import {
@@ -124,6 +125,17 @@ export function PlaylistEditDialog({
     const newName = name.trim();
     if (!newName || draft.length === 0) return;
 
+    // Bounds the Firestore rules enforce (see lib/limits.ts). Checked here so
+    // the user gets a sentence instead of a refused write.
+    if (newName.length > PLAYLIST_NAME_MAX) {
+      setSaveError(`Playlist names can be at most ${PLAYLIST_NAME_MAX} characters.`);
+      return;
+    }
+    if (draft.length > PLAYLIST_TRACKS_MAX) {
+      setSaveError(`A playlist can hold at most ${PLAYLIST_TRACKS_MAX} tracks.`);
+      return;
+    }
+
     const isCreate = !editing;
     const isRename = !!editing && newName !== editing.name;
 
@@ -186,6 +198,7 @@ export function PlaylistEditDialog({
             setSaveError("");
           }}
           placeholder="Playlist name"
+          maxLength={PLAYLIST_NAME_MAX}
           autoFocus
         />
 

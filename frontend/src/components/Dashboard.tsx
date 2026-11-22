@@ -19,7 +19,7 @@ import { PinServerButton } from "./PinServerButton";
 import { AccountMenu } from "./AccountMenu";
 import { PresenceBar } from "./PresenceBar";
 import { ActivityLog } from "./ActivityLog";
-import { NodeStatus } from "./NodeStatus";
+import { safeArtworkUrl } from "../lib/artwork";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -51,6 +51,10 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
   const { participants, selfId } = usePresence(sessionCode, user);
 
   const botConnected = !!state?.voiceChannelId;
+  // Only ever load the icon from a known host — see lib/artwork.ts. Named
+  // `icon`, not `serverIcon`, so the checked value cannot be mistaken for the
+  // raw field at the <img> below.
+  const icon = safeArtworkUrl(state?.serverIcon);
 
   // Force-rebuild the voice session (buggy-scenario escape hatch): the bot
   // disconnects, rejoins, and resumes — queue and this web session survive.
@@ -149,9 +153,9 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
         {/* Header with server info */}
         <Card>
         <CardContent className="flex flex-wrap items-center gap-4 p-4">
-          {state.serverIcon ? (
+          {icon ? (
             <img
-              src={state.serverIcon}
+              src={icon}
               alt=""
               className="h-12 w-12 rounded-full object-cover"
             />
@@ -178,8 +182,6 @@ function DashboardView({ sessionCode }: { sessionCode: string | undefined }) {
               <Badge variant="secondary" className="font-mono text-xs">
                 {sessionCode}
               </Badge>
-              <span className="text-xs text-muted-foreground/40">·</span>
-              <NodeStatus serverId={serverId} />
             </div>
           </div>
           {/* One wrapping cluster: at narrow widths the whole group drops to

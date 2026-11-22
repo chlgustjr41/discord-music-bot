@@ -1,0 +1,5 @@
+node_modules/
+# Written by the emulator into the directory it is started from.
+firestore-debug.log
+firebase-debug.log
+ui-debug.log

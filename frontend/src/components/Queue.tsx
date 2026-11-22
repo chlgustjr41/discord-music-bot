@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { doc, updateDoc, setDoc, increment, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
+import { safeArtworkUrl } from "../lib/artwork";
 import { getIdentityName } from "../lib/identity";
 import { bumpMemberStat } from "../lib/social";
 import type { Track } from "../types";
@@ -59,6 +60,8 @@ function TrackRow({
 }) {
   const mins = Math.floor(track.duration / 60);
   const secs = track.duration % 60;
+  // Queue items are client-written: only load artwork from a known host.
+  const artwork = safeArtworkUrl(track.thumbnail);
 
   return (
     <div
@@ -94,8 +97,8 @@ function TrackRow({
         </div>
       )}
       <span className="w-6 text-center text-xs text-muted-foreground">{displayIndex}</span>
-      {track.thumbnail ? (
-        <img src={track.thumbnail} alt="" className="h-10 w-10 rounded object-cover" />
+      {artwork ? (
+        <img src={artwork} alt="" className="h-10 w-10 rounded object-cover" />
       ) : (
         <div className="flex h-10 w-10 items-center justify-center rounded bg-muted">
           <Music className="h-4 w-4 text-muted-foreground" />

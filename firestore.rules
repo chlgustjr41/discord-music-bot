@@ -1,38 +1,348 @@
 rules_version = '2';
 
+// Jacky Music — Firestore security rules.
+//
+// WHO THESE APPLY TO. The bot uses the Admin SDK and bypasses every rule in
+// this file. Everything below constrains the web dashboard (and anyone else
+// holding the public web API key, which is everyone).
+//
+// THE TRUST MODEL, stated plainly. The session dashboard works WITHOUT
+// sign-in (product decision), and documents stay keyed by Discord guild id.
+// So for `servers/{guildId}` and its subcollections the capability is
+// "knows the guild id": anyone who has it can read that one server's state
+// and send it the same commands the dashboard sends. What these rules DO
+// guarantee is that
+//   - no collection can be enumerated (no `list` on servers / sessionCodes,
+//     no collection-group access, serverOwners only by your own uid),
+//   - a client can only touch the fields the dashboard really writes, with
+//     type and size bounds, and can never create or delete a server document
+//     or invent a subcollection,
+//   - owner records (email, uid) are private to their owner and cannot be
+//     overwritten, deactivated or deleted by anyone else.
+//
+// Rules are OR'd across every matching `match` block. There is deliberately
+// NO wildcard subcollection block under /servers: each real subcollection is
+// named, so nothing broader can re-open what a narrower block closes. Keep it
+// that way — a `match /{sub}/{doc}` or `match /{path=**}` with a permissive
+// rule anywhere below would silently undo all of this.
+//
+// Pinned by tests in firestore-tests/ (run against the local emulator).
+
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Session codes — anyone with the code can read
+
+    // A Discord snowflake: what every guild id and channel id looks like.
+    // The bot does int(doc.id) / int(channelId) on these, so a non-numeric
+    // value is a crash, not just a typo.
+    function isSnowflake(id) {
+      return id.matches('^[0-9]{15,22}$');
+    }
+
+    // ── Session codes ────────────────────────────────────────────────────
+    // `get` only: you must already know the code to read its document.
+    // `list` is denied so live codes cannot be enumerated (or looked up by
+    // serverId with a query). Only the bot writes.
     match /sessionCodes/{code} {
-      allow read: if true;
-      allow write: if false;  // Only bot (admin SDK) writes
+      allow get: if true;
+      allow list: if false;
+      allow write: if false;
     }
 
-    // Server state — anyone with access to the session can read and write
+    // ── Server state ─────────────────────────────────────────────────────
     match /servers/{serverId} {
-      allow read, write: if true;
 
-      // Subcollections: history (open writes — used by bot via admin SDK and web client)
-      match /{subcollection}/{docId} {
-        allow read, write: if true;
+      // The fields the dashboard writes, and nothing else. Everything not
+      // listed here is bot-owned and read-only to clients: sessionCode,
+      // serverName, serverIcon, voiceChannelId, voiceChannelName,
+      // textChannelId, knownVoiceChannels, idleTimeoutMinutes,
+      // searchPlaylistName, and any field that does not exist yet.
+      //
+      // Each field is validated only when THIS write changes it
+      // (affectedKeys), so an untouched field never blocks an unrelated
+      // update. A changed field that fails its check — or is being deleted,
+      // which makes the lookup an error — denies the whole write.
+      function validServerUpdate() {
+        let d = request.resource.data;
+        let changed = request.resource.data.diff(resource.data).affectedKeys();
+        return changed.hasOnly([
+                 'queue', 'currentTrack', 'isPlaying', 'isPaused', 'loopMode',
+                 'volume', 'discordNotify', 'seekPosition', 'searchQuery',
+                 'searchResults', 'retriggerCommand', 'resetRequested',
+                 'endSessionRequested', 'summonRequest'])
+
+          // The queue is rewritten whole on add / remove / reorder / shuffle.
+          // Rules cannot iterate a list, so the SHAPE OF EACH ITEM IS NOT
+          // CHECKED here — only that it is a list of bounded length. The bot
+          // must not trust item contents (title/url types, URL hosts), and the
+          // dashboard host-checks thumbnails before rendering them.
+          // "Or no longer than it already is" keeps remove / reorder working
+          // on a queue the bot itself grew past the cap (playlist expansion).
+          && (!changed.hasAny(['queue'])
+              || (d.queue is list
+                  && (d.queue.size() <= 1000
+                      || d.queue.size() <= resource.data.queue.size())))
+
+          // BOT-OWNED FIELDS A CLIENT MAY WRITE, AS A COMMAND, IN ONE SHAPE.
+          // Skip (and "play this queue item now") is expressed as
+          // `currentTrack: null` + `isPlaying: true`; the bot sees the track
+          // vanish while isPlaying holds and advances. So a client may CLEAR
+          // currentTrack but never set one (the bot replays currentTrack.url
+          // after a restart, so a client-chosen value would be a fetch), and
+          // may assert isPlaying but never clear it.
+          && (!changed.hasAny(['currentTrack']) || d.currentTrack == null)
+          && (!changed.hasAny(['isPlaying']) || d.isPlaying == true)
+
+          && (!changed.hasAny(['isPaused']) || d.isPaused is bool)
+          && (!changed.hasAny(['loopMode'])
+              || d.loopMode in ['off', 'track', 'queue'])
+          // int, not number: the bot does int(volume) on every play.
+          && (!changed.hasAny(['volume'])
+              || (d.volume is int && d.volume >= 0 && d.volume <= 100))
+          && (!changed.hasAny(['discordNotify']) || d.discordNotify is bool)
+          // Seconds. The range comparison also rejects NaN and Infinity.
+          && (!changed.hasAny(['seekPosition'])
+              || (d.seekPosition is number
+                  && d.seekPosition >= 0 && d.seekPosition <= 86400))
+
+          // Search request: the client sets the query and empties the old
+          // results; the bot writes results back and clears the query.
+          && (!changed.hasAny(['searchQuery'])
+              || (d.searchQuery is string
+                  && d.searchQuery.size() >= 1 && d.searchQuery.size() <= 500))
+          && (!changed.hasAny(['searchResults'])
+              || (d.searchResults is list && d.searchResults.size() == 0))
+
+          // "Re-run this command" from Command History. Only the commands
+          // the bot's listener implements.
+          && (!changed.hasAny(['retriggerCommand'])
+              || (d.retriggerCommand is map
+                  && d.retriggerCommand.keys().hasOnly(
+                       ['command', 'args', 'triggeredAt'])
+                  && d.retriggerCommand.keys().hasAll(
+                       ['command', 'args', 'triggeredAt'])
+                  && d.retriggerCommand.command in
+                       ['play', 'skip', 'pause', 'resume', 'loop', 'volume']
+                  && d.retriggerCommand.args is string
+                  && d.retriggerCommand.args.size() <= 2000
+                  && d.retriggerCommand.triggeredAt is string
+                  && d.retriggerCommand.triggeredAt.size() <= 40))
+
+          // One-way request flags: a client raises them, the bot clears them.
+          && (!changed.hasAny(['resetRequested']) || d.resetRequested == true)
+          && (!changed.hasAny(['endSessionRequested'])
+              || d.endSessionRequested == true)
+
+          // Summon ("My Servers") is the one command that makes the bot JOIN
+          // a voice channel, and the only one sent from a signed-in screen —
+          // so it requires sign-in. It does not (and cannot here) prove the
+          // caller owns the guild; the bot additionally checks that the guild
+          // is activated and the channel belongs to it.
+          && (!changed.hasAny(['summonRequest'])
+              || (request.auth != null
+                  && d.summonRequest is map
+                  && d.summonRequest.keys().hasOnly(['channelId'])
+                  && d.summonRequest.channelId is string
+                  && isSnowflake(d.summonRequest.channelId)));
       }
 
-      // Playlists — split create/update/delete so the rule layer can be tightened later.
-      // Today both create and update are allowed; client-side getDoc + writeBatch is the
-      // primary defense against name collisions. Delete is allowed for owner-initiated
-      // remove and rename batches.
+      // One known document at a time. `list` is denied: the collection —
+      // every guild the bot has ever been in — must not be enumerable.
+      allow get: if isSnowflake(serverId);
+      allow list: if false;
+
+      // Only the bot creates or deletes a server document. No dashboard flow
+      // needs either: summon is an update to a document the bot already made.
+      allow create, delete: if false;
+
+      allow update: if isSnowflake(serverId) && validServerUpdate();
+
+      // ── Subcollections: each one named. There is no wildcard. ──────────
+
+      // Saved playlists. The dashboard creates, overwrites, renames (create
+      // new + delete old in one batch) and deletes them; the bot does the
+      // same from j!playlist. The document id IS the playlist name.
       match /playlists/{name} {
-        allow read: if true;
-        allow create: if true;
-        allow update: if true;
-        allow delete: if true;
+        function validPlaylist() {
+          let d = request.resource.data;
+          return name.size() >= 1 && name.size() <= 100
+            && d.keys().hasOnly(['name', 'tracks', 'createdBy', 'createdAt'])
+            && d.keys().hasAll(['name', 'tracks', 'createdBy', 'createdAt'])
+            && d.name == name
+            // As with the queue: bounded length, item shape not checkable.
+            && d.tracks is list
+            && d.tracks.size() >= 1 && d.tracks.size() <= 1000
+            && d.createdBy is string && d.createdBy.size() <= 100
+            // Not pinned to request.time: a rename re-creates the document
+            // under the new name and carries the original timestamp over.
+            && d.createdAt is timestamp;
+        }
+
+        allow read: if isSnowflake(serverId);
+        allow create, update: if isSnowflake(serverId) && validPlaylist();
+        allow delete: if isSnowflake(serverId);
+      }
+
+      // Command log (who ran which j! command; voice transcripts). Written
+      // by the bot only. The dashboard lists it and can delete rows
+      // ("Delete" / "Clear All"); it never creates or edits one.
+      match /commandHistory/{entryId} {
+        allow read: if isSnowflake(serverId);
+        allow delete: if isSnowflake(serverId);
+        allow create, update: if false;
+      }
+
+      // Played-track log with play counts. Same shape of access as above.
+      match /musicHistory/{entryId} {
+        allow read: if isSnowflake(serverId);
+        allow delete: if isSnowflake(serverId);
+        allow create, update: if false;
+      }
+
+      // "Most dragged" leaderboard. Written only by the dashboard, one
+      // increment per drag. The id is derived from the track URL by the
+      // client (see logDrag in frontend/src/components/Queue.tsx).
+      match /dragStats/{key} {
+        function validDragStat() {
+          let d = request.resource.data;
+          return key.matches('^[A-Za-z0-9_-]{1,100}$')
+            && d.keys().hasOnly(['title', 'artist', 'thumbnail', 'url',
+                                 'count', 'lastDraggedAt', 'lastDraggedBy'])
+            && d.keys().hasAll(['title', 'url', 'count', 'lastDraggedAt'])
+            && d.title is string && d.title.size() <= 300
+            && d.get('artist', '') is string && d.get('artist', '').size() <= 300
+            && d.get('thumbnail', '') is string
+            && d.get('thumbnail', '').size() <= 2048
+            && d.url is string && d.url.size() <= 2048
+            && d.get('lastDraggedBy', '') is string
+            && d.get('lastDraggedBy', '').size() <= 128
+            // Exactly one step per write: 1 on create, +1 afterwards. A
+            // single request cannot plant an arbitrary score.
+            && d.count is int
+            && d.count == (resource == null ? 1 : resource.data.get('count', 0) + 1)
+            && d.lastDraggedAt == request.time;
+        }
+
+        allow read: if isSnowflake(serverId);
+        allow create, update: if isSnowflake(serverId) && validDragStat();
+        allow delete: if false;
+      }
+
+      // Per-member activity counters. Written only by the dashboard.
+      //
+      // The id says whose row it is, exactly as presence does it: a
+      // signed-in browser writes under its uid and only that account may; a
+      // signed-out browser writes under its random per-browser UUID, which
+      // nobody can be held to, so anyone may. A signed-out visitor therefore
+      // cannot overwrite an account's row.
+      //
+      // `delete` exists for one flow: folding a legacy NAME-keyed row into
+      // the stable-keyed one (migrateLegacyRow in frontend/src/lib/social.ts).
+      // That flow only ever deletes the legacy row, whose id is free text —
+      // so the two CURRENT key shapes (browser UUID, Firebase uid) are never
+      // deletable by a client, not even by the row's own account: no screen
+      // does it. What remains deletable is legacy rows, by anyone, because
+      // free text cannot be tied to a caller.
+      match /memberStats/{key} {
+        function isBrowserKey() {
+          return key.matches(
+            '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$');
+        }
+        // What a Firebase Auth uid looks like (28 alphanumerics).
+        function isUidShapedKey() {
+          return key.matches('^[A-Za-z0-9]{28}$');
+        }
+        function isOwnUidKey() {
+          return request.auth != null && request.auth.uid == key;
+        }
+        function validStat(v) {
+          return v is int && v >= 0 && v <= 1000000000;
+        }
+        function validMemberStat() {
+          let d = request.resource.data;
+          return d.keys().hasOnly(['name', 'queueAdds', 'drags', 'searches',
+                                   'total', 'lastActiveAt'])
+            && d.keys().hasAll(['name', 'total', 'lastActiveAt'])
+            && d.name is string && d.name.size() >= 1 && d.name.size() <= 128
+            && validStat(d.get('queueAdds', 0))
+            && validStat(d.get('drags', 0))
+            && validStat(d.get('searches', 0))
+            && validStat(d.total)
+            && d.lastActiveAt == request.time;
+        }
+
+        allow read: if isSnowflake(serverId);
+        allow create, update: if isSnowflake(serverId)
+          && (isBrowserKey() || isOwnUidKey())
+          && validMemberStat();
+        allow delete: if isSnowflake(serverId)
+          && !isBrowserKey()
+          && !isUidShapedKey();
+      }
+
+      // Per-session play history, read by the bot for j!history. No
+      // dashboard screen uses it, so clients get nothing.
+      match /history/{sessionId} {
+        allow read, write: if false;
       }
     }
 
-    // Server owners — authenticated users can read/write their own
+    // ── Server owners (activation) ───────────────────────────────────────
+    // Holds the owner's email address and Firebase uid, so there is NO
+    // public read. The bot reads `isActive` with the Admin SDK.
+    //
+    //   get    — your own record; or a path where no record exists yet,
+    //            which is how the Activate screen asks "is this taken?"
+    //            (`resource == null`). Someone else's record is denied, and
+    //            that denial is itself the answer "taken, not yours".
+    //   list   — only as a query constrained to your own firebaseUid
+    //            ("My Servers"). An unconstrained list is denied.
+    //   create — only when no record exists (an existing one makes it an
+    //            update), and only naming yourself as the owner.
+    //   update / delete — only by the existing owner; `firebaseUid` cannot
+    //            change hands, because the new value must equal the caller
+    //            and the caller must already be the owner.
+    //
+    // WHAT THIS DOES NOT DO: prove the caller owns the Discord server.
+    // Activation is first-come-first-served per guild id. Closing that needs
+    // a server-side check (Discord OAuth + Manage Server) writing this
+    // record with the Admin SDK.
     match /serverOwners/{serverId} {
-      allow read: if true;
-      allow write: if request.auth != null;
+      function isOwner() {
+        return request.auth != null
+          && resource.data.firebaseUid == request.auth.uid;
+      }
+      function validOwnerRecord() {
+        let d = request.resource.data;
+        return d.keys().hasOnly(['ownerDiscordId', 'ownerEmail', 'firebaseUid',
+                                 'activatedAt', 'isActive'])
+          && d.keys().hasAll(['firebaseUid', 'activatedAt', 'isActive'])
+          && d.firebaseUid == request.auth.uid
+          && d.isActive is bool
+          // If an email is recorded it is the caller's own, per their token.
+          && (!('ownerEmail' in d)
+              || d.ownerEmail == request.auth.token.get('email', null))
+          && (!('ownerDiscordId' in d)
+              || (d.ownerDiscordId is string
+                  && (d.ownerDiscordId == '' || isSnowflake(d.ownerDiscordId))))
+          // Server-stamped when (re)activating; otherwise left as it was.
+          && (d.activatedAt == request.time
+              || (resource != null
+                  && d.activatedAt == resource.data.get('activatedAt', null)));
+      }
+
+      allow get: if request.auth != null
+        && isSnowflake(serverId)
+        && (resource == null || resource.data.firebaseUid == request.auth.uid);
+      allow list: if request.auth != null
+        && resource.data.firebaseUid == request.auth.uid;
+      allow create: if request.auth != null
+        && isSnowflake(serverId)
+        && validOwnerRecord();
+      allow update: if isOwner()
+        && isSnowflake(serverId)
+        && validOwnerRecord();
+      // No id check: lets an owner remove a legacy record with a mistyped id.
+      allow delete: if isOwner();
     }
 
     // Per-user pinned servers ("My Servers" beyond ownership): only the
@@ -42,10 +352,11 @@ service cloud.firestore {
     }
 
     // Ephemeral dashboard presence: who is looking at this session right now.
-    // Deliberately NOT under /servers, whose subcollection rule is
-    // `allow read, write: if true` — rules are OR'd across matches, so
-    // anything placed there could never restrict access no matter how it was
-    // written.
+    // Keyed by session code at the top level, deliberately NOT under
+    // /servers. (It was first put here because /servers used to carry a
+    // wildcard `allow read, write: if true` subcollection rule, and rules are
+    // OR'd across matches, so nothing placed there could be restricted. That
+    // wildcard is gone, but the path is the client contract.)
     //
     // READ IS PUBLIC, deliberately. The session code is already the capability
     // for everything else on this dashboard — queue, playback, history — so
@@ -65,9 +376,9 @@ service cloud.firestore {
     // State that consequence plainly rather than hiding it: a griefer with the
     // code can overwrite or delete any anonymous presence row, blanking
     // someone's avatar or adding fake ones. It is accepted because it is the
-    // trust level this app already runs at — `servers/{id}` and every
-    // subcollection under it are `allow read, write: if true`, so the queue,
-    // playback and history are already fully open to the same person, and a
+    // trust level this app already runs at — anyone who can reach a session
+    // can already drive its queue and playback and delete its history through
+    // the (validated, but unauthenticated) /servers rules above, and a
     // presence row is strictly less valuable than the queue. A deleted row
     // also comes back on the next heartbeat, within 15 seconds. Signed-in rows
     // keep their uid scoping, so an account's avatar still cannot be forged or

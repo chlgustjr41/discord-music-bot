@@ -18,6 +18,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { GripVertical, Music, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ResizableList } from "../ResizableList";
+import { safeArtworkUrl } from "../../lib/artwork";
 import type { Track } from "../../types";
 
 interface Props {
@@ -44,6 +45,7 @@ function SortableRow({
     transition,
     opacity: isDragging ? 0.4 : 1,
   };
+  const artwork = safeArtworkUrl(track.thumbnail);
   return (
     <li
       ref={setNodeRef}
@@ -60,8 +62,8 @@ function SortableRow({
         <GripVertical className="h-4 w-4" />
       </button>
       <span className="w-5 text-right text-xs text-muted-foreground/60">{index + 1}.</span>
-      {track.thumbnail ? (
-        <img src={track.thumbnail} alt="" className="h-7 w-7 rounded object-cover shrink-0" />
+      {artwork ? (
+        <img src={artwork} alt="" className="h-7 w-7 rounded object-cover shrink-0" />
       ) : (
         <div className="flex h-7 w-7 items-center justify-center rounded bg-muted shrink-0">
           <Music className="h-3 w-3 text-muted-foreground" />

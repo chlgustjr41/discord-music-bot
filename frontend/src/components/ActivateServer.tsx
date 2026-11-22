@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../hooks/useAuth";
+import { isSnowflake } from "../lib/limits";
 import { useNavigate } from "react-router-dom";
 import {
   Card,
@@ -13,6 +14,19 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { CheckCircle, LogIn, LogOut, ArrowLeft, Loader2 } from "lucide-react";
+
+const TAKEN_MESSAGE =
+  "This server has already been activated by another account. " +
+  "If that wasn't you, ask whoever set the bot up.";
+
+/** Firestore's "the rules said no", as opposed to offline / unavailable. */
+function isPermissionDenied(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    (err as { code?: unknown }).code === "permission-denied"
+  );
+}
 
 export function ActivateServer() {
   const {
@@ -30,12 +44,41 @@ export function ActivateServer() {
   const navigate = useNavigate();
 
   const handleActivate = async () => {
-    if (!serverId.trim() || !user) return;
-    setStatus("saving");
+    const id = serverId.trim();
+    if (!id || !user) return;
     setErrorMsg("");
 
+    // The rules only accept a Discord snowflake as the document id. Say so
+    // here, in words, rather than after a refused write.
+    if (!isSnowflake(id)) {
+      setErrorMsg(
+        "That doesn't look like a Discord Server ID — it should be a 17–20 digit number."
+      );
+      setStatus("error");
+      return;
+    }
+
+    setStatus("saving");
+    const ref = doc(db, "serverOwners", id);
+
+    // "Is this server already taken?" Owner records are private: the rules
+    // let a signed-in user read their OWN record, or a path where no record
+    // exists yet, and refuse anyone else's. So a refusal here is the answer
+    // — it is activated, and not by this account.
     try {
-      await setDoc(doc(db, "serverOwners", serverId.trim()), {
+      await getDoc(ref);
+    } catch (err) {
+      setErrorMsg(
+        isPermissionDenied(err)
+          ? TAKEN_MESSAGE
+          : "Couldn't check that server right now. Please try again."
+      );
+      setStatus("error");
+      return;
+    }
+
+    try {
+      await setDoc(ref, {
         ownerDiscordId: "",
         ownerEmail: user.email,
         firebaseUid: user.uid,
@@ -43,8 +86,13 @@ export function ActivateServer() {
         isActive: true,
       });
       setStatus("done");
-    } catch (err: any) {
-      setErrorMsg(err.message || "Failed to activate server.");
+    } catch (err) {
+      // Someone else can claim it between the check and the write.
+      setErrorMsg(
+        isPermissionDenied(err)
+          ? TAKEN_MESSAGE
+          : "Failed to activate server. Please try again."
+      );
       setStatus("error");
     }
   };
