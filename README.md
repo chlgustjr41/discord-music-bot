@@ -9,7 +9,7 @@ app — both stay in sync through Firestore.
 
 ## Architecture
 
-Five crash-only Docker Compose services on one VM. State lives in
+Crash-only Docker Compose services on one host, none of which publishes a port. State lives in
 Firestore and a shared token volume — never in containers — so **any
 container can be killed at any instant** and the system converges back:
 the bot rebuilds every live session from Firestore on startup and resumes
@@ -27,7 +27,7 @@ tracks at position.
       │ guardian  │                                      └─────▲────────┘
       └─────┬─────┘                                            │ mint
             ▼ restart / alert (Discord webhook)          ┌─────┴────────┐
-       Docker socket                                     │ pot-provider │
+   socket-proxy → Docker                                 │ pot-provider │
                                                          └──────────────┘
 ```
 
@@ -37,7 +37,10 @@ tracks at position.
 | `services/lavalink` | Audio engine. Plugin version templated from `.env` (drift impossible); layered YouTube auth: client ordering + poToken + OAuth |
 | `services/token-minter` | Refreshes poToken/visitorData every 5.5h via pot-provider, pushes to Lavalink at runtime, persists for cold starts ([ADR-0004](docs/architecture/decisions/0004-bgutil-pot-provider.md)) |
 | `pot-provider` | Stock bgutil sidecar that solves YouTube's BotGuard attestation |
-| `services/guardian` | The supervisor: canary probe every 2 min → classify failures (playbooks F1–F9) → auto-restart via Docker socket → Discord webhook alerts with the exact fix command |
+| `services/guardian` | The supervisor: canary probe every 2 min → classify failures (playbooks F1–F9) → auto-restart through `socket-proxy` → Discord webhook alerts with the exact fix command |
+| `socket-proxy` | Filtering proxy in front of the Docker socket: guardian may list and restart containers, and nothing else |
+| `cipher` | yt-cipher sidecar: runs YouTube's player JavaScript to compute stream signatures, so player updates do not break playback |
+| `cloudflared` | Outbound Cloudflare tunnel carrying the Stream Deck / Creative Console control API (opt-in profile `control`) |
 
 **Docs:** [Architecture](docs/architecture/ARCHITECTURE.md) ·
 [Runbook (F1–F9)](docs/operations/RUNBOOK.md) ·
@@ -68,7 +71,7 @@ web app (Google sign-in) before commands work.
 
 | Playback | Queue | Playlists & Session |
 |---|---|---|
-| `j!play <query/URL>` — play or enqueue (YouTube/SoundCloud/Bandcamp; playlist URLs expand) | `j!queue [page]` — show queue | `j!playlist save/load/delete <name>` |
+| `j!play <query/URL>` — play or enqueue (YouTube/SoundCloud links only; playlist URLs expand) | `j!queue [page]` — show queue | `j!playlist save/load/delete <name>` |
 | `j!pause` / `j!resume` | `j!remove <pos>` | `j!playlist list` |
 | `j!skip` — next track | `j!move <from> <to>` | `j!history` — recent sessions |
 | `j!stop` — disconnect, end session | `j!shuffle` | `j!session` — show dashboard code |
@@ -100,8 +103,6 @@ cd services/bot && pip install -e ".[dev]" && pytest
 # Frontend (React + Vite)
 cd frontend && npm install && npm run dev
 
-# Cloud Functions (YouTube search proxy)
-cd functions && npm install && npm run build
 ```
 
 CI runs ruff + pytest + image builds per service on every PR, plus a
@@ -120,11 +121,13 @@ discord-music-bot/
 │   ├── token-minter/src/minter/
 │   └── lavalink/        # application.yml.tmpl + entrypoint (env-templated)
 ├── deploy/              # docker-compose.yml + .env contract (secrets live on the host)
+│   └── nas/             #   host firewall for a home server (docs/operations/NAS-SETUP.md)
 ├── docs/                # architecture, ADRs, runbook, deployment, status, roadmap
 ├── frontend/            # React dashboard (Firebase Hosting)
-├── functions/           # Cloud Functions (YouTube Data API search proxy)
+├── firestore.rules      # What the dashboard may read and write
+├── firestore-tests/     # Emulator tests for those rules
 ├── scripts/             # reauth-v2.sh (OAuth device flow)
-└── bot/                 # LEGACY v1 — kept only as rollback during the soak week
+└── bot/                 # LEGACY v1 — reference only; its compose file and deploy scripts are removed
 ```
 
 ## Firestore Data Model

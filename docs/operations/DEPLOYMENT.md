@@ -2,52 +2,68 @@
 
 The deploy contract on ANY Linux host with Docker:
 `git clone` → `cp deploy/.env.example deploy/.env` (fill it) → `make up`.
-No cloud-specific dependencies.
+No cloud-specific dependencies, and no inbound network access: every
+connection the stack makes is outbound.
 
-## Current host: GCP e2-small
-- Project `personal-server-492701`, instance `personal-project-machine`
-- SSH: `gcloud compute ssh personal-project-machine --project=personal-server-492701`
-- Update deploy: `make deploy` (pulls master, rebuilds, restarts changed services)
+## Target host: home NAS (UGREEN DXP2800)
 
-## Planned host: Hetzner (~€4/mo, better YouTube IP reputation tier)
-Migration = the deploy contract above + repoint the external uptime monitor.
+Step-by-step installation, including the host firewall rule that keeps the
+containers off the home network: **[NAS-SETUP.md](NAS-SETUP.md)**.
+
+- Update: `git pull && make up` (or the raw compose command in NAS-SETUP.md
+  when `make` is not installed), then re-run its verification section.
+- A host on a home network needs one thing a cloud VM did not: containers must
+  not be able to reach private addresses. `deploy/nas/egress-firewall.sh`
+  enforces that, and the compose file pins the subnets it keys on
+  (172.28.0.0/16) and gives every service public DNS resolvers so name
+  resolution keeps working behind it.
+
+## Previous host: GCP `personal-project-machine`
+
+Ran the stack from 2026-04 until the NAS cutover. It also hosts an unrelated
+project (`geo-assistant`), so retire it deliberately, not as a side effect.
+SSH: `gcloud compute ssh personal-project-machine --project=personal-server-492701`.
 
 ## Secrets
-Live only in `deploy/.env` on the host (git-ignored). `.env.example`
-documents every variable. Rotate `LAVALINK_PASSWORD` freely: `make up`
-re-propagates it to all services.
+
+Live only in `deploy/.env` and `deploy/firebase-service-account.json` on the
+host. Every env file except the `.env.example` templates is git-ignored.
+`.env.example` documents every variable.
+
+- Rotate `LAVALINK_PASSWORD` and `YOUTUBE_REMOTE_CIPHER_PASSWORD` freely:
+  `make up` re-propagates them.
+- The bot, guardian and token-minter run as uid 10001. The service-account
+  file is bind-mounted read-only and must be readable by that uid
+  (`chown 10001:10001`, mode 400).
+- The service account needs the `Cloud Datastore User` role and nothing else;
+  the bot only reads and writes Firestore.
+- `DOCKER_GID` must equal the group of `/var/run/docker.sock` on the host, or
+  the socket proxy cannot reach Docker and guardian loses its restart ability
+  (it keeps alerting).
+
+## What may talk to what
+
+No service publishes a host port. Inside the stack, five networks limit reach:
+
+| Network | Members | Why |
+|---------|---------|-----|
+| `core` | bot, lavalink, guardian, token-minter | The working set |
+| `cipher` | lavalink, cipher | Only Lavalink may call the cipher sidecar, which executes JavaScript served by YouTube |
+| `pot` | token-minter, pot-provider | Only the minter may ask for tokens |
+| `edge` | bot, cloudflared | The tunnel reaches the bot and nothing else |
+| `dockerproxy` (no internet) | guardian, socket-proxy | Only guardian may reach the Docker API proxy |
 
 ## External uptime monitor (playbook F7)
-The VM cannot report its own death. A free-tier monitor (e.g. UptimeRobot)
-pings the guardian's heartbeat endpoint (M4) and emails/DMs on silence.
 
-## M5 production cutover checklist (one-time, operator-run)
-> Executed 2026-07-04 — v2 is production. Kept for reference (it is also
-> the Hetzner migration procedure). Current state: [../STATUS.md](../STATUS.md).
+The host cannot report its own death, and on a home connection that includes
+power cuts and ISP outages. Use a push-style heartbeat monitor that alerts
+when pings stop. Do not publish guardian's `/status` port to satisfy a
+pull-style monitor: it is unauthenticated and is meant for the bot only.
 
-1. On the VM: fill `deploy/.env` (Discord token, Lavalink password, plugin
-   version, webhook, `FIREBASE_SERVICE_ACCOUNT_FILE`, `WEB_APP_URL`).
-2. Stop the LEGACY bot container first — the v2 bot must be the only
-   gateway session for the token, and the only Firestore writer.
-3. `make up` — full v2 stack. `make ps`: lavalink healthy, all services up.
-4. `make reauth` — first live run of the v2 device flow (F2 drill).
-5. Real-server smoke: `j!start`, `j!play <query>`, dashboard search/queue/
-   skip/seek from the web app, `j!stop`.
-6. Recovery drills: `make restart s=lavalink` mid-track (expect ≤ seconds
-   of gap + auto-resume); `make restart s=bot` mid-track (expect
-   convergence resume at position).
-7. Confirm a guardian alert arrives in the admin channel (temporarily set
-   a wrong `LAVALINK_PASSWORD` in a canary probe window, or watch the
-   startup heartbeat).
-8. Point the external uptime monitor at the guardian heartbeat.
-9. Remove the legacy bot from the VM's startup path; archive `bot/` in a
-   follow-up commit once v2 has survived a full week.
+## Moving hosts
 
-### Rollback during the soak week
-`make rollback-legacy` — stops the v2 stack and restarts the preserved
-legacy containers (`jacky-bot`, `jacky-lavalink`). ~30 seconds of downtime.
-There is deliberately NO automatic fallback: both versions use the same
-Discord token (one gateway session allowed) and write the same Firestore
-documents, so running both would split-brain state. The v2 safety net is
-crash-only convergence + guardian restarts; legacy is the human-decision
-escape hatch until the soak week ends and the containers are deleted.
+Only one bot may be connected with the bot token at a time, and both hosts
+would write the same Firestore documents. A move is therefore: stop the old
+stack, reset the bot token (which also guarantees the old host cannot come
+back by accident), start the new stack. Session state is in Firestore, so
+queues survive. NAS-SETUP.md section 6 is the procedure.
