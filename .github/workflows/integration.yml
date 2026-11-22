@@ -13,6 +13,10 @@ on:
   # Manual runs for verifying workflow changes without waiting a day.
   workflow_dispatch:
 
+# Least privilege for the workflow token: the job only reads the repo.
+permissions:
+  contents: read
+
 concurrency:
   group: integration-${{ github.ref }}
   cancel-in-progress: true
@@ -26,6 +30,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: cp deploy/.env.example deploy/.env
+      - name: Set the runner's Docker socket group
+        # .env.example carries a placeholder (DOCKER_GID=0). socket-proxy runs
+        # unprivileged and can only open /var/run/docker.sock as a member of
+        # the group that owns it on THIS machine — same as on a real host.
+        run: |
+          gid=$(stat -c %g /var/run/docker.sock)
+          sed -i "s/^DOCKER_GID=.*/DOCKER_GID=${gid}/" deploy/.env
+          grep -qx "DOCKER_GID=${gid}" deploy/.env
       - name: Boot audio infrastructure
         run: $COMPOSE up -d --build lavalink pot-provider token-minter
       - name: Guardian boots and probes (hard gate)
@@ -39,6 +51,63 @@ jobs:
           done
           $COMPOSE logs guardian
           exit 1
+      - name: Socket-proxy policy (hard gate)
+        # Proves the allowlist in deploy/docker-compose.yml, from inside the
+        # guardian container because that is the only client the proxy
+        # accepts (-allowfrom=guardian). The two calls the guardian makes must
+        # get through; everything else must be refused BY THE PROXY (403). A
+        # 2xx — or a 404, which is Docker answering — means the request
+        # reached the daemon, and the gate fails.
+        # The restart rule is exercised with an id no container has, so a
+        # pass is Docker's own 404 and nothing is actually restarted.
+        # Read-only: it does not disturb the mint that the next steps time.
+        run: |
+          $COMPOSE exec -T guardian python - <<'PY' || { $COMPOSE logs socket-proxy; exit 1; }
+          import sys
+          import urllib.error
+          import urllib.request
+
+          BASE = "http://socket-proxy:2375"
+          NO_SUCH_ID = "0" * 12
+
+          def call(method, path):
+              body = b"" if method == "POST" else None
+              req = urllib.request.Request(BASE + path, data=body, method=method)
+              try:
+                  with urllib.request.urlopen(req, timeout=10) as resp:
+                      return resp.status
+              except urllib.error.HTTPError as exc:
+                  return exc.code
+              except OSError as exc:
+                  return f"no connection ({exc})"
+
+          def refused(status):
+              return status == 403 or str(status).startswith("no connection")
+
+          CHECKS = [
+              # (method, path, verdict wanted, test on the status)
+              ("GET", "/containers/json", "ALLOWED", lambda s: s == 200),
+              # The shape the guardian really sends: the query string must not
+              # change the verdict.
+              ("GET", "/containers/json?all=true", "ALLOWED", lambda s: s == 200),
+              ("POST", f"/containers/{NO_SUCH_ID}/restart?t=10", "ALLOWED", lambda s: s == 404),
+              ("POST", "/containers/create", "REFUSED", refused),
+              ("GET", "/images/json", "REFUSED", refused),
+              ("POST", "/containers/x/exec", "REFUSED", refused),
+              # Inspect would hand over every container's environment.
+              ("GET", f"/containers/{NO_SUCH_ID}/json", "REFUSED", refused),
+              # Only the unversioned paths the guardian uses are open.
+              ("GET", "/v1.41/containers/json", "REFUSED", refused),
+          ]
+
+          failed = False
+          for method, path, wanted, ok in CHECKS:
+              status = call(method, path)
+              good = ok(status)
+              failed = failed or not good
+              print(f"{'ok  ' if good else 'FAIL'} want {wanted:7} {method:4} {path} -> {status}")
+          sys.exit(1 if failed else 0)
+          PY
       - name: Wait for lavalink healthy
         run: |
           for i in $(seq 1 30); do
@@ -77,6 +146,11 @@ jobs:
           # restarts it anyway.
           $COMPOSE stop token-minter
           vol=$(docker volume ls -q | grep jacky-music_tokens)
+          # Written as root, while the minter itself runs as uid 10001. That is
+          # fine in both directions: lavalink only needs the file readable
+          # (0644 here), and the minter never opens this file for writing — it
+          # replaces it by temp-file + rename, which needs write access to the
+          # DIRECTORY (its own) and not to the file being replaced.
           docker run --rm -v "$vol":/data/tokens alpine sh -c 'printf "POT_TOKEN=SYNTHPO123\nPOT_VISITOR_DATA=SYNTHVD456\n" > /data/tokens/tokens.env'
           $COMPOSE restart lavalink
           healthy=false

@@ -1,18 +1,80 @@
+# INVARIANT: this file publishes no host ports — there is no `ports:` key in
+# it, and there must never be one. Every service is reachable only on its
+# compose networks; the only way in from outside is the outbound Cloudflare
+# tunnel (`cloudflared`, opt-in). `expose:` entries are documentation: they
+# publish nothing on the host.
 name: jacky-music
+
+# Rotation is load-bearing: a revoked OAuth token (playbook F2) makes the
+# youtube plugin log errors every 5s; unbounded logs once filled the VM disk.
+# non-blocking: a slow disk must never block a container's stdout. Without it
+# a stalled log write back-pressures the process that is logging — for
+# Lavalink that is the audio path, so this is an audio-stability measure as
+# much as a housekeeping one. The cost: lines are dropped (not delayed) if
+# the 4m ring buffer ever fills.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "3"
+    mode: non-blocking
+    max-buffer-size: 4m
+
+# Applied to EVERY service: no privilege escalation through setuid binaries,
+# no Linux capabilities at all, and a ceiling on processes + threads.
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  pids_limit: 256
+
+# Public resolvers, on every service that resolves names outside the stack.
+# On the NAS a host firewall rule blocks the compose subnets from reaching
+# private (RFC 1918) addresses. Recent Docker engines forward external DNS
+# lookups from the container's own network namespace, so a LAN resolver (the
+# home router) would be blocked by that rule; public resolvers keep DNS
+# working behind it. Compose service names are unaffected — Docker's embedded
+# resolver answers those itself.
+# Overridable (JACKY_DNS_1/2 in .env) because some networks block or
+# intercept port 53 to outside resolvers: check with
+#   docker run --rm alpine nslookup github.com 1.1.1.1
+# If no public resolver is reachable, point these at the LAN resolver AND
+# allow it through the firewall (JACKY_DNS_ALLOW, deploy/nas/egress-firewall.sh).
+x-dns: &dns
+  dns:
+    - ${JACKY_DNS_1:-1.1.1.1}
+    - ${JACKY_DNS_2:-1.0.0.1}
+
+# Read-only root filesystem with a scratch /tmp, for the services that are
+# known to write nothing else: our three Python images (PYTHONDONTWRITEBYTECODE
+# is set in their Dockerfiles), cloudflared and socket-proxy.
+# NOT applied to lavalink (it extracts native audio libraries to /tmp and must
+# execute them — a default tmpfs is noexec), nor to cipher and pot-provider
+# (third-party images, not verified to run read-only).
+x-read-only: &read-only
+  read_only: true
+  tmpfs:
+    - /tmp
 
 services:
   lavalink:
+    <<: [*hardening, *dns]
     build: ../services/lavalink
     restart: unless-stopped
-    # Rotation is load-bearing: a revoked OAuth token (playbook F2) makes the
-    # youtube plugin log errors every 5s; unbounded logs once filled the VM disk.
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
+    logging: *logging
+    mem_limit: 1g
+    # Favour audio when the host is busy (default weight is 1024).
+    cpu_shares: 2048
+    # A JVM is all threads, and each one counts against this limit; running
+    # out surfaces as "unable to create native thread", i.e. an audio outage.
+    pids_limit: 1024
     environment:
-      _JAVA_OPTIONS: "-Xmx${LAVALINK_HEAP:-512m}"
+      # Heap is fixed (-Xms = -Xmx) so it never resizes under load.
+      # The collector is pinned: with a container memory limit under ~1.8 GB
+      # the JVM stops considering the machine server-class and silently
+      # selects the stop-the-world SerialGC, which disturbs audio pacing.
+      _JAVA_OPTIONS: "-Xms${LAVALINK_HEAP:-512m} -Xmx${LAVALINK_HEAP:-512m} -XX:+UseG1GC -XX:MaxGCPauseMillis=50"
       LAVALINK_SERVER_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
       YOUTUBE_PLUGIN_VERSION: ${YOUTUBE_PLUGIN_VERSION:?set in .env}
       # Set -> local-jar mode: fetch from GitHub releases and verify, instead
@@ -21,6 +83,10 @@ services:
       YOUTUBE_OAUTH_REFRESH_TOKEN: ${YOUTUBE_OAUTH_REFRESH_TOKEN:-}
       YOUTUBE_REMOTE_CIPHER_URL: ${YOUTUBE_REMOTE_CIPHER_URL:-http://cipher:8001}
       YOUTUBE_REMOTE_CIPHER_PASSWORD: ${YOUTUBE_REMOTE_CIPHER_PASSWORD:?set in .env}
+      # Audio buffer tunables (upstream defaults); consumed as Spring
+      # placeholders in services/lavalink/application.yml.tmpl.
+      LAVALINK_BUFFER_MS: ${LAVALINK_BUFFER_MS:-400}
+      LAVALINK_FRAME_BUFFER_MS: ${LAVALINK_FRAME_BUFFER_MS:-5000}
     expose:
       - "2333"
     volumes:
@@ -38,16 +104,14 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
-    networks: [jacky]
+    networks: [core, cipher]
 
   bot:
+    <<: [*hardening, *dns, *read-only]
     build: ../services/bot
     restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
+    logging: *logging
+    mem_limit: 384m
     environment:
       DISCORD_TOKEN: ${DISCORD_TOKEN:?set in .env}
       LAVALINK_HOST: lavalink
@@ -62,22 +126,26 @@ services:
       OPENAI_STT_MODEL: ${OPENAI_STT_MODEL:-}
       OPENAI_INTENT_MODEL: ${OPENAI_INTENT_MODEL:-}
     volumes:
+      # Bind-mounted read-only, and the process runs as uid 10001 (see
+      # services/bot/Dockerfile) — so the HOST file must be readable by that
+      # uid, e.g. `chown 10001 <file> && chmod 400 <file>`. A root-only file
+      # makes the bot exit at startup with a permission error.
       - ${FIREBASE_SERVICE_ACCOUNT_FILE:?set in .env}:/run/secrets/firebase-service-account.json:ro
     expose:
       - "8080"
     depends_on:
       lavalink:
         condition: service_healthy
-    networks: [jacky]
+    # core: lavalink, and guardian's /status (http://guardian:8081/status).
+    # edge: so the tunnel can reach http://bot:8080 without being on core.
+    networks: [core, edge]
 
   guardian:
+    <<: [*hardening, *dns, *read-only]
     build: ../services/guardian
     restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
+    logging: *logging
+    mem_limit: 128m
     environment:
       LAVALINK_HOST: lavalink
       LAVALINK_PORT: "2333"
@@ -89,17 +157,77 @@ services:
       COMPOSE_PROJECT: jacky-music
       YOUTUBE_PLUGIN_VERSION: ${YOUTUBE_PLUGIN_VERSION:?set in .env}
       PROBE_INTERVAL_SECONDS: ${PROBE_INTERVAL_SECONDS:-120}
+      # The guardian restarts sibling services (playbooks F4/F5) through the
+      # socket-proxy service below, NOT through the Docker socket: this
+      # container no longer mounts /var/run/docker.sock at all. Spec §3.4
+      # used to accept that mount "by design", but it is root-equivalent
+      # access to the host; the proxy narrows it to "list containers" and
+      # "restart a container". With this variable unset the guardian falls
+      # back to the unix socket, which is not there — keep it set.
+      DOCKER_API_URL: http://socket-proxy:2375
     expose:
       - "8081"  # /status, consumed by the bot's j!status command
-    volumes:
-      # Root-equivalent access to the host, accepted by design (spec §3.4):
-      # guardian uses it only to restart sibling services (playbook F4/F5).
-      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - lavalink
-    networks: [jacky]
+      - socket-proxy
+    networks: [core, dockerproxy]
+
+  socket-proxy:
+    <<: [*hardening, *read-only]
+    # The ONLY container that mounts the Docker socket, and the guardian is
+    # its only client. It forwards an exact allowlist of Docker API calls and
+    # refuses everything else itself (403; 405 for a method with no rule at
+    # all), so a compromised guardian can list and restart containers — any
+    # container on this host, not only this stack's — but cannot create one,
+    # exec into one, or inspect one (inspect output includes every
+    # container's environment).
+    # Pinned to an exact version AND digest — this image sits directly on the
+    # socket. Bump deliberately, to a release that has had a couple of weeks
+    # to age, and let the "Socket-proxy policy" gate in
+    # .github/workflows/integration.yml prove the rules still hold.
+    image: wollomatic/socket-proxy:1.13.2@sha256:ff95d6ff6c27853005ef85eb8f4ab5923dc3d2f1e055f98fb6aeeaceec3fe848
+    restart: unless-stopped
+    logging: *logging
+    mem_limit: 64m
+    # Unprivileged uid; the group is the one that owns the HOST's Docker
+    # socket, which is all that lets this process open it.
+    # Find it with: stat -c %g /var/run/docker.sock
+    user: "65534:${DOCKER_GID:?set in .env}"
+    command:
+      - "-loglevel=info"
+      - "-listenip=0.0.0.0"
+      # Client allowlist: only the address the name `guardian` resolves to on
+      # this network may connect (looked up per request, never cached).
+      - "-allowfrom=guardian"
+      # Request allowlist: one Go regexp per rule, matched against the request
+      # PATH only — the query string is not part of the match, so guardian's
+      # `?all=true&filters=…` and `?t=10` pass and cannot widen a rule.
+      # socket-proxy wraps every rule in ^…$ itself (established for 1.13.2
+      # from its source and by test). The anchors are written out here as
+      # well so the rules stay exact even if that ever changed; `$$` is
+      # compose escaping for a literal `$`. Deliberately no alternation: under
+      # implicit anchoring an ungrouped `a|b` is only half-anchored.
+      # Unversioned paths only — a /v1.NN/ prefix is refused, which is what
+      # the guardian sends (services/guardian/src/guardian/act.py).
+      - "-allowGET=^/containers/json$$"
+      - "-allowPOST=^/containers/[0-9a-f]{12,64}/restart$$"
+      # If the socket goes away (engine upgrade/restart) exit, so the restart
+      # policy re-creates the mount instead of proxying to a dead inode.
+      - "-watchdoginterval=60"
+      - "-stoponwatchdog"
+      - "-shutdowngracetime=5"
+    volumes:
+      # `:ro` protects the socket FILE only; it does not limit what can be
+      # sent through it. The allowlist above is the control.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    expose:
+      - "2375"
+    # No `dns:` — this network is internal, and the only name looked up is
+    # `guardian`, which Docker's embedded resolver answers.
+    networks: [dockerproxy]
 
   cipher:
+    <<: [*hardening, *dns]
     # Remote signature/n-function deciphering for the youtube plugin (playbook
     # F3 escalation, 2026-07-10): executes YouTube's player JS instead of
     # regex-parsing it, so player rollouts that break the plugin's
@@ -109,28 +237,28 @@ services:
     # stale pin here recreates the very outage this service exists to absorb.
     image: ghcr.io/kikkia/yt-cipher:master
     restart: unless-stopped
+    mem_limit: 1g
     environment:
       API_TOKEN: ${YOUTUBE_REMOTE_CIPHER_PASSWORD:?set in .env}
       # IAS is the only variant upstream marks as consistently working.
       OVERRIDE_PLAYER_VARIANT: IAS
-      # 2GB-VM budget (spec §2): single worker, small player-script cache.
+      # Memory budget (spec §2): single worker, small player-script cache.
       MAX_THREADS: "1"
       PREPROCESSED_CACHE_SIZE: "20"
     expose:
       - "8001"
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
-    networks: [jacky]
+    logging: *logging
+    # Its own network with lavalink: nothing else in the stack can reach it.
+    networks: [cipher]
 
   pot-provider:
+    <<: [*hardening, *dns]
     # Pinned like YOUTUBE_PLUGIN_VERSION: bump deliberately, in step with
     # youtube-source plugin compatibility (ADR-0004).
     image: brainicism/bgutil-ytdlp-pot-provider:1.3.1-node
     restart: unless-stopped
     init: true
+    mem_limit: 1g
     expose:
       - "4416"
     healthcheck:
@@ -139,16 +267,15 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
-    networks: [jacky]
+    logging: *logging
+    # Its own network with token-minter: nothing else in the stack can reach it.
+    networks: [pot]
 
   token-minter:
+    <<: [*hardening, *dns, *read-only]
     build: ../services/token-minter
     restart: unless-stopped
+    mem_limit: 128m
     environment:
       POT_PROVIDER_URL: http://pot-provider:4416
       LAVALINK_HOST: lavalink
@@ -156,6 +283,10 @@ services:
       LAVALINK_PASSWORD: ${LAVALINK_PASSWORD:?set in .env}
       POT_REFRESH_HOURS: ${POT_REFRESH_HOURS:-5.5}
     volumes:
+      # The one writable path under read_only. The minter runs as uid 10001
+      # and must own this directory: a NEW volume inherits that from the image
+      # (services/token-minter/Dockerfile), a volume created by an older,
+      # root-running image needs the one-off chown documented there.
       - tokens:/data/tokens
     depends_on:
       # A mint cycle is mint (pot-provider) + push (lavalink REST), so BOTH
@@ -168,16 +299,13 @@ services:
         condition: service_healthy
       pot-provider:
         condition: service_healthy
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
-    networks: [jacky]
+    logging: *logging
+    networks: [core, pot]
 
   cloudflared:
+    <<: [*hardening, *dns, *read-only]
     # Stream Deck control API egress (spec 2026-08-06). Outbound-only named
-    # tunnel: control.<domain> -> bot:8080 /control/*, no inbound VM ports.
+    # tunnel: control.<domain> -> bot:8080 /control/*, no inbound host ports.
     # Opt-in via COMPOSE_PROFILES=control in .env — the stack runs without it.
     # Deliberately UNPINNED (:latest): Cloudflare deprecates old connector
     # builds, and compose's pull policy freezes the tag at first pull anyway.
@@ -186,6 +314,7 @@ services:
     restart: unless-stopped
     profiles: [control]
     command: tunnel --no-autoupdate run
+    mem_limit: 128m
     environment:
       # cloudflared reads TUNNEL_TOKEN natively; empty default keeps plain
       # `docker compose <cmd>` working when the control profile is unused —
@@ -194,15 +323,44 @@ services:
       TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     depends_on:
       - bot
-    logging:
-      driver: json-file
-      options:
-        max-size: "20m"
-        max-file: "3"
-    networks: [jacky]
+    logging: *logging
+    # edge only: the internet-facing connector can reach the bot's HTTP port
+    # and nothing else — not Lavalink, not the guardian, not the socket proxy.
+    networks: [edge]
 
+# Fixed subnets, all inside 172.28.0.0/16: the NAS firewall script keys on
+# that range, so a network outside it would silently escape the rule that
+# keeps these containers away from the LAN. Split by who needs to talk to
+# whom, so a compromised container can only reach its direct peers:
+#   core         bot, lavalink, guardian, token-minter
+#   cipher       lavalink <-> cipher
+#   pot          token-minter <-> pot-provider
+#   edge         cloudflared -> bot
+#   dockerproxy  guardian -> socket-proxy; internal: no route out at all
+# Two compose projects built from this file cannot run on one host at the
+# same time (the subnets would overlap) — `down` one before `up` the other.
 networks:
-  jacky: {}
+  core:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+  cipher:
+    ipam:
+      config:
+        - subnet: 172.28.1.0/24
+  pot:
+    ipam:
+      config:
+        - subnet: 172.28.2.0/24
+  edge:
+    ipam:
+      config:
+        - subnet: 172.28.3.0/24
+  dockerproxy:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.4.0/24
 
 volumes:
   tokens: {}

@@ -11,8 +11,29 @@ lavalink:
   # PLUGIN_BLOCK_END
   server:
     password: "${LAVALINK_SERVER_PASSWORD}"
+    # Only YouTube (via the plugin) and SoundCloud are served; every other
+    # built-in source is switched off EXPLICITLY, because upstream defaults
+    # most of them to on.
+    # The generic http source is the dangerous one: it lets anyone who can
+    # queue a track make this server fetch an arbitrary URL — reaching hosts
+    # on the LAN it sits in, and disclosing the home IP to whatever server the
+    # URL points at.
+    # The bot's URL allowlist in services/bot/src/jacky/audio/models.py must
+    # stay in step with this list.
     sources:
       youtube: false  # handled by youtube-plugin above
+      soundcloud: true
+      http: false
+      local: false
+      bandcamp: false
+      twitch: false
+      vimeo: false
+      nico: false
+    # Send-queue length: higher rides out longer stalls (GC, a busy host) at
+    # the cost of slower pause/skip response. Upstream default 400.
+    bufferDurationMs: ${LAVALINK_BUFFER_MS:400}
+    # Frame buffer: decoded audio held ahead of playback. Upstream default 5000.
+    frameBufferDurationMs: ${LAVALINK_FRAME_BUFFER_MS:5000}
 
 plugins:
   youtube:
@@ -54,6 +75,11 @@ plugins:
     # POT_BLOCK_END
 
 logging:
+  # Off: Lavalink's default request log prints full request payloads, and
+  # those carry poTokens (the minter's POST /youtube) and Discord voice
+  # session tokens (the bot's player updates) straight into the logs.
+  request:
+    enabled: false
   level:
     root: INFO
     lavalink: INFO

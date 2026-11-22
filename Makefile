@@ -31,14 +31,8 @@ lint: ## Ruff over all services
 build: ## Build all images without starting
 	$(COMPOSE) build
 
-deploy: ## Production deploy (run on the VM)
+deploy: ## Production deploy (run on the host)
 	git pull origin master && $(COMPOSE) up -d --build
 
 reauth: ## YouTube OAuth device flow for the v2 stack (playbook F2)
 	./scripts/reauth-v2.sh
-
-rollback-legacy: ## EMERGENCY (soak week only): stop v2, restart the stopped legacy containers
-	$(COMPOSE) down
-	docker start jacky-bot jacky-lavalink
-	docker update --restart=unless-stopped jacky-bot jacky-lavalink
-	@echo "Legacy stack restored; v2 is down. Queues/state are shared via Firestore."

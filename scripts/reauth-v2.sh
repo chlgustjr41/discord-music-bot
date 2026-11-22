@@ -4,7 +4,21 @@
 # device flow), surfaces the code, waits for approval, captures the new token
 # from the plugin's log line, persists it to deploy/.env, and recreates again.
 set -eu
+# Anything this script creates is owner-only.
+umask 077
 COMPOSE="docker compose -f deploy/docker-compose.yml --env-file deploy/.env"
+
+# `sed -i.bak` below leaves deploy/.env.bak — a copy of EVERY secret in
+# deploy/.env. This script has several early exits (no device code, token
+# never arrives, Ctrl-C during the 5-minute wait), so the backup is removed
+# on any exit rather than only on the success path. The signal traps exist
+# because a plain POSIX sh (dash) does not run the EXIT trap when it is
+# killed by a signal.
+cleanup() { rm -f deploy/.env.bak; }
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 grep -q '^YOUTUBE_OAUTH_REFRESH_TOKEN=' deploy/.env || {
   echo "deploy/.env missing YOUTUBE_OAUTH_REFRESH_TOKEN line" >&2; exit 1; }
