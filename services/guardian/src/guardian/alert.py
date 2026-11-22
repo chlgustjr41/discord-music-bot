@@ -7,6 +7,7 @@ proves the alert channel itself works (F9).
 """
 
 import logging
+import re
 import time
 
 import aiohttp
@@ -38,6 +39,18 @@ PLAYBOOK_MESSAGES = {
                 "guardian/classify.py + the runbook."),
 }
 
+_FENCE_RUN = re.compile(r"`{3,}")
+
+
+def _defuse_code_fences(text: str) -> str:
+    """Replace every run of 3+ backticks with as many apostrophes.
+
+    The detail is upstream error text shown inside a ``` fence; a ``` of its
+    own would close that fence and let the rest render as live markdown.
+    Length is preserved; single and double backticks are left alone.
+    """
+    return _FENCE_RUN.sub(lambda run: "'" * len(run.group()), text)
+
 
 class Alerter:
     def __init__(self, session: aiohttp.ClientSession, webhook_url: str) -> None:
@@ -46,13 +59,25 @@ class Alerter:
         self._last_sent: dict[str, float] = {}
 
     async def _post(self, content: str) -> bool:
+        payload = {
+            "content": content[:1900],
+            # Alert text embeds upstream error strings (Lavalink/YouTube/GitHub):
+            # nothing in it may ever ping @everyone, a role or a user.
+            "allowed_mentions": {"parse": []},
+        }
         try:
-            async with self._session.post(
-                self._webhook_url, json={"content": content[:1900]}
-            ) as resp:
+            async with self._session.post(self._webhook_url, json=payload) as resp:
                 return resp.status in (200, 204)
         except Exception as exc:  # noqa: BLE001 — F9: a broken channel must not kill probing
-            log.error("webhook post failed: %s", exc)
+            # NEVER format `exc` itself (no %s, no exc_info): aiohttp URL errors
+            # embed the full webhook URL, and that URL is a credential. Type and
+            # HTTP status only.
+            status = getattr(exc, "status", None)
+            log.error(
+                "webhook post failed: %s%s",
+                type(exc).__name__,
+                f" (HTTP {status})" if isinstance(status, int) else "",
+            )
             return False
 
     async def alert(self, playbook_id: str, detail: str = "") -> bool:
@@ -64,7 +89,9 @@ class Alerter:
         self._last_sent[playbook_id] = now
         message = PLAYBOOK_MESSAGES.get(playbook_id, PLAYBOOK_MESSAGES["UNKNOWN"])
         if detail:
-            message = f"{message}\n```\n{detail[:600]}\n```"
+            # Neutralise first, truncate second: a run cut in half by the limit
+            # must not survive as a backtick stub above the closing fence.
+            message = f"{message}\n```\n{_defuse_code_fences(detail)[:600]}\n```"
         message += "\n_Runbook: docs/operations/RUNBOOK.md_"
         return await self._post(message)
 
