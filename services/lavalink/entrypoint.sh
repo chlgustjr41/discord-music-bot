@@ -42,14 +42,18 @@ if [ -n "${YOUTUBE_PLUGIN_SHA256:-}" ]; then
     echo "fetching youtube-plugin ${YOUTUBE_PLUGIN_VERSION} from GitHub releases"
     curl -fsSL --retry 3 --retry-delay 5 -o "${JAR}.tmp" \
       "https://github.com/lavalink-devs/youtube-source/releases/download/${YOUTUBE_PLUGIN_VERSION}/youtube-plugin-${YOUTUBE_PLUGIN_VERSION}.jar"
-    # Fail closed: a mismatched hash leaves no jar behind rather than running
-    # an unverified one.
-    if ! echo "${YOUTUBE_PLUGIN_SHA256}  ${JAR}.tmp" | sha256sum -c -; then
-      rm -f "${JAR}.tmp"
-      echo "youtube-plugin checksum mismatch; refusing to start" >&2
-      exit 1
-    fi
     mv "${JAR}.tmp" "$JAR"
+  fi
+  # Verified on EVERY boot, not only right after a download. The jar lives on
+  # a persistent volume: checking it once and trusting it forever would keep
+  # executing a file that has since rotted or been swapped on that volume, and
+  # would ignore a YOUTUBE_PLUGIN_SHA256 that changed after the first fetch.
+  # Fail closed: a mismatched hash leaves no jar behind rather than running
+  # an unverified one (the next start then fetches a fresh copy).
+  if ! echo "${YOUTUBE_PLUGIN_SHA256}  ${JAR}" | sha256sum -c -; then
+    rm -f "$JAR"
+    echo "youtube-plugin checksum mismatch; refusing to start" >&2
+    exit 1
   fi
   # Drop any OTHER youtube-plugin jars so a version change doesn't leave two
   # on the classpath — Lavalink would load both.
@@ -59,16 +63,36 @@ if [ -n "${YOUTUBE_PLUGIN_SHA256:-}" ]; then
   sed -i '/# PLUGIN_BLOCK_START/,/# PLUGIN_BLOCK_END/d' /tmp/application.yml
 fi
 # Cold-start poToken injection: the token-minter persists tokens.env to the
-# shared volume; values are charset-guarded at write time (ADR-0004: websafe
-# base64 / URL-encoded, may contain '%'), so the '|'-delimited sed is safe.
+# shared volume. The file is PARSED, never sourced — sourcing it would run
+# whatever that volume holds as shell, as this container's user, on every
+# boot. Values are charset-guarded twice: by the minter at write time and
+# again here before use (ADR-0004: websafe base64 / URL-encoded, may contain
+# '%'), so the '|'-delimited sed below and the double-quoted YAML scalar it
+# fills are safe.
 TOKENS_FILE="${TOKENS_FILE:-/data/tokens/tokens.env}"
 inject_tokens=false
+POT_TOKEN=""
+POT_VISITOR_DATA=""
+# usable_token NAME VALUE — true only for a non-empty VALUE made solely of
+# [A-Za-z0-9=%._~+/-]. Logs the key NAME on refusal, never the value.
+usable_token() {
+  case "$2" in
+    "")
+      return 1 ;;
+    *[!A-Za-z0-9=%._~+/-]*)
+      echo "tokens.env: $1 contains unexpected characters; ignoring the tokens file" >&2
+      return 1 ;;
+  esac
+  return 0
+}
 # Freshness gate: an expired poToken (provider down >TTL, then a restart) is
 # worse than none — token-bearing requests get hard-rejected, tokenless just
 # degrades. 330 min matches the minter's 5.5h refresh cadence.
 if [ -f "$TOKENS_FILE" ] && [ -n "$(find "$TOKENS_FILE" -mmin -330 2>/dev/null)" ]; then
-  . "$TOKENS_FILE"
-  if [ -n "${POT_TOKEN:-}" ] && [ -n "${POT_VISITOR_DATA:-}" ]; then
+  # `|| true`: an unreadable file means "no tokens", not a dead audio core.
+  POT_TOKEN=$(sed -n 's/^POT_TOKEN=//p' "$TOKENS_FILE") || true
+  POT_VISITOR_DATA=$(sed -n 's/^POT_VISITOR_DATA=//p' "$TOKENS_FILE") || true
+  if usable_token POT_TOKEN "$POT_TOKEN" && usable_token POT_VISITOR_DATA "$POT_VISITOR_DATA"; then
     inject_tokens=true
   fi
 fi

@@ -11,6 +11,8 @@ import {
 import { useNavigate } from "react-router-dom";
 import { db } from "../firebase";
 import { useAuth } from "../hooks/useAuth";
+import { safeArtworkUrl } from "../lib/artwork";
+import { isSnowflake } from "../lib/limits";
 import type { KnownVoiceChannel, ServerState } from "../types";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -70,29 +72,39 @@ export function MyServers() {
             ...owned.docs.filter((d) => d.data().isActive !== false).map((d) => d.id),
             ...pinned.docs.map((d) => d.id),
           ]),
-        ];
+          // A record whose id is not a Discord server id (a mistyped legacy
+          // activation) can never have a server document, and the rules
+          // refuse the read outright — skip it rather than show a dead card.
+        ].filter(isSnowflake);
         if (cancelled) return;
         setServers(ids.map((id) => ({ id, state: null })));
         for (const id of ids) {
           unsubs.push(
-            onSnapshot(doc(db, "servers", id), (snap) => {
-              const state = (snap.data() as Partial<ServerState>) ?? null;
-              setServers((prev) =>
-                prev.map((s) => (s.id === id ? { ...s, state } : s))
-              );
-              // A pending summon on this server resolved into a session code.
-              if (pendingRef.current?.startsWith(`${id}:`)) {
-                const channelId = pendingRef.current.split(":")[1];
-                if (state?.sessionCode && state?.voiceChannelId === channelId) {
-                  pendingRef.current = null;
-                  navigate(`/dashboard/${state.sessionCode}`);
-                } else if (state && state.summonRequest == null && !state.sessionCode) {
-                  pendingRef.current = null;
-                  setPending(null);
-                  setError("The bot couldn't join that channel — is it still there?");
+            onSnapshot(
+              doc(db, "servers", id),
+              (snap) => {
+                const state = (snap.data() as Partial<ServerState>) ?? null;
+                setServers((prev) =>
+                  prev.map((s) => (s.id === id ? { ...s, state } : s))
+                );
+                // A pending summon on this server resolved into a session code.
+                if (pendingRef.current?.startsWith(`${id}:`)) {
+                  const channelId = pendingRef.current.split(":")[1];
+                  if (state?.sessionCode && state?.voiceChannelId === channelId) {
+                    pendingRef.current = null;
+                    navigate(`/dashboard/${state.sessionCode}`);
+                  } else if (state && state.summonRequest == null && !state.sessionCode) {
+                    pendingRef.current = null;
+                    setPending(null);
+                    setError("The bot couldn't join that channel — is it still there?");
+                  }
                 }
-              }
-            })
+              },
+              // One server failing to load (refused, or offline) must not take
+              // the page down or log an uncaught listener error: its card just
+              // stays in the "no active session" state.
+              () => {}
+            )
           );
         }
       } catch {
@@ -226,12 +238,13 @@ export function MyServers() {
           servers.map(({ id, state }) => {
             const live = !!state?.sessionCode;
             const channels = state?.knownVoiceChannels ?? [];
+            const icon = safeArtworkUrl(state?.serverIcon);
             return (
               <Card key={id}>
                 <CardContent className="space-y-3 p-4">
                   <div className="flex items-center gap-3">
-                    {state?.serverIcon ? (
-                      <img src={state.serverIcon} alt="" className="h-10 w-10 rounded-full" />
+                    {icon ? (
+                      <img src={icon} alt="" className="h-10 w-10 rounded-full" />
                     ) : (
                       <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
                         <Music className="h-5 w-5 text-primary" />

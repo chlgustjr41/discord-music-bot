@@ -9,12 +9,16 @@ callback is an async function invoked from the WS read loop.
 
 import asyncio
 import logging
+import os
+import time
+import traceback
 from collections.abc import Awaitable, Callable
 from urllib.parse import quote
 
 import aiohttp
 
-from jacky.audio.models import LoadResult
+from jacky.audio.models import LoadResult, is_url, supported_url
+from jacky.audio.stats import AudioStats
 
 log = logging.getLogger("jacky.node")
 
@@ -47,6 +51,7 @@ class LavalinkNode:
         self.connected = False
         self._task: asyncio.Task | None = None
         self._first_ready = asyncio.Event()
+        self._stats: AudioStats | None = None
 
         # Event callbacks (async). Set by the player service before start().
         self.on_ready: Callable[[bool], Awaitable[None]] | None = None
@@ -55,7 +60,14 @@ class LavalinkNode:
         self.on_track_end: Callable[[int, str], Awaitable[None]] | None = None
         self.on_track_exception: Callable[[int, dict], Awaitable[None]] | None = None
         self.on_voice_ws_closed: Callable[[int, dict], Awaitable[None]] | None = None
+        self.on_stats: Callable[[AudioStats], Awaitable[None]] | None = None
         self.on_disconnected: Callable[[], Awaitable[None]] | None = None
+
+    @property
+    def stats(self) -> AudioStats | None:
+        """The most recent `stats` op (about one a minute), or None before
+        the first. Check its received_at before trusting it as current."""
+        return self._stats
 
     # ── lifecycle ────────────────────────────────────────────────────────
 
@@ -127,12 +139,60 @@ class LavalinkNode:
                 await self.on_ready(resumed)
         elif op == "playerUpdate":
             if self.on_player_update:
-                await self.on_player_update(
-                    int(payload["guildId"]), payload.get("state", {})
+                await self._contained(
+                    "playerUpdate",
+                    lambda: self.on_player_update(
+                        int(payload["guildId"]), payload.get("state", {})
+                    ),
                 )
         elif op == "event":
-            await self._dispatch_event(payload)
-        # op == "stats" is intentionally ignored.
+            await self._contained(
+                str(payload.get("type", "event")),
+                lambda: self._dispatch_event(payload),
+            )
+        elif op == "stats":
+            await self._dispatch_stats(payload)
+
+    async def _contained(self, label: str, call: Callable[[], Awaitable[None]]) -> None:
+        """Run one consumer callback without letting it take the socket down.
+
+        The handlers behind these callbacks read documents that web clients
+        can write. An exception escaping _dispatch ends _connect_and_read,
+        which closes the WebSocket for EVERY guild until the reconnect — so
+        one malformed document would interrupt everyone's playback. The
+        failure is confined to the event that caused it instead.
+
+        Logged as exception type plus code location only: the message can
+        carry whatever the client stored (a title, a link).
+        """
+        try:
+            await call()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — see above
+            frames = traceback.extract_tb(exc.__traceback__)
+            where = (
+                f"{os.path.basename(frames[-1].filename)}:{frames[-1].lineno} "
+                f"in {frames[-1].name}"
+                if frames else "unknown location"
+            )
+            log.warning(
+                "node %s %s handler failed: %s at %s",
+                self.identifier, label, type(exc).__name__, where,
+            )
+
+    async def _dispatch_stats(self, payload: dict) -> None:
+        # Unlike the other ops, contained: an exception escaping _dispatch
+        # drops the WebSocket that track events arrive on, and a telemetry
+        # frame (or a consumer of one) must never be able to cost playback.
+        try:
+            self._stats = AudioStats.from_payload(payload, received_at=time.monotonic())
+            if self.on_stats:
+                await self.on_stats(self._stats)
+        except Exception as exc:  # noqa: BLE001 — see above
+            log.warning(
+                "node %s stats handling failed: %s", self.identifier, type(exc).__name__
+            )
 
     async def _dispatch_event(self, payload: dict) -> None:
         guild_id = int(payload["guildId"])
@@ -168,6 +228,14 @@ class LavalinkNode:
             return body
 
     async def load_tracks(self, identifier: str) -> LoadResult:
+        # Second line of the link allowlist (audio/models.py). Callers are
+        # expected to have gone through to_identifier, but this is the only
+        # door to /loadtracks, so it does not rely on every future caller
+        # remembering: a link Lavalink must not fetch never leaves here.
+        if is_url(identifier):
+            identifier = supported_url(identifier)
+            if identifier is None:
+                return LoadResult(kind="unsupported")
         body = await self._request(
             "GET", f"/loadtracks?identifier={quote(identifier, safe='')}"
         )

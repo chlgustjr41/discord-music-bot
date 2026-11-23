@@ -25,6 +25,21 @@ async def serve():
 
 
 @pytest.fixture
+def base_env(monkeypatch):
+    """Required guardian env vars (obviously-fake values), no Docker overrides.
+
+    Returns the monkeypatch so a test can layer its own `setenv` on top.
+    """
+    monkeypatch.setenv("LAVALINK_HOST", "lavalink")
+    monkeypatch.setenv("LAVALINK_PORT", "2333")
+    monkeypatch.setenv("LAVALINK_PASSWORD", "pw")
+    monkeypatch.setenv("ALERT_WEBHOOK_URL", "http://webhook.invalid/hook")
+    monkeypatch.delenv("DOCKER_API_URL", raising=False)
+    monkeypatch.delenv("DOCKER_SOCKET", raising=False)
+    return monkeypatch
+
+
+@pytest.fixture
 async def http_session():
     session = aiohttp.ClientSession()
     yield session

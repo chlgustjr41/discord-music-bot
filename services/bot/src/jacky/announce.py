@@ -26,7 +26,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from jacky.commands.embeds import now_playing_embed, queue_embed, session_embed
-from jacky.commands.status import build_status_embed, fetch_guardian_status
+from jacky.commands.status import (
+    audio_inputs,
+    build_status_embed,
+    fetch_guardian_status,
+)
 
 # How long "just posted" lasts. One product decision AND — since the windows
 # merged — one piece of state, so this is the single definition.
@@ -111,6 +115,7 @@ class Announcer:
                 state=state,
                 position=self.service.positions.get(guild_id) or {},
                 guardian=await fetch_guardian_status(self.bot),
+                **audio_inputs(self.service),
             )
             detail = "Status posted"
         else:

@@ -5,6 +5,10 @@ on:
   push:
     branches: [master]
 
+# Least privilege for the workflow token: every job only reads the repo.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest

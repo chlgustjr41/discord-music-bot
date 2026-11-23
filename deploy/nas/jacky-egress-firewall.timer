@@ -1,0 +1,14 @@
+# Re-applies the egress firewall shortly after boot and every 10 minutes.
+# The script is idempotent; the timer exists because a Docker restart, a NAS
+# firmware update or another firewall tool can rewrite iptables behind our
+# back, and a silently missing rule is worse than a redundant refresh.
+[Unit]
+Description=Jacky Music: refresh the container egress firewall
+
+[Timer]
+OnBootSec=90s
+OnUnitActiveSec=10min
+Unit=jacky-egress-firewall.service
+
+[Install]
+WantedBy=timers.target

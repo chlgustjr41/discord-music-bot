@@ -6,6 +6,15 @@
       "**/.*",
       "**/node_modules/**"
     ],
+    "headers": [
+      {
+        "source": "**",
+        "headers": [
+          { "key": "X-Content-Type-Options", "value": "nosniff" },
+          { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
+        ]
+      }
+    ],
     "rewrites": [
       {
         "source": "**",
@@ -13,12 +22,18 @@
       }
     ]
   },
-  "functions": {
-    "source": "functions",
-    "runtime": "nodejs20"
-  },
   "firestore": {
     "rules": "firestore.rules",
     "database": "discord-music-bot"
+  },
+  "emulators": {
+    "firestore": {
+      "host": "127.0.0.1",
+      "port": 8085
+    },
+    "ui": {
+      "enabled": false
+    },
+    "singleProjectMode": true
   }
 }

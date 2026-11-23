@@ -22,7 +22,7 @@ what it says. All commands run on the VM from the repo root.
 | F4 | Lavalink sick/dead | Canary timeout / Docker health | Guardian restarts container; bot reconnects + restores from Firestore | No |
 | F5 | Bot hung (gateway zombie) | Guardian's bot health ping | Guardian restarts bot container | No |
 | F6 | Silent playback (position frozen) | Position comparison across probes | Restart playback via bot; escalate to container restart on repeat | No |
-| F7 | VM down / Docker dead | External uptime monitor (free tier) pinging guardian's heartbeat URL | External email/DM | Yes |
+| F7 | Host down / Docker dead | External heartbeat monitor that alerts when pings stop | External email/DM | Yes |
 | F8 | Firestore unreachable | Bot + guardian error rates | Continue from in-memory cache; queue writes, flush on recovery; alert if sustained | No |
 | F9 | Alert channel broken | Weekly guardian heartbeat message | — | Missing heartbeat noticed by operator |
 
@@ -100,8 +100,8 @@ reconnects with backoff and re-issues "play at position X" from Firestore
 2. Verify: `make ps` shows healthy; playback resumes
 
 **If it crash-loops:** check memory pressure (`docker stats`) — Lavalink's
-budget is ~800MB RSS on the 2GB VM — and inspect `make logs s=lavalink`
-for a config error before restarting again.
+container limit is 1 GB (512 MB heap plus native memory) — and inspect
+`make logs s=lavalink` for a config error before restarting again.
 
 ### F4a — boot-loops on the plugin download
 
@@ -109,10 +109,10 @@ for a config error before restarting again.
 `Downloading …youtube-plugin-….jar`, and restarts every ~3 min.
 `docker inspect` shows `ExitCode=0`, `OOMKilled=false` — not a crash.
 
-**Confirm it's upstream, not us:** from the VM, `curl` GitHub (should be
+**Confirm it's upstream, not us:** from the host, `curl` GitHub (should be
 200) and `https://maven.lavalink.dev/` (times out). Then curl maven **from
 your dev machine too** — if it fails there as well, the Maven repo is down
-globally and nothing on the VM will fix it. This happened on 2026-08-09.
+globally and nothing on the host will fix it. This happened on 2026-08-09.
 
 **Fix:** switch to local-jar mode, which sources the jar from GitHub
 releases instead. In `deploy/.env`, set `YOUTUBE_PLUGIN_VERSION` to a
@@ -127,11 +127,19 @@ destination`:** the plugins volume is root-owned and Lavalink runs as uid
 (The Dockerfile now creates the dir owned correctly, so fresh volumes are
 fine — this only bites volumes created before that change.)
 
+**The same class of failure for the token-minter:** it runs as uid 10001
+and must own the `tokens` volume. A volume created by an older, root-run
+release makes it exit with a permission error on `tokens.env.tmp`. Fix it
+once with
+`docker run --rm -v jacky-music_tokens:/t alpine chown -R 10001:10001 /t`,
+or remove the volume and let it be recreated (the token is re-minted on
+start).
+
 **Why it can happen at all:** `docker compose up -d <service>` also brings
 up that service's dependencies and recreates them when their config hash
 changed. So deploying only the bot can recreate Lavalink. Since 2026-08-09
 `/opt/Lavalink/plugins` is a named volume, so a recreate no longer needs to
-re-download — but a first-ever boot on a new VM still does.
+re-download — but a first-ever boot on a new host still does.
 
 ## F5 — Bot hung (gateway zombie)
 
@@ -160,21 +168,24 @@ to a container restart on repeat. Manually:
 2. If still silent: `make restart s=lavalink`, then replay — the bot re-issues "play at position X" from Firestore
 3. Verify: position advances between the next two guardian probes
 
-## F7 — VM down / Docker dead
+## F7 — Host down / Docker dead
 
-**Alert looks like:** an email/DM from the **external uptime monitor** (not
-the guardian — the VM cannot report its own death): "guardian heartbeat URL
-unreachable".
+**Alert looks like:** an email/DM from the **external heartbeat monitor**
+(not the guardian — the host cannot report its own death, and on a home
+connection that includes power cuts and ISP outages): "no ping received".
 
-**Confirm:**
-`gcloud compute ssh personal-project-machine --project=personal-server-492701`
-— if SSH fails, check the instance in the GCP console.
+**Confirm:** the bot shows offline in Discord. Try the host's admin page or
+SSH from the LAN. If neither answers, it is power, the device, or the
+network between you and it; if they answer but the internet does not, it is
+the ISP or the router.
 
 **Fix:**
-1. Start (or reset) the instance from the GCP console if it is stopped/wedged
-2. SSH in; if Docker died but the VM is up: `sudo systemctl restart docker`
+1. Restore power / network; the host is set to power on by itself
+2. If the host is up but Docker died: `sudo systemctl restart docker`
 3. From the repo root: `make up` — every service is crash-only, so a cold start converges on its own
-4. Verify: `make ps` all healthy; uptime monitor reports the heartbeat URL reachable
+4. On a home server, confirm the container firewall came back:
+   `sudo sh deploy/nas/egress-firewall.sh status` (see NAS-SETUP.md section 4)
+5. Verify: `make ps` all healthy; the heartbeat monitor reports pings again
 
 ## F8 — Firestore unreachable
 

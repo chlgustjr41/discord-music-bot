@@ -17,10 +17,12 @@ import time
 from datetime import timezone
 from typing import Any
 
-from jacky.audio.models import LoadResult, to_identifier, to_track_data
+from jacky.audio.models import LoadResult, is_url, to_identifier, to_track_data
 from jacky.audio.node import NodeError
 from jacky.audio.provider import NodeProvider
+from jacky.audio.stats import AudioStats, classify_frame_loss
 from jacky.state.repository import ServerRepository, generate_session_code
+from jacky.state.untrusted import as_discord_id, as_volume, shape
 
 log = logging.getLogger("jacky.player")
 
@@ -54,6 +56,7 @@ class PlayerService:
         self.positions: dict[int, dict] = {}  # guild -> last playerUpdate state (cache)
         self.playing: dict[int, bool] = {}    # bot's own belief, fed to /health for F6
         self.track_ids: dict[int, str] = {}   # guild -> playing track id (F6 track-awareness)
+        self.audio_stats: AudioStats | None = None  # latest Lavalink frame stats (cache)
         self.idle_tasks: dict[int, asyncio.Task] = {}
         self.empty_channel_tasks: dict[int, asyncio.Task] = {}
         self._stopping: set[int] = set()
@@ -83,22 +86,66 @@ class PlayerService:
         self._failures.pop(guild_id, None)
 
     async def resolve(self, query: str) -> LoadResult:
+        """Search or load a user-supplied query. A link outside the allowlist
+        (audio/models.py) comes back as an `unsupported` result with no
+        tracks, and the node is never asked — so every caller that handles
+        "no results" already handles a refused link without raising."""
+        identifier = to_identifier(query)
+        if identifier is None:
+            return LoadResult(kind="unsupported")
         node = self.provider.node_for(0)
-        return await node.load_tracks(to_identifier(query))
+        return await node.load_tracks(identifier)
+
+    @staticmethod
+    def _identifiers_for(td: dict) -> list[str]:
+        """What may be asked of Lavalink to re-resolve stored track data, in
+        order: the stored link, then a title+artist text search.
+
+        `td` comes from the server document or a saved playlist, both
+        writable by web clients, so its `url` is no more trusted than a typed
+        one. When that link is refused the title stands in for it ONLY as
+        plain search text — a title that is itself a link is not followed,
+        whatever it points at — and a track with nothing left to ask for is
+        unresolvable (an empty list).
+        """
+        def text(key: str) -> str:
+            value = td.get(key)
+            return value if isinstance(value, str) else ""
+
+        url, title = text("url"), text("title")
+        if url and to_identifier(url) is None:
+            if is_url(title):
+                return []
+            url = ""
+        primary = url or title
+        fallback = f"{title} {text('artist')}".strip()
+        candidates = (
+            to_identifier(primary) if primary else None,
+            to_identifier(fallback) if fallback else None,
+        )
+        return [identifier for identifier in candidates if identifier is not None]
 
     async def _resolve_track_data(self, guild_id: int, td: dict) -> dict | None:
         """URL first, then title+artist text search; 3 attempts with backoff."""
+        identifiers = self._identifiers_for(td)
+        if not identifiers:
+            # No backoff: retrying cannot make a refused link loadable, and
+            # the sleeps would only stall the queue behind it. Returning None
+            # is the ordinary "could not find it" path the callers handle.
+            log.warning(
+                "track in guild %s has no link or title that may be loaded; "
+                "treating it as unresolvable", guild_id,
+            )
+            return None
         node = self.provider.node_for(guild_id)
         for attempt in range(SEARCH_ATTEMPTS):
             if attempt:
                 await asyncio.sleep(self.search_retry_delay)
             try:
-                result = await node.load_tracks(to_identifier(td.get("url") or td["title"]))
-                if not result.tracks:
-                    query = f"{td['title']} {td.get('artist', '')}".strip()
-                    result = await node.load_tracks(to_identifier(query))
-                if result.tracks:
-                    return result.first
+                for identifier in identifiers:
+                    result = await node.load_tracks(identifier)
+                    if result.tracks:
+                        return result.first
             except Exception as exc:  # noqa: BLE001 — retried, then counted by caller
                 log.warning(
                     "resolve attempt %d/%d for '%s' in guild %s: %s",
@@ -114,7 +161,10 @@ class PlayerService:
         payload: dict = {
             "track": {"encoded": encoded},
             "position": position_ms,
-            "volume": int(state.get("volume", 80)),
+            # `volume` sits in a client-writable document. This runs for
+            # EVERY play attempt, so one junk value raising here would stop
+            # all playback in the guild until someone rewrote the field.
+            "volume": as_volume(state.get("volume")),
             "paused": False,
         }
         try:
@@ -177,9 +227,17 @@ class PlayerService:
                 log.warning("summon ignored: server %s not activated", sid)
                 return
             guild = self.bot.get_guild(guild_id)
-            channel = guild.get_channel(int(channel_id)) if guild else None
+            # The id was written by a web client. The watcher validates it,
+            # but this is where it is used, so it is not trusted here either.
+            wanted = as_discord_id(channel_id)
+            channel = guild.get_channel(wanted) if guild and wanted is not None else None
             if channel is None or not hasattr(channel, "connect"):
-                log.warning("summon ignored: channel %s not found in %s", channel_id, sid)
+                # A validated id is only digits and safe to print; anything
+                # else is described, not quoted.
+                log.warning(
+                    "summon ignored: channel %s not found in %s",
+                    wanted if wanted is not None else f"({shape(channel_id)})", sid,
+                )
                 return
             if self._voice(guild_id):
                 log.info("summon ignored: session already active in %s", sid)
@@ -278,9 +336,10 @@ class PlayerService:
             return False
         sid = str(guild_id)
         state = await self.repo.get_state(sid) or {}
-        channel_id = state.get("voiceChannelId")
+        # Client-writable: a junk id is "no voice channel", not an exception.
+        channel_id = as_discord_id(state.get("voiceChannelId"))
         guild = self.bot.get_guild(guild_id)
-        channel = guild.get_channel(int(channel_id)) if (guild and channel_id) else None
+        channel = guild.get_channel(channel_id) if guild and channel_id is not None else None
         if channel is None:
             log.warning("reset for guild %s ignored: no voice channel", guild_id)
             return False
@@ -404,6 +463,17 @@ class PlayerService:
             return
 
         td = await self.repo.pop_next_track(sid)
+        # Queue items are written by web clients, and the rules can cap the
+        # list's length but cannot look inside its items. Anything that is
+        # not a non-empty track dict is discarded here: a falsy one must not
+        # read as "queue is empty" while real tracks wait behind it, and a
+        # truthy one must not raise inside a Lavalink event handler. Each
+        # pass removes one item, so this ends with the queue.
+        while not (isinstance(td, dict) and td):
+            if not await self.repo.get_queue(sid):
+                td = None
+                break
+            td = await self.repo.pop_next_track(sid)
         if not td:
             await self.repo.set_current_track(sid, None)
             await self.repo.update_state(sid, {"isPlaying": False})
@@ -523,6 +593,23 @@ class PlayerService:
         self.positions[guild_id] = state
         await self._reconcile_if_wedged(guild_id, state)
 
+    async def on_stats(self, stats: AudioStats) -> None:
+        """Keep the latest frame-statistics sample for /health and j!status,
+        and say so once when it shows real loss.
+
+        The sample is node-wide, so there is nothing per-guild to name — and
+        nothing here may: counts and the verdict only, never a guild or a
+        track. No action is taken; the guardian owns detection and response.
+        """
+        self.audio_stats = stats
+        loss = classify_frame_loss(stats)
+        if loss:
+            log.warning(
+                "audio frame loss %.1f%% (%s): sent=%d nulled=%d deficit=%d playing=%d",
+                loss.ratio * 100, loss.label,
+                stats.sent, stats.nulled, stats.deficit, stats.playing_players,
+            )
+
     async def _reconcile_if_wedged(self, guild_id: int, position_state: dict) -> None:
         """Self-heal the contradictory doc state `isPlaying && !currentTrack`.
 
@@ -625,7 +712,10 @@ class PlayerService:
                     dt = datetime.datetime.fromisoformat(started_at)
                     elapsed = (datetime.datetime.now(timezone.utc) - dt).total_seconds()
                     position_ms = int(max(0.0, elapsed) * 1000)
-                except ValueError:
+                # TypeError: startedAt is client-writable, so it may not be a
+                # string at all — or may parse to a NAIVE time, which cannot
+                # be subtracted from an aware one. Either way: from the start.
+                except (TypeError, ValueError):
                     pass
         ok = await self._issue_play(guild_id, track["encoded"], position_ms=position_ms)
         if ok and paused:
@@ -657,10 +747,22 @@ class PlayerService:
     async def _converge_server(self, sid: str) -> None:
         from jacky.audio.voice import LavalinkVoiceClient
 
-        guild_id = int(sid)
+        # `sid` is a document id from the servers collection, where anyone
+        # can create a document under any name; `voiceChannelId` is a field
+        # anyone can write. Neither may be converted on trust.
+        guild_id = as_discord_id(sid)
+        if guild_id is None:
+            log.warning(
+                "convergence: skipping a server document whose id is not a "
+                "guild id (%s)", shape(sid),
+            )
+            return
         state = await self.repo.get_state(sid) or {}
         guild = self.bot.get_guild(guild_id)
-        channel = guild.get_channel(int(state["voiceChannelId"])) if guild else None
+        channel_id = as_discord_id(state.get("voiceChannelId"))
+        # A junk channel id falls through to the "stale session" branch below,
+        # exactly like a channel that no longer exists.
+        channel = guild.get_channel(channel_id) if guild and channel_id is not None else None
         humans = [m for m in channel.members if not m.bot] if channel else []
         if not channel or not humans:
             log.info("convergence: session for %s is stale (channel gone/empty) — clearing", sid)

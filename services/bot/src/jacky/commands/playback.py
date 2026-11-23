@@ -7,7 +7,7 @@ import logging
 import discord
 from discord.ext import commands
 
-from jacky.audio.models import is_url, to_track_data
+from jacky.audio.models import UNSUPPORTED_LINK_MESSAGE, is_url, to_track_data
 from jacky.audio.voice import LavalinkVoiceClient
 from jacky.commands.embeds import (
     error_embed,
@@ -29,8 +29,7 @@ class Playback(commands.Cog):
 
     async def _log_cmd(self, ctx: commands.Context, args: str = "") -> None:
         await self.repo.log_command(
-            str(ctx.guild.id), ctx.command.name, args,
-            ctx.author.display_name, str(ctx.author.id),
+            str(ctx.guild.id), ctx.command.name, args, ctx.author.display_name,
         )
 
     async def ensure_voice(self, ctx: commands.Context) -> LavalinkVoiceClient | None:
@@ -104,7 +103,7 @@ class Playback(commands.Cog):
 
     @commands.command(name="play", aliases=["p"], brief="Play a song or add it to the queue")
     async def play(self, ctx: commands.Context, *, query: str) -> None:
-        """Play by name, URL, or playlist link (YouTube/SoundCloud/Bandcamp)."""
+        """Play by name, URL, or playlist link (YouTube/SoundCloud)."""
         await self._log_cmd(ctx, query)
         if not await self.ensure_voice(ctx):
             return
@@ -119,6 +118,11 @@ class Playback(commands.Cog):
         except Exception as exc:  # noqa: BLE001 — surfaced to the user
             log.error("search failed for '%s': %s", query, exc)
             await ctx.send(embed=error_embed(f"Search failed: {exc}"))
+            return
+        if result.unsupported:
+            # A link outside the allowlist (audio/models.py): Lavalink was
+            # never asked. Not "No results" — retrying cannot help.
+            await ctx.send(embed=error_embed(UNSUPPORTED_LINK_MESSAGE))
             return
         if not result.tracks:
             await ctx.send(embed=error_embed(f"No results found for: {query}"))

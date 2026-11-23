@@ -7,6 +7,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { db } from "../firebase";
+import { safeArtworkUrl } from "../lib/artwork";
 import { getIdentityName } from "../lib/identity";
 import type { Track, CurrentTrack, SearchResult } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -176,7 +177,9 @@ export function PlaylistManager({
                         {isOpen && (
                           <ResizableList defaultHeight={200} minHeight={80} maxHeight={400}>
                             <ul className="ml-6 space-y-0.5">
-                              {p.tracks.map((t, i) => (
+                              {p.tracks.map((t, i) => {
+                                const artwork = safeArtworkUrl(t.thumbnail);
+                                return (
                                 <li
                                   key={`${t.url}-${i}`}
                                   className="flex items-center gap-2 rounded p-1.5"
@@ -184,9 +187,9 @@ export function PlaylistManager({
                                   <span className="w-5 text-right text-xs text-muted-foreground/60">
                                     {i + 1}.
                                   </span>
-                                  {t.thumbnail ? (
+                                  {artwork ? (
                                     <img
-                                      src={t.thumbnail}
+                                      src={artwork}
                                       alt=""
                                       className="h-7 w-7 rounded object-cover shrink-0"
                                     />
@@ -203,7 +206,8 @@ export function PlaylistManager({
                                     </p>
                                   </div>
                                 </li>
-                              ))}
+                                );
+                              })}
                             </ul>
                           </ResizableList>
                         )}

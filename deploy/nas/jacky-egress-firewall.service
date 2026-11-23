@@ -1,0 +1,17 @@
+# Applies deploy/nas/egress-firewall.sh after Docker starts.
+# Install: see docs/operations/NAS-SETUP.md (copy to /etc/systemd/system/,
+# then replace __REPO_DIR__ with the absolute path of the repository clone).
+[Unit]
+Description=Jacky Music: keep containers off the home network
+# The script needs the DOCKER-USER chain, which the Docker daemon creates.
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+# Optional settings such as JACKY_DNS_ALLOW (see the script's header).
+EnvironmentFile=-/etc/default/jacky-egress-firewall
+ExecStart=/bin/sh __REPO_DIR__/deploy/nas/egress-firewall.sh apply
+
+[Install]
+WantedBy=multi-user.target

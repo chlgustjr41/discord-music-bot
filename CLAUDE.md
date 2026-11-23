@@ -7,12 +7,12 @@
 - `services/guardian/` — supervisor: probe/classify/act/alert (playbooks F1–F9)
 - `services/token-minter/` — poToken refresh via pot-provider sidecar (ADR-0004)
 - `services/lavalink/` — templated Lavalink config
-- `deploy/` — docker-compose.yml + .env contract
+- `deploy/` — docker-compose.yml + .env contract; `deploy/nas/` — host firewall for the home NAS (docs/operations/NAS-SETUP.md)
 - `streamdeck-plugin/` — Stream Deck plugin (TypeScript, @elgato/streamdeck): j! session control keys via the bot's /control API (docs/streamdeck-control.md)
 - `creative-console-plugin/` — Logitech MX Creative Console plugin (C#, net8.0, Logi Actions SDK): same j! session controls via the bot's /control API (docs/creative-console-control.md)
 - `docs/` — architecture, ADRs, runbook, deployment, roadmap
-- `bot/` — LEGACY v1 bot (replaced in production 2026-07-04; rollback-only during soak week, then archived — see docs/STATUS.md)
-- `frontend/`, `functions/` — unchanged (web app + search proxy)
+- `bot/` — LEGACY v1 bot (replaced in production 2026-07-04). Reference only: its compose file and deploy scripts are removed — do not run it
+- `frontend/` — web dashboard (React, Firebase Hosting). `firestore.rules` governs what it may read and write; `firestore-tests/` holds the emulator tests for those rules
 
 ### Commands (v2)
 - `make help` — list everything
@@ -27,14 +27,6 @@ npm install
 npm run dev        # Vite dev server (port 5173)
 npm run build      # Production build
 npm run preview    # Preview production build
-```
-
-#### Cloud Functions
-```bash
-cd functions
-npm install
-npm run build
-firebase deploy --only functions
 ```
 
 ### Architecture

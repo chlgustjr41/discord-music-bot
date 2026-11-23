@@ -9,8 +9,8 @@ import aiohttp
 
 log = logging.getLogger("minter")
 
-# Values are injected into a shell-sourced env file and sed'd into YAML at
-# lavalink cold start; the charset must exclude sed replacement/delimiter
+# Values are written to an env file that the Lavalink entrypoint parses and
+# sed's into YAML at cold start; the charset must exclude sed replacement/delimiter
 # specials (\, &, |, /) and shell metacharacters. Per ADR-0004, poToken is
 # websafe base64 and contentBinding is URL-encoded (unreserved chars + '%',
 # e.g. ...%3D%3D), so neither legitimately contains '/' or '+'.

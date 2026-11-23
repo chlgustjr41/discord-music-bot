@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../firebase";
+import { safeArtworkUrl } from "../lib/artwork";
 import type { CurrentTrack } from "../types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Slider } from "@/components/ui/slider";
@@ -98,13 +99,15 @@ export function NowPlaying({ track, isPaused, serverId }: Props) {
 
   // Show seek position while dragging, otherwise show elapsed
   const displayTime = seekValue !== null ? seekValue : elapsed;
+  // Only ever load artwork from a known host — see lib/artwork.ts.
+  const artwork = safeArtworkUrl(track.thumbnail);
 
   return (
     <Card>
       <CardContent className="flex items-center gap-4 p-4">
-        {track.thumbnail ? (
+        {artwork ? (
           <img
-            src={track.thumbnail}
+            src={artwork}
             alt=""
             className="h-20 w-20 rounded-lg object-cover"
           />

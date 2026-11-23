@@ -12,9 +12,9 @@ from tests.conftest import FakeRepo
 
 async def test_fake_repo_records_source_and_transcript():
     repo = FakeRepo()
-    await repo.log_command("1", "play", "x", "Me", "42")
+    await repo.log_command("1", "play", "x", "Me")
     await repo.log_command(
-        "1", "play", "x", "Me", "42", source="voice", transcript="play x"
+        "1", "play", "x", "Me", source="voice", transcript="play x"
     )
     assert repo.command_log[0][4:] == ("discord", "")
     assert repo.command_log[1][4:] == ("voice", "play x")
@@ -33,9 +33,15 @@ class FakeDoc:
         return dict(self._data)
 
     def update(self, patch):
-        # firestore.Increment is an opaque sentinel under a fake db; keep the
-        # old value rather than pretending to increment.
-        self._data.update({k: v for k, v in patch.items() if k != "callCount"})
+        from firebase_admin import firestore
+
+        for key, value in patch.items():
+            if value is firestore.DELETE_FIELD:
+                self._data.pop(key, None)
+            # firestore.Increment is an opaque sentinel under a fake db; keep
+            # the old value rather than pretending to increment.
+            elif key != "callCount":
+                self._data[key] = value
 
 
 class FakeColl:
@@ -97,18 +103,76 @@ async def test_voice_and_discord_rows_stay_separate():
     coll.add({"command": "play", "args": "x", "callCount": 1})
     repo = ServerRepository(FakeDb(coll))
 
-    await repo.log_command("1", "play", "x", "Me", "42")             # discord
+    await repo.log_command("1", "play", "x", "Me")                   # discord
     assert len(coll.docs) == 1, "legacy row must still dedupe"
     assert coll.docs[0].to_dict()["source"] == "discord", "backfilled"
 
     await repo.log_command(
-        "1", "play", "x", "Me", "42", source="voice", transcript="play x"
+        "1", "play", "x", "Me", source="voice", transcript="play x"
     )
     assert len(coll.docs) == 2, "voice must not merge into the discord row"
     assert [d.to_dict()["source"] for d in coll.docs] == ["discord", "voice"]
 
-    await repo.log_command("1", "play", "x", "Me", "42")             # discord again
+    await repo.log_command("1", "play", "x", "Me")                   # discord again
     assert len(coll.docs) == 2, "must increment the discord row, not add a third"
+
+
+# ── no Discord user id in client-readable rows ───────────────────────────
+# servers/{id}/commandHistory is readable by anyone holding a session code.
+# The display name is what the dashboard shows; the Discord snowflake next to
+# it was never read by anything, and identified the person across servers.
+
+
+async def test_a_new_history_row_carries_no_discord_user_id():
+    from jacky.state.repository import ServerRepository
+
+    coll = FakeColl()
+    repo = ServerRepository(FakeDb(coll))
+    await repo.log_command("1", "play", "x", "Me")
+    await repo.log_command("1", "skip", "", "Voice", source="voice", transcript="skip")
+
+    for doc in coll.docs:
+        row = doc.to_dict()
+        assert "userId" not in row
+        # The whole row, so a renamed id field cannot slip back in unnoticed.
+        assert set(row) == {
+            "command", "args", "user", "timestamp", "callCount", "source",
+            "transcript",
+        }
+    assert [d.to_dict()["user"] for d in coll.docs] == ["Me", "Voice"]
+
+
+async def test_repeating_a_command_scrubs_the_user_id_an_older_row_still_has():
+    """Rows written before this change keep their userId until something
+    removes it. A repeat of the command rewrites the row anyway, so that
+    write takes the old id out rather than leaving it beside fresh data."""
+    from jacky.state.repository import ServerRepository
+
+    coll = FakeColl()
+    coll.add({"command": "play", "args": "x", "user": "Me", "source": "discord",
+              "userId": "123456789012345678", "callCount": 3})
+    repo = ServerRepository(FakeDb(coll))
+
+    await repo.log_command("1", "play", "x", "Me")
+
+    [row] = [d.to_dict() for d in coll.docs]
+    assert "userId" not in row
+    assert row["user"] == "Me" and row["command"] == "play"
+
+
+def test_log_command_takes_no_user_id_and_the_fake_matches_it():
+    """With no parameter to pass it through, no caller can start writing an
+    id again by accident. The fake is held to the same signature so a caller
+    that drifts fails under test instead of only in production."""
+    import inspect
+
+    from jacky.state.repository import ServerRepository
+
+    real = list(inspect.signature(ServerRepository.log_command).parameters)
+    fake = list(inspect.signature(FakeRepo.log_command).parameters)
+    assert real == ["self", "server_id", "command", "args", "user", "source",
+                    "transcript"]
+    assert len(fake) == len(real) and fake[-2:] == real[-2:]
 
 
 # ── dispatcher ───────────────────────────────────────────────────────────
@@ -245,6 +309,18 @@ async def test_zero_delta_does_not_become_a_volume_step(
     await service.repo.update_state(sid, {"volume": 55})
     await dispatcher.dispatch_all(guild_id, [Action("volume", delta=0)])
     assert (await service.repo.get_state(sid))["volume"] == 55
+
+
+@pytest.mark.parametrize("junk", ["loud", {"level": 9}, [70], True])
+async def test_relative_volume_over_a_junk_stored_level_steps_from_the_default(
+    dispatcher, service, guild_id, sid, junk
+):
+    """`volume` is in a client-writable document; int() on it used to raise,
+    which dispatch_all reported as "volume failed" for every later press."""
+    await service.repo.update_state(sid, {"volume": junk})
+    [result] = await dispatcher.dispatch_all(guild_id, [Action("volume", delta=-10)])
+    assert result.ok and result.detail == "Volume 70"
+    assert (await service.repo.get_state(sid))["volume"] == 70
 
 
 async def test_playlist_now_jumps_to_the_front(dispatcher, service, guild_id, sid):

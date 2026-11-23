@@ -36,7 +36,12 @@ async def main() -> None:
              __version__, settings.probe_interval_seconds)
 
     session = aiohttp.ClientSession()
-    docker = DockerClient.for_socket(settings.docker_socket, settings.compose_project)
+    # DOCKER_API_URL set -> TCP to the filtering socket proxy; unset -> unix socket.
+    docker = DockerClient.from_settings(settings)
+    log.info(
+        "docker endpoint: %s",
+        settings.docker_api_url or f"unix socket {settings.docker_socket}",
+    )
     actor = Actor(docker)
     alerter = Alerter(session, settings.alert_webhook_url)
     guardian = Guardian(settings, session, actor, alerter)

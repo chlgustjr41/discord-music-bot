@@ -1,7 +1,7 @@
 """Firestore repositories. Firestore is the single source of truth (ADR-0003).
 
 Schema is the pre-existing contract shared with the web dashboard
-(frontend/ + functions/) — collections `servers`, `serverOwners`,
+(frontend/) — collections `servers`, `serverOwners`,
 `sessionCodes` and the per-server subcollections. Field names must not
 change without a coordinated frontend release.
 
@@ -91,7 +91,9 @@ class ServerRepository:
 
     async def get_queue(self, server_id: str) -> list:
         state = await self.get_state(server_id)
-        return state.get("queue", []) if state else []
+        queue = state.get("queue", []) if state else []
+        # Client-writable: a `queue` that is not a list is treated as empty.
+        return queue if isinstance(queue, list) else []
 
     def _add_to_queue(self, server_id: str, track: dict) -> None:
         self.db.collection("servers").document(server_id).update(
@@ -132,7 +134,9 @@ class ServerRepository:
         if not state:
             return None
         queue = state.get("queue", [])
-        if not queue:
+        # Client-writable: a `queue` that is not a list is treated as empty
+        # (popping from a string or a map would raise or return nonsense).
+        if not isinstance(queue, list) or not queue:
             return None
         track = queue.pop(0)
         await self.update_state(server_id, {"queue": queue})
@@ -246,9 +250,14 @@ class ServerRepository:
     # ── command / music logs ────────────────────────────────────────────
 
     def _log_command(
-        self, server_id: str, command: str, args: str, user: str, user_id: str,
+        self, server_id: str, command: str, args: str, user: str,
         source: str, transcript: str,
     ) -> None:
+        # NO Discord user id in these rows, and no parameter to carry one.
+        # commandHistory is readable by anyone holding a session code; the
+        # display name is what the dashboard shows, and the snowflake that
+        # used to sit beside it was read by nothing while identifying the
+        # person across every server they are in.
         coll = self.db.collection("servers").document(server_id).collection("commandHistory")
         # Source is filtered in Python, not with a third `where`: a Firestore
         # equality filter never matches documents MISSING the field, and every
@@ -263,7 +272,9 @@ class ServerRepository:
         if existing:
             existing[0].reference.update({
                 "user": user,
-                "userId": user_id,
+                # Rows written before the id was dropped still hold one; this
+                # write is rewriting the row anyway, so it takes it out.
+                "userId": firestore.DELETE_FIELD,
                 "timestamp": firestore.SERVER_TIMESTAMP,
                 "callCount": firestore.Increment(1),
                 "source": source,
@@ -274,7 +285,6 @@ class ServerRepository:
                 "command": command,
                 "args": args,
                 "user": user,
-                "userId": user_id,
                 "timestamp": firestore.SERVER_TIMESTAMP,
                 "callCount": 1,
                 "source": source,
@@ -282,12 +292,11 @@ class ServerRepository:
             })
 
     async def log_command(
-        self, server_id: str, command: str, args: str, user: str, user_id: str,
+        self, server_id: str, command: str, args: str, user: str,
         *, source: str = "discord", transcript: str = "",
     ) -> None:
         await self._run(
-            self._log_command, server_id, command, args, user, user_id,
-            source, transcript,
+            self._log_command, server_id, command, args, user, source, transcript,
         )
 
     def _log_music(self, server_id: str, track: dict) -> None:

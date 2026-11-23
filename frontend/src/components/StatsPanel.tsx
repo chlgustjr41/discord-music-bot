@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { collection, limit, onSnapshot, orderBy, query } from "firebase/firestore";
 import { db } from "../firebase";
+import { safeArtworkUrl } from "../lib/artwork";
 import { addTracksToQueue } from "../lib/social";
 import type { MusicHistoryEntry, Track } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -149,6 +150,21 @@ export function StatsPanel({ serverId }: Props) {
     </span>
   );
 
+  // Leaderboard rows come from documents a visitor can write (dragStats) or
+  // from the play log; only load artwork from a known host (lib/artwork.ts).
+  // No placeholder here: a row without usable artwork simply has none.
+  const thumb = (url: string | undefined) => {
+    const artwork = safeArtworkUrl(url);
+    return artwork ? (
+      <img
+        src={artwork}
+        alt=""
+        loading="lazy"
+        className="h-8 w-14 shrink-0 rounded object-cover bg-muted"
+      />
+    ) : null;
+  };
+
   const nameCountRows = (rows: [string, number][], unit: string) =>
     rows.length === 0 ? (
       <p className="py-3 text-center text-xs text-muted-foreground">No data yet.</p>
@@ -214,14 +230,7 @@ export function StatsPanel({ serverId }: Props) {
                       className="flex items-center gap-2 rounded-md p-2 hover:bg-muted/50"
                     >
                       {rank(i)}
-                      {t.thumbnail && (
-                        <img
-                          src={t.thumbnail}
-                          alt=""
-                          loading="lazy"
-                          className="h-8 w-14 shrink-0 rounded object-cover bg-muted"
-                        />
-                      )}
+                      {thumb(t.thumbnail)}
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium">{t.title}</p>
                         <p className="truncate text-xs text-muted-foreground">{t.artist}</p>
@@ -258,14 +267,7 @@ export function StatsPanel({ serverId }: Props) {
                       className="flex items-center gap-2 rounded-md p-2 hover:bg-muted/50"
                     >
                       {rank(i)}
-                      {d.thumbnail && (
-                        <img
-                          src={d.thumbnail}
-                          alt=""
-                          loading="lazy"
-                          className="h-8 w-14 shrink-0 rounded object-cover bg-muted"
-                        />
-                      )}
+                      {thumb(d.thumbnail)}
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium">{d.title}</p>
                         <p className="truncate text-xs text-muted-foreground">{d.artist}</p>

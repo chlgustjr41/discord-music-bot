@@ -2,7 +2,9 @@ import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { doc, updateDoc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
+import { safeArtworkUrl } from "../lib/artwork";
 import { getIdentityName } from "../lib/identity";
+import { SEARCH_QUERY_MAX } from "../lib/limits";
 import { bumpMemberStat } from "../lib/social";
 import type { SearchResult, Track } from "../types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -203,8 +205,6 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
       return { label: "YouTube", className: "bg-red-500/15 text-red-500" };
     if (/soundcloud\.com/.test(url))
       return { label: "SoundCloud", className: "bg-orange-500/15 text-orange-500" };
-    if (/bandcamp\.com/.test(url))
-      return { label: "Bandcamp", className: "bg-teal-500/15 text-teal-500" };
     return { label: "Web", className: "bg-muted text-muted-foreground" };
   };
 
@@ -226,7 +226,8 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
                 setQuery(e.target.value);
                 setAddedMsg("");
               }}
-              placeholder="Search or paste a YouTube / SoundCloud / Bandcamp link…"
+              placeholder="Search or paste a YouTube / SoundCloud link…"
+              maxLength={SEARCH_QUERY_MAX}
               className="pr-8"
             />
             {loading && (
@@ -280,8 +281,8 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
                   <p className="text-muted-foreground">Paste a track, set, or artist page link (soundcloud.com).</p>
                 </div>
                 <div>
-                  <span className="font-medium">Bandcamp URL</span>
-                  <p className="text-muted-foreground">Paste an album or track link from any Bandcamp page.</p>
+                  <span className="font-medium">Other links</span>
+                  <p className="text-muted-foreground">Not supported. Only YouTube and SoundCloud links are played.</p>
                 </div>
               </div>
             </div>,
@@ -340,6 +341,7 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
               <ul className="space-y-1">
                 {results.map((r) => {
                   const isSelected = selected.has(r.videoId);
+                  const artwork = safeArtworkUrl(r.thumbnail);
                   return (
                     <li
                       key={r.videoId}
@@ -359,9 +361,9 @@ export function SearchPanel({ serverId, searchResults, searchQuery, searchPlayli
                       >
                         {isSelected && <Check className="h-3 w-3" />}
                       </div>
-                      {r.thumbnail && (
+                      {artwork && (
                         <img
-                          src={r.thumbnail}
+                          src={artwork}
                           alt=""
                           loading="lazy"
                           className="h-9 w-16 shrink-0 rounded object-cover bg-muted"

@@ -14,7 +14,8 @@ from typing import Any
 from jacky.api.dashboard_link import entry_url, session_url
 from jacky.api.voice_actions import Action
 from jacky.api.voice_grammar import normalize_playlist_name
-from jacky.audio.models import to_track_data
+from jacky.audio.models import UNSUPPORTED_LINK_MESSAGE, to_track_data
+from jacky.state.untrusted import as_volume
 
 log = logging.getLogger("jacky.voice")
 
@@ -149,10 +150,10 @@ class VoiceIntentDispatcher:
             new = await self.service.set_volume(guild_id, action.level)
         else:
             state = await self.repo.get_state(sid) or {}
-            current = state.get("volume")
-            # None-check, not `or` — volume 0 is a real muted level, and
-            # falsy-defaulting would report 80 for a muted session.
-            current = 80 if current is None else int(current)
+            # as_volume, not `or 80` — volume 0 is a real muted level, and
+            # falsy-defaulting would report 80 for a muted session. And not
+            # int(): the field is client-writable, so it may not be a number.
+            current = as_volume(state.get("volume"))
             # None-check again, for the same reason: delta 0 is an explicit
             # "leave it alone", and `or VOLUME_STEP` would turn it into +10.
             delta = VOLUME_STEP if action.delta is None else action.delta
@@ -174,6 +175,10 @@ class VoiceIntentDispatcher:
             # than the command history. Same INVARIANT as dispatch_all's.
             log.warning("voice search failed: %s", type(exc).__name__)
             return DispatchResult(False, "Search failed")
+        if result.unsupported:
+            # A link outside the allowlist: nothing was asked of Lavalink.
+            # Its own detail, because "No results" invites saying it again.
+            return DispatchResult(False, UNSUPPORTED_LINK_MESSAGE)
         if not result.tracks:
             return DispatchResult(False, "No results")
         td = to_track_data(result.first, "voice command")

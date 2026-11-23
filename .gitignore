@@ -8,7 +8,6 @@ bot/.env
 node_modules/
 dist/
 frontend/.env
-functions/.env
 
 # Firebase
 .firebase/
@@ -21,7 +20,18 @@ functions/.env
 .superpowers/
 
 # Environment
+# This repo is public. EVERY env file is ignored, at any depth and whatever
+# its suffix (.env, .env2, .env.bak, deploy/.env.ci-test, ...); only the
+# documented examples are tracked. Keep the negations AFTER the ignores.
 .env
+.env*
+**/.env*
+!.env.example
+!**/.env.example
+# Editor/sed backups of the above (scripts/reauth-v2.sh makes a deploy/.env.bak).
+*.bak
+# Operator-only notes that must never be published.
+docs/private/
 *.local
 serviceAccountKey.json
 lavalink/tokens.json

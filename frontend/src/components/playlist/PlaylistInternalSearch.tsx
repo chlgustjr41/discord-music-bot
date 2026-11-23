@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ResizableList } from "../ResizableList";
+import { safeArtworkUrl } from "../../lib/artwork";
 import type { UnifiedTrack } from "./types";
 
 interface Props {
@@ -68,13 +69,14 @@ export function PlaylistInternalSearch({
           <ul className="p-1 space-y-0.5">
             {filtered.map((t) => {
               const inDraft = draftUrls.has(t.url);
+              const artwork = safeArtworkUrl(t.thumbnail);
               return (
                 <li
                   key={t.url}
                   className="flex items-center gap-2 rounded-md p-2 hover:bg-muted/50"
                 >
-                  {t.thumbnail ? (
-                    <img src={t.thumbnail} alt="" className="h-7 w-7 rounded object-cover shrink-0" />
+                  {artwork ? (
+                    <img src={artwork} alt="" className="h-7 w-7 rounded object-cover shrink-0" />
                   ) : (
                     <div className="flex h-7 w-7 items-center justify-center rounded bg-muted shrink-0">
                       <Music className="h-3 w-3 text-muted-foreground" />

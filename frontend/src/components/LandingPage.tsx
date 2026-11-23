@@ -45,7 +45,7 @@ const FEATURES = [
   {
     icon: Headphones,
     title: "Rich Music Playback",
-    desc: "Stream from YouTube, SoundCloud, Bandcamp, and more. Full controls with loop modes, volume, and skip.",
+    desc: "Stream from YouTube and SoundCloud. Full controls with loop modes, volume, and skip.",
     color: "#6c63ff",
   },
   {
